@@ -1,6 +1,6 @@
 //! The family readers step 5 shares and the classification switch, over hand-written family rows
 //! (TYR-36 step 4): the resolver classification per resolver with its fallback, the link
-//! selection's storage model filter, the alias source's latest-then-reject pointer and the
+//! selection's exact-then-default rule, the alias source's latest-then-reject pointer and the
 //! wildcard source's historical resolver.
 #[path = "families_support/mod.rs"]
 mod families_support;
@@ -218,27 +218,39 @@ async fn link(
     Ok(())
 }
 
-// A link row of another storage model is not a record-id link: it neither selects a record nor
-// hides the default link. A resolver with only such links has no selection.
+// The link selection serves the exact link at the node, and the default link only when the exact
+// one is absent or 0. The records reader still returns the default candidate beside an exact link.
 #[tokio::test]
-async fn the_link_selection_reads_record_id_links_only() -> Result<()> {
+async fn the_link_selection_takes_the_exact_link_then_the_default() -> Result<()> {
     let fixture = Fixture::new("family_reads_links", 2).await?;
     let pool = &fixture.pool;
-    link(pool, R1, NODE, "5", "node_keyed", 1).await?;
+    link(pool, R1, NODE, "5", "resolver_record_id", 1).await?;
     link(pool, R1, DEFAULT_RECORD_NODE, "6", "resolver_record_id", 2).await?;
-    link(pool, R2, NODE, "7", "node_keyed", 3).await?;
+    link(pool, R2, NODE, "7", "resolver_record_id", 3).await?;
     let selection = load_family_link_selection(pool, CHAIN, R1, NODE)
         .await?
-        .context("the default link selects")?;
-    assert_eq!(selection.exact, None);
-    assert_eq!(selection.active_record_id(), Some("6"));
-    assert_eq!(selection.exact_link_event_id, None);
-    assert_eq!(selection.default_link_event_id, Some(2));
-    assert!(
-        load_family_link_selection(pool, CHAIN, R2, NODE)
-            .await?
-            .is_none()
+        .context("the exact link selects")?;
+    assert_eq!(
+        selection.exact.as_ref().map(|link| link.record_id.as_str()),
+        Some("5")
     );
+    assert_eq!(selection.active_record_id(), Some("5"));
+    assert_eq!(selection.exact_link_event_id, Some(1));
+    assert_eq!(selection.default_link_event_id, None);
+    // The records reader returns the default candidate eagerly; it does not contribute.
+    assert_eq!(
+        selection
+            .default
+            .as_ref()
+            .map(|link| link.record_id.as_str()),
+        Some("6")
+    );
+    assert_eq!(selection.contributing_links().count(), 1);
+    let exact_only = load_family_link_selection(pool, CHAIN, R2, NODE)
+        .await?
+        .context("an exact link with no default selects")?;
+    assert_eq!(exact_only.active_record_id(), Some("7"));
+    assert_eq!(exact_only.exact_link_event_id, Some(3));
     fixture.cleanup().await
 }
 

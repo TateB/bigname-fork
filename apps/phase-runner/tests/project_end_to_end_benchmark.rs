@@ -24,6 +24,11 @@
 //! rebuild, not the rollback benchmark's contract oracle. The next target continues from that
 //! rebuilt state.
 //!
+//! In the same mode, once the owned key families reach each target, the step 5 family readers
+//! (`bigname_storage::families::topology`) must serve what the served subname, topology, resolver
+//! and resolver collection readers serve at that publication
+//! (`project_end_to_end/topology_shadow.rs`).
+//!
 //! With `BIGNAME_END_TO_END_SHADOW=1` (always on the fixture) each target, and each rebuild when
 //! compared, also compares the owned key family readers with today's readers
 //! (`project_end_to_end/records_shadow.rs`). Production serves today's tables either way.
@@ -35,6 +40,9 @@ mod records_shadow;
 mod shadow;
 #[allow(dead_code)]
 mod support;
+#[allow(dead_code)]
+#[path = "project_end_to_end/topology_shadow.rs"]
+mod topology_shadow;
 
 use std::{str::FromStr, time::Instant};
 
@@ -516,6 +524,46 @@ async fn run(
         if let Some(page_size) = shadow {
             shadows.push(
                 records_shadow::compare(pool, CHAIN, &target, page_size, "incremental").await?,
+            );
+        }
+        if let Some(children_page) = compare {
+            let report = topology_shadow::compare(
+                pool,
+                CHAIN,
+                topology_shadow::Settings {
+                    children_page,
+                    collection_page: children_page,
+                    every_child_filter: children_page == FIXTURE_CHILDREN_PAGE,
+                    prefixes: &[],
+                },
+            )
+            .await?;
+            eprintln!("{}", report.line());
+            ensure!(
+                report.mismatches.is_empty(),
+                "the family readers differ from the served readers at {number}: {:#}",
+                topology_shadow::describe(&report)
+            );
+            // Step 2 fills project_resolver_classification block by block and the comparison runs
+            // once the families have caught up, so every resolver is read from its row and
+            // compared in full. A resolver on the declaration fallback, or with no shadow
+            // classification at all, would only have its mirror compared, so it fails here.
+            let partial: Vec<(&String, &&str)> = report
+                .classification_sources
+                .iter()
+                .filter(|(_, source)| **source != "family")
+                .collect();
+            ensure!(
+                report.f3_unfilled == 0 && partial.is_empty(),
+                "resolvers compared only in part at {number}: {partial:?}; {}",
+                report.line()
+            );
+            // The corpus declares every resolver it uses, so step 2's extra
+            // resolver_manifest_not_active rows must not appear either.
+            ensure!(
+                report.f3_extra_not_active.is_empty(),
+                "extra resolver_manifest_not_active rows at {number}: {:?}",
+                report.f3_extra_not_active
             );
         }
         if let (Some(children_page), Some(baseline)) = (compare, baseline) {
