@@ -150,6 +150,63 @@ matching schema-migration on a large initialized database, and before starting a
 release that reads it; without the prebuild that schema-migration blocks writes to
 `normalized_events` while it builds.
 
+The permission family readers use the indexes in
+`20260928190000_project_families_permission_read_indexes.sql` and
+`20260928223000_project_permission_candidate_indexes.sql`. On a large initialized
+database, prebuild these concurrently before applying those schema-migrations;
+without a prebuild their ordinary index creation blocks writes to the indexed
+tables. Run each statement outside a transaction, with the publication switch off:
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS project_grant_subject_idx
+    ON bigname_phase.project_grant (subject);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS project_grant_scope_idx
+    ON bigname_phase.project_grant (chain_id, scope);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS project_account_approval_subject_idx
+    ON bigname_phase.project_account_approval (subject, authority_kind);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS project_registry_binding_observation_resource_idx
+    ON bigname_phase.project_registry_binding_observation (chain_id, resource_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS project_registry_binding_observation_owner_idx
+    ON bigname_phase.project_registry_binding_observation
+        (chain_id, registry_contract, registry_owner);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS project_grant_subject_resource_idx
+    ON bigname_phase.project_grant (subject COLLATE "C", resource_id, scope COLLATE "C");
+CREATE INDEX CONCURRENTLY IF NOT EXISTS project_grant_resource_subject_idx
+    ON bigname_phase.project_grant (resource_id, subject COLLATE "C", scope COLLATE "C");
+CREATE INDEX CONCURRENTLY IF NOT EXISTS project_registry_binding_observation_owner_target_idx
+    ON bigname_phase.project_registry_binding_observation
+        (chain_id, registry_contract, registry_owner, target_resource_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS project_registry_binding_observation_owner_resource_idx
+    ON bigname_phase.project_registry_binding_observation
+        (chain_id, registry_contract, registry_owner, resource_id);
+```
+
+Confirm all nine indexes are `indisvalid` and `indisready` in `pg_index`, and
+compare `pg_get_indexdef` with the statements above before applying the
+schema-migrations. `IF NOT EXISTS` does not validate an existing definition or
+repair an invalid concurrent build. Record account-page query plans and latency
+on representative data before enabling the switch; bounded candidate batches
+can still examine many resources when most grants are masked or observations
+no longer match the current registry binding.
+
+`20260928130000_project_families_name_history.sql` adds `project_name_history`
+to the [owned key families](glossary.md#owned-key-family) and, on a database
+whose families were built without it, resets every family table and the
+[family marker](glossary.md#family-marker), so the next family run rebuilds
+them. Apply it before `BIGNAME_SERVE_FROM_FAMILIES` is ever turned on: with the
+[publication switch](glossary.md#publication-switch) on, every fenced route
+answers `409 stale` until that rebuild finishes. It does not coordinate with a
+running family publisher: a family run in flight when it applies fails once and
+the next run rebuilds.
+
+`20260928160000_project_families_name_summary.sql` adds `project_name_summary`,
+the [name summary](glossary.md#name-summary), the same way, with the indexes its
+writer reads. Apply it before starting a release that writes it, whatever the
+publication switch: that release's family step writes the table on every block,
+so it fails until the table exists. Apply it before the switch is ever turned on
+too, for the same `409 stale` window, and, as above, a family run in flight when
+it applies fails once and the next run rebuilds.
+
 The API binds to the configured `BIGNAME_API_HOST` and
 `BIGNAME_API_PORT`; `/healthz` remains its local readiness endpoint. Current
 runtime configuration is documented in
@@ -165,9 +222,12 @@ container listener at `0.0.0.0:9464`; `BIGNAME_API_METRICS_HOST` and
 [publication switch](glossary.md#publication-switch). The server Compose file
 forwards it from the host environment or `.env.server` to both the `api` and
 the `phase-runner` services; Compose forwards only the variables it lists, so
-without that entry the containers would never see it. Unset or empty means
-off, and only `1` or `true` turns it on. Both binaries read it once at startup,
-so set it the same for both. To change it, edit `.env.server` (or the host
+without that entry the containers would never see it. Unset or empty keeps
+the build's default (`SERVE_FROM_FAMILIES_DEFAULT` in
+`crates/storage/src/publication_source.rs`, off in this release), `1` or `true`
+turns it on, and `0` or `false` turns it off. Any other value stops both
+binaries at startup rather than silently keeping the default. Both binaries
+read it once at startup, so set it the same for both. To change it, edit `.env.server` (or the host
 environment) and recreate both containers:
 
 ```sh
@@ -177,14 +237,42 @@ docker compose --env-file .env.server -f docker-compose.server.yml up -d --force
 `docker compose restart` does not reload changed environment configuration, so
 a restart alone keeps the old value.
 
+The switch is transitional: step 7c of TYR-36 deletes it together with the
+served tables. Until then, turning it on is not reversible by flipping it back.
+With the switch on, Project skips the served engine and the Project row
+follows the [family marker](glossary.md#family-marker), so the served tables
+stop at the block they held when the switch came on while the Project row
+moves past it. Turned off again, the phase runner would resume the served
+engine after the Project row, never applying the blocks in between, and the API
+would present the stale tables as current at the Project row.
+
+So once the switch has been on for any block, turning it off needs a full
+Project redo before the API serves the served tables again. With the switch
+off in `.env.server`, stop the `api` and `phase-runner` services, run the redo
+over each chain's full retained range, then recreate both:
+
+```sh
+phase-runner redo --chain <chain-id> \
+  --source '<chain-id>:<key>:<kind>:<seed-basis>:<start>[:<role>]=<endpoint-env>' \
+  --phase project --from-block <first retained block> --to-block <Project block>
+```
+
+Repeat `--source` with the complete intake-capable descriptor set recorded by
+that chain's Ingest cursors. `<Project block>` is the chain's Project row
+`current_block_number`. Nothing enforces this step: the phase runner and the
+API start with the switch off either way.
+
 The direct `docker run` selectors under [Container contents](#container-contents)
 do not forward the variable: anyone running the binaries that way must pass
 `-e BIGNAME_SERVE_FROM_FAMILIES` (or an explicit value) to both the `api` and
 the `phases` invocations.
 
-Production leaves the switch off until the row and guard cutovers are complete:
-with it on, served-table reads can return inconsistent membership or counts
-(see [`api-v1.md`](api-v1.md), the publication switch paragraph).
+This release carries the guard cutover: with the switch on, the verified
+lookup's guard fences the family marker. Production still leaves the switch off
+until the row cutovers are complete: with it on, the reads that still use the
+served tables, the lookup's inputs among them, can return inconsistent
+membership or counts (see [`api-v1.md`](api-v1.md), the publication switch
+paragraph).
 
 ## Phase-runner configuration
 
@@ -791,7 +879,45 @@ GRANT SELECT ON TABLE
     bigname_phase.primary_names_current,
     bigname_phase.manifest_versions,
     bigname_phase.manifest_contract_instances,
-    bigname_phase.contract_instance_addresses
+    bigname_phase.contract_instance_addresses,
+    bigname_phase.discovery_edges,
+    bigname_phase.label_preimages,
+    bigname_phase.migration_discovery_associations,
+    bigname_phase.project_account_approval,
+    bigname_phase.project_address_controller_candidate,
+    bigname_phase.project_address_name_index,
+    bigname_phase.project_address_record_id_index,
+    bigname_phase.project_address_record_node_index,
+    bigname_phase.project_binding_candidate,
+    bigname_phase.project_child_edge_candidate,
+    bigname_phase.project_child_registration_state,
+    bigname_phase.project_claim_normalization,
+    bigname_phase.project_grant,
+    bigname_phase.project_lifecycle_association,
+    bigname_phase.project_lifecycle_event,
+    bigname_phase.project_lifecycle_key_state,
+    bigname_phase.project_lifecycle_triple_summary,
+    bigname_phase.project_name_alias,
+    bigname_phase.project_name_history,
+    bigname_phase.project_name_state,
+    bigname_phase.project_name_summary,
+    bigname_phase.project_named_resource_pointer,
+    bigname_phase.project_node_record_partition,
+    bigname_phase.project_node_record_value,
+    bigname_phase.project_parent_subregistry,
+    bigname_phase.project_record_id_value,
+    bigname_phase.project_registry_binding_observation,
+    bigname_phase.project_registry_node_state,
+    bigname_phase.project_registry_owner_event,
+    bigname_phase.project_registry_pointer,
+    bigname_phase.project_resolver_alias,
+    bigname_phase.project_resolver_classification,
+    bigname_phase.project_resolver_link,
+    bigname_phase.project_resource_admin_aggregate,
+    bigname_phase.project_resource_pointer,
+    bigname_phase.project_reverse_node_claim,
+    bigname_phase.project_reverse_tuple,
+    bigname_phase.project_wrapper_state
 TO bigname_api;
 GRANT EXECUTE ON FUNCTION bigname_phase.revalidate_resolution_lookup_state(
     text, bigint, text, jsonb, jsonb, uuid, text, text
@@ -814,9 +940,15 @@ or schema-wide write grants as a shortcut.
 `project_family_marker` is on the list for the
 [publication switch](glossary.md#publication-switch): with
 `BIGNAME_SERVE_FROM_FAMILIES` on, snapshot selection, the verified lookup and
-`/v1/status` read the [family marker](glossary.md#family-marker), and startup
+its guard, and `/v1/status` read the [family marker](glossary.md#family-marker), and startup
 refuses a role that cannot read it. With the switch off the API does not read
 it.
+
+The `project_*` owned key families after it, and `discovery_edges`,
+`label_preimages` and `migration_discovery_associations`, which the family
+children reader joins, are on the list for the same switch: with it on, the
+family readers serve every route from them, and startup refuses a role that
+cannot read any of them. With the switch off the API reads none of them.
 
 `migration_event_associations` is on the list because
 `GET /v1/diagnostics/events` selects the ENSv1→ENSv2 migration correlation rows

@@ -13,7 +13,9 @@ use serde_json::{Value, json};
 use sqlx::{PgPool, raw_sql};
 
 pub const CHAIN: &str = "ethereum-sepolia";
-pub const CONTENT_HASH: &str = "families-fixture-hash";
+/// The interpreter hash of this build: the composed name reader serves only a marker written by
+/// it, as the publication fence does.
+pub const CONTENT_HASH: &str = bigname_test_support::INTERPRETER_CONTENT_HASH;
 
 pub fn hash(block: i64) -> String {
     format!("0x{block:064x}")
@@ -46,6 +48,7 @@ pub const FAMILY_TABLES: &[&str] = &[
     "project_resolver_classification",
     "project_registry_pointer",
     "project_resource_pointer",
+    "project_named_resource_pointer",
     "project_node_record_partition",
     "project_node_record_value",
     "project_record_id_value",
@@ -65,6 +68,8 @@ pub const FAMILY_TABLES: &[&str] = &[
     "project_address_name_index",
     "project_address_record_node_index",
     "project_address_record_id_index",
+    "project_name_history",
+    "project_name_summary",
 ];
 
 pub struct Fixture {
@@ -271,11 +276,22 @@ impl Fixture {
         logical_name_id: &str,
         namehash: &str,
     ) -> Result<()> {
+        // These fold fixtures use synthetic identity keys; their visible names still obey
+        // the same normalization contract as surfaces written by Interpret.
+        let labels = namehash.trim_start_matches("0x");
+        let (first, last) = labels.split_at(labels.len() / 2);
+        let normalized =
+            bigname_domain::normalization::normalize_name(&format!("n{first}.n{last}.eth"))?;
+        let labelhashes: Vec<String> = normalized
+            .normalized_labels
+            .iter()
+            .map(|label| format!("{:#x}", alloy_primitives::keccak256(label.as_bytes())))
+            .collect();
         sqlx::query(
             "INSERT INTO name_surfaces (logical_name_id, namespace, raw_name, raw_labels,
                  dns_encoded_name, namehash, labelhashes, normalizer_version, visibility_state,
                  chain_id, block_hash, block_number, canonicality_state)
-             VALUES ($1, 'ens', $1, ARRAY[$1], '\\x00', $2, ARRAY[$2], 'ensip15', 'active',
+             VALUES ($1, $10, $5, $6, $7, $2, $8, $9, 'active',
                      $3, $4, 0, 'canonical')
              ON CONFLICT DO NOTHING",
         )
@@ -283,6 +299,17 @@ impl Fixture {
         .bind(namehash)
         .bind(chain)
         .bind(hash(0))
+        .bind(normalized.normalized_name)
+        .bind(normalized.normalized_labels)
+        .bind(normalized.dns_encoded_name)
+        .bind(labelhashes)
+        .bind(bigname_domain::normalization::ENS_NORMALIZER_VERSION)
+        .bind(
+            logical_name_id
+                .split_once(':')
+                .expect("fixture namespace")
+                .0,
+        )
         .execute(&self.pool)
         .await?;
         Ok(())

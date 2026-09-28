@@ -37,6 +37,11 @@ pub(super) async fn unverifiable_claim_authority(
         Err(error) if projection_unavailable(&error) => {
             return Ok(ForwardGateDecision::ProjectionUnavailable);
         }
+        Err(error) if bigname_storage::families::name::is_publication_unavailable(&error) => {
+            return Err(crate::v2::stale_name_rows_api_error(
+                crate::v2::SnapshotReadResource::Resource,
+            ));
+        }
         Err(error) => {
             error!(
                 service = "api",
@@ -72,6 +77,18 @@ pub(super) async fn unverifiable_name_authority(
         Ok(row) => row,
         Err(error) if projection_unavailable(&error) => {
             return Ok(ForwardGateDecision::ProjectionUnavailable);
+        }
+        Err(error) if bigname_storage::families::name::is_publication_unavailable(&error) => {
+            // A family rebuild in flight under the publication switch: the stale 409.
+            warn!(
+                service = "api",
+                namespace = %namespace,
+                error = %error,
+                "the claimed name's composed row is not servable"
+            );
+            return Err(crate::v2::stale_name_rows_api_error(
+                crate::v2::SnapshotReadResource::Name,
+            ));
         }
         Err(error) => {
             error!(

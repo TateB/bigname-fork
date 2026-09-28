@@ -52,7 +52,8 @@ async fn main() -> Result<()> {
 
 async fn serve(args: ServeArgs) -> Result<()> {
     args.bounds.validate()?;
-    let serve_from_families = bigname_storage::publication_source::init_from_env();
+    let serve_from_families =
+        bigname_storage::publication_source::init_from_env().map_err(anyhow::Error::msg)?;
     let chain_rpc_urls = args.effective_lookup_chain_rpc_urls()?;
     let pool = bigname_storage::connect_phase_with_application_name_and_statement_timeout(
         &args.database,
@@ -166,10 +167,20 @@ async fn load_expected_status_chain_ids_at_startup(pool: &PgPool) -> Result<Vec<
     }
 }
 
+/// Request timeout for routers the tests build. Many tests pause a request at a seam while they
+/// reset or republish families; on a slow CI runner that outlasts the product's 30 s default and
+/// the timeout layer answers 408 first. Tests that assert timeout behaviour set their own bounds.
+#[cfg(test)]
+const TEST_REQUEST_TIMEOUT_MS: u64 = 600_000;
+
 #[cfg(test)]
 pub(crate) fn app_router(state: AppState) -> Router {
     let health_pool = state.pool.clone();
-    app_router_with_bounds(state, health_pool, &ApiBoundsConfig::default())
+    let bounds = ApiBoundsConfig {
+        request_timeout_ms: TEST_REQUEST_TIMEOUT_MS,
+        ..ApiBoundsConfig::default()
+    };
+    app_router_with_bounds(state, health_pool, &bounds)
 }
 
 fn app_router_with_bounds(

@@ -3,6 +3,9 @@
 //! Each case seeds interpreted events, publishes through the runner's Project phase with the
 //! families on, and runs the shadow comparison of `project_end_to_end/topology_shadow.rs`.
 #[allow(dead_code)]
+#[path = "project_end_to_end/name_shadow.rs"]
+mod name_shadow;
+#[allow(dead_code)]
 #[path = "project_end_to_end/shadow_fixture.rs"]
 mod shadow_fixture;
 #[allow(dead_code)]
@@ -111,6 +114,13 @@ async fn attributed_transfer(
 // hides its edges.
 #[tokio::test]
 async fn ens_v1_edges_match_the_served_children() -> Result<()> {
+    // The served side of each comparison reads the served tables, so the switch stays off
+    // whatever the build's default; with it on the switch-aware readers would read the families
+    // and compare them with themselves.
+    bigname_storage::publication_source::with_serve_from_families(false, ens_v1_edges()).await
+}
+
+async fn ens_v1_edges() -> Result<()> {
     let mut fixture = Fixture::new("families_shadow_children_v1", 12).await?;
     let (first, first_node, _) = parent(&fixture, 1, "first").await?;
     let (second, second_node, _) = parent(&fixture, 2, "second").await?;
@@ -244,9 +254,32 @@ async fn ens_v1_edges_match_the_served_children() -> Result<()> {
     // incremental batch used to keep it until a rebuild, because the children scope took only an
     // event's `child_node`; main's #958 restages transferred child edges, so the served page now
     // drops it at once and matches the shadow under every filter.
-    let report = fixture.compare(2).await?;
-    unexpected(&report, &[])?;
+    //
+    // The same Transfer leaves the surfaced name's registry node ownerless. The composed name row
+    // reads that at once (unregistered, projected, so `/v1/search` lists it); the served batch
+    // restages the child edge but not the name row, which keeps its block-6 state (unsupported,
+    // unlisted) until the rebuild below. So the name comparison differs on that one name, and the
+    // two search listings that would list it are named expected differences, gone after the
+    // rebuild.
     let surfaced = format!("ens:{}", word(8));
+    let names = name_shadow::compare(fixture.pool(), CHAIN, 9).await?;
+    ensure!(
+        names.mismatched == 1
+            && names
+                .lines
+                .iter()
+                .all(|line| line.starts_with(&format!("MISMATCH {surfaced} "))),
+        "{:#?}",
+        names.lines
+    );
+    let report = fixture.compare(2).await?;
+    unexpected(
+        &report,
+        &[
+            r#"search ens prefix Some("s") contains None"#.to_owned(),
+            r#"search ens prefix None contains Some("eth")"#.to_owned(),
+        ],
+    )?;
     let (_, clock) = topology_shadow::publication(fixture.pool(), CHAIN).await?;
     for (index, filter) in topology_shadow::child_filters(clock, true, &[])
         .iter()
@@ -290,6 +323,9 @@ async fn ens_v1_edges_match_the_served_children() -> Result<()> {
         );
     }
     fixture.rebuild().await?;
+    name_shadow::compare(fixture.pool(), CHAIN, 9)
+        .await?
+        .require_clean()?;
     let report = fixture.compare(2).await?;
     unexpected(&report, &[])?;
     let first_children = topology_shadow::shadow_children(fixture.pool(), &first).await?;
@@ -856,6 +892,161 @@ async fn zero_owner_attribution_follows_the_served_precedence() -> Result<()> {
     fixture.cleanup().await
 }
 
+// Today's stage links an unnamed Transfer to the latest named event of its resource and family
+// of any kind, not only to the registry's owner events. Child 48's name is carried only by a
+// registry event of another kind on its resource at block 2, and an unnamed zero Transfer of that
+// resource at a node with no surface follows at block 3: the Transfer is 48's, so 48 is zeroed.
+// Child 46's name carries a non-zero Transfer of another resource at block 2 and an unnamed zero
+// Transfer of that resource follows at block 3, which zeroes 46. At block 4 a registry event of
+// another kind names child 47 and carries 46's resource, so it is that resource's latest named
+// event and the zero Transfer moves to 47: 46 is listed again with its edge owner and 47 is not.
+// Every summary must follow, 46's though block 4 names only 47.
+#[tokio::test]
+async fn zero_owner_links_the_latest_named_event_of_any_kind() -> Result<()> {
+    let mut fixture = Fixture::new("families_shadow_children_linked", 12).await?;
+    let (parent_id, parent_node, parent_labels) = parent(&fixture, 1, "linked").await?;
+    let resource = uuid(0xd046);
+    fixture.resource(&resource, 1).await?;
+    let hinted = uuid(0xd048);
+    fixture.resource(&hinted, 1).await?;
+    let mut names = Vec::new();
+    for (child, label) in [(46, "owned"), (47, "resolved"), (48, "hinted")] {
+        fixture.label(&word(0x5000 + child), label, true).await?;
+        edge(
+            &fixture,
+            &format!("edge-{label}"),
+            &parent_node,
+            child,
+            &owner(child),
+            2,
+        )
+        .await?;
+        let logical = child_surface(
+            &fixture,
+            child,
+            &format!("{label}.linked.eth"),
+            &parent_labels,
+        )
+        .await?;
+        {
+            // As for 43 above, the named children keep inactive surfaces.
+            sqlx::query(
+                "UPDATE name_surfaces SET visibility_state = 'shadow',
+                     deactivation_reason = 'fixture', deactivated_at = now()
+                 WHERE logical_name_id = $1",
+            )
+            .bind(&logical)
+            .execute(fixture.pool())
+            .await?;
+        }
+        names.push(logical);
+    }
+    attributed_transfer(
+        &fixture,
+        "named-owned",
+        46,
+        &owner(146),
+        2,
+        Some(&names[0]),
+        Some(&resource),
+    )
+    .await?;
+    transfer_of(&fixture, "zero-linked", 146, 3, &resource).await?;
+    fixture
+        .event(
+            "preimage-hinted",
+            Some(&names[2]),
+            Some(&hinted),
+            V1_REGISTRY,
+            "PreimageObserved",
+            2,
+            json!({"node": word(48)}),
+            &address(0xe1),
+        )
+        .await?;
+    transfer_of(&fixture, "zero-hinted", 148, 3, &hinted).await?;
+    fixture.publish(3).await?;
+    ensure!(
+        zero_owners(&fixture, &names).await? == [true, false, true],
+        "block 3 zero owners of 46, 47, 48"
+    );
+    let report = fixture.compare(1).await?;
+    unexpected(&report, &[])?;
+    let listed = |children: &[u64]| -> std::collections::BTreeSet<String> {
+        children
+            .iter()
+            .map(|child| format!("ens:{}", word(*child)))
+            .collect()
+    };
+    let visible = topology_shadow::shadow_children(fixture.pool(), &parent_id).await?;
+    ensure!(visible == listed(&[47]), "block 3: {visible:?}");
+
+    fixture
+        .event(
+            "preimage-resolved",
+            Some(&names[1]),
+            Some(&resource),
+            V1_REGISTRY,
+            "PreimageObserved",
+            4,
+            json!({"node": word(47)}),
+            &address(0xe1),
+        )
+        .await?;
+    fixture.publish(5).await?;
+    // The served incremental batch does not revisit 46's row, so the comparison is against a
+    // served rebuild; the families followed block by block.
+    fixture.rebuild().await?;
+    let report = fixture.compare(1).await?;
+    unexpected(&report, &[])?;
+    let visible = topology_shadow::shadow_children(fixture.pool(), &parent_id).await?;
+    ensure!(visible == listed(&[46]), "block 5: {visible:?}");
+    ensure!(
+        zero_owners(&fixture, &names).await? == [false, true, true],
+        "block 5 zero owners of 46, 47, 48"
+    );
+    fixture.cleanup().await
+}
+
+/// The stored summaries' `zero_owner` of `names`, in order.
+async fn zero_owners(fixture: &Fixture, names: &[String]) -> Result<Vec<bool>> {
+    let mut out = Vec::with_capacity(names.len());
+    for name in names {
+        out.push(
+            sqlx::query_scalar(
+                "SELECT zero_owner FROM project_name_summary
+                 WHERE chain_id = $1 AND logical_name_id = $2",
+            )
+            .bind(CHAIN)
+            .bind(name)
+            .fetch_one(fixture.pool())
+            .await
+            .with_context(|| format!("{name} has no summary"))?,
+        );
+    }
+    Ok(out)
+}
+
+/// An unnamed ENSv1 registry Transfer of `node` to the zero owner carrying `resource`.
+async fn transfer_of(
+    fixture: &Fixture,
+    identity: &str,
+    child: u64,
+    block: i64,
+    resource: &str,
+) -> Result<()> {
+    attributed_transfer(
+        fixture,
+        identity,
+        child,
+        ZERO_ADDRESS,
+        block,
+        None,
+        Some(resource),
+    )
+    .await
+}
+
 // A locked parent whose migration registry evidence is rejected, by a missing registry
 // announcement or by a migration whose evidence does not contain the association's, serves none
 // of its ENSv1 children, even a migratable one.
@@ -955,8 +1146,8 @@ fn display_names(rows: &[FamilyChildRow]) -> Vec<&str> {
 }
 
 // The subnames filters at the block clock. ENSv2 children have mixed null and non-null expiries
-// and registration times (two are bound, so their grant gives them one), labels a prefix must
-// match literally (`_` and `%`), and an expiry exactly at the publication's time, which the
+// and registration times (two are bound, so their grant gives them one), normalized labels with a leading underscore, and a literal `%` prefix that must
+// match no name, and an expiry exactly at the publication's time, which the
 // fence keeps. An expiry-sorted, fenced page is then continued from one publication into the
 // next at the new block's time, after a child on the remaining pages expired in between. Every
 // page's rows, total and cursor are compared.
@@ -981,12 +1172,12 @@ async fn child_filters_sort_page_and_expire_at_the_block_clock() -> Result<()> {
         .await?;
     let epoch = shadow_fixture::EPOCH;
     let cases: [(u64, &str, Option<i64>, i64); 6] = [
-        (1, "a_one", Some(epoch + 6), 2),
-        (2, "a%two", Some(epoch + 1_000_000), 2),
+        (1, "_one", Some(epoch + 6), 2),
+        (2, "atwo", Some(epoch + 1_000_000), 2),
         (3, "bthree", Some(epoch + 8), 3),
         (4, "anull", None, 3),
         (5, "zeta", Some(epoch + 1_000_000), 4),
-        (6, "a_b", Some(epoch + 7), 4),
+        (6, "_b", Some(epoch + 7), 4),
     ];
     for (n, label, expiry, block) in cases {
         let labelhash = word(0x6000 + n);
@@ -1081,13 +1272,13 @@ async fn child_filters_sort_page_and_expire_at_the_block_clock() -> Result<()> {
         served == shadowed
             && served_total == 6
             && shadow_total == 6
-            && display_names(&served).contains(&"a_one.clock.eth"),
+            && display_names(&served).contains(&"_one.clock.eth"),
         "{served:?}"
     );
     // Prefixes match literally: `_` and `%` are not wildcards.
     for (prefix, expected) in [
-        ("a_", vec!["a_b.clock.eth", "a_one.clock.eth"]),
-        ("a%", vec!["a%two.clock.eth"]),
+        ("_", vec!["_b.clock.eth", "_one.clock.eth"]),
+        ("a%", vec![]),
     ] {
         let filter = ChildrenCurrentPageFilter {
             q: Some(prefix),
@@ -1119,7 +1310,7 @@ async fn child_filters_sort_page_and_expire_at_the_block_clock() -> Result<()> {
         served_rows == shadowed.rows
             && served.total_count == shadowed.total_count
             && served.next_cursor == shadowed.next_cursor
-            && display_names(&served_rows) == ["a_one.clock.eth", "a_b.clock.eth"],
+            && display_names(&served_rows) == ["_one.clock.eth", "_b.clock.eth"],
         "served {served:?}, shadow {shadowed:?}"
     );
     let mut served_cursor = served
@@ -1163,7 +1354,7 @@ async fn child_filters_sort_page_and_expire_at_the_block_clock() -> Result<()> {
         }
     }
     ensure!(
-        display_names(&continued) == ["a%two.clock.eth", "zeta.clock.eth", "anull.clock.eth"],
+        display_names(&continued) == ["atwo.clock.eth", "zeta.clock.eth", "anull.clock.eth"],
         "{continued:?}"
     );
     let report = fixture.compare_with_prefixes(1, PREFIXES).await?;
@@ -1171,11 +1362,9 @@ async fn child_filters_sort_page_and_expire_at_the_block_clock() -> Result<()> {
     fixture.cleanup().await
 }
 
-// Backslash is the escape character of both readers' prefix patterns, so a prefix holding one
-// must still match literally: `a\` alone, `a\%` and `a\_`. Each decoy would match only if a
-// backslash in the prefix escaped the character after it (`a%four` for `a\%` and `a\`,
-// `a_five` for `a\_`). Kept apart from the clock fixture so its totals and orders stay as they
-// are; the prefixes run through the whole filter matrix and are then checked by name.
+// Backslashes may occur in a requested prefix, but cannot occur in an active ENS name.
+// Such requests must remain empty against actual normalized surfaces. The clock fixture
+// separately checks literal underscore matching using admitted leading-underscore labels.
 #[tokio::test]
 async fn child_prefixes_match_backslashes_literally() -> Result<()> {
     const PREFIXES: &[&str] = &["a\\", "a\\%", "a\\_"];
@@ -1196,11 +1385,11 @@ async fn child_prefixes_match_backslashes_literally() -> Result<()> {
         )
         .await?;
     for (n, label) in [
-        (1, "a\\one"),
-        (2, "a\\%two"),
-        (3, "a\\_three"),
-        (4, "a%four"),
-        (5, "a_five"),
+        (1, "aone"),
+        (2, "atwo"),
+        (3, "athree"),
+        (4, "afour"),
+        (5, "afive"),
         (6, "ab"),
     ] {
         let labelhash = word(0x6100 + n);
@@ -1230,18 +1419,8 @@ async fn child_prefixes_match_backslashes_literally() -> Result<()> {
     let report = fixture.compare_with_prefixes(1, PREFIXES).await?;
     unexpected(&report, &[])?;
     let pool = fixture.pool();
-    for (prefix, expected) in [
-        (
-            "a\\",
-            vec![
-                "a\\%two.slash.eth",
-                "a\\_three.slash.eth",
-                "a\\one.slash.eth",
-            ],
-        ),
-        ("a\\%", vec!["a\\%two.slash.eth"]),
-        ("a\\_", vec!["a\\_three.slash.eth"]),
-    ] {
+    for prefix in PREFIXES {
+        let expected: Vec<&str> = Vec::new();
         let filter = ChildrenCurrentPageFilter {
             q: Some(prefix),
             ..ChildrenCurrentPageFilter::default()

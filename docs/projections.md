@@ -188,8 +188,25 @@ baseline immediately when a hydration block is orphaned, even before a retry
 runs. This text policy does not change the bounded refresh of event-silent
 reverse claims described below.
 
-Hydration uses the exact number and hash from `chain_heads`, revalidates that
-head in the publication transaction, and never calls provider `latest`.
+With family hydration configured, mainnet follow blocks prepare text reads from
+the post-reducer F6 record and partition rows and F3 resolver classification.
+The same four-resolver admission above applies. RPC runs outside the publication
+transaction at the exact block number and hash being published. The transaction
+rechecks the record event position, partition version, namehash, and classification
+before accepting a result. `project_node_record_value.hydrated_value` holds the
+outcome, value, block hash, and those selectors; `hydrated_at_block` holds its
+height. The event-derived columns remain the baseline. Successful empty results
+are `not_found`; failure or lost admission removes the overlay and the block
+still publishes. A later follow block retries missing values. Canonical results
+are retained until their selectors or readable lineage change, and readers
+reject a mismatched or orphaned overlay immediately. All overlay changes use the
+ordinary [family undo journal](glossary.md#family-undo-journal). Replay, rebuild,
+and rebuild ranges make no hydration calls; subsequent follow blocks repair
+their missing overlays. The served hydrator remains unchanged while the switch
+is off.
+
+The served hydrator uses the exact number and hash from `chain_heads`, revalidates
+that head in its publication transaction, and never calls provider `latest`.
 Failed calls restore the event-derived baseline and keep Project retryable. It
 does not write raw facts, identity rows, normalized events, reusable execution
 outcomes, or durable traces.
@@ -1576,7 +1593,25 @@ version, or resolver changes. Explicit `NameForAddrChanged` tuple claims retain
 their existing event path. These are declared claims; forward verification
 remains request-scoped.
 
-Current-head hydration for an admitted event-silent ENSv1 reverse resolver may
+With family publication enabled, mainnet follow blocks prepare reverse hydration
+before opening the publication transaction. A short preparation transaction uses
+the normal pointer and reverse reducers to include the new block's candidates,
+then closes before the hash-pinned RPC calls. The publication transaction checks
+the predecessor, input revision and block hash again, reduces the events, and
+accepts an answer only for the same selected reverse node and resolver. The
+result and its baseline enter F12's owned row set and are journalled with the
+family marker, including refresh work on empty blocks. Failed calls retract the
+overlay and publish the block; a later follow block retries through the bounded
+rolling selection. Successful not-found is distinct from failure. Attempt cohorts
+use the monotonically increasing publication generation. The reader also binds
+the overlay to its selected node/resolver and readable block hash.
+
+Replay and rebuild perform no hydration RPC. Undo restores the previous overlay
+with its row, and new or changed selectors use event-derived claims until a later
+follow block refreshes them. Rebuild ranges retain their existing behavior.
+
+The switch-off served path retains the following behavior. Current-head hydration
+for an admitted event-silent ENSv1 reverse resolver may
 refresh an existing ENS/60 claim tuple at the exact published Ethereum head. It
 does not create a normalized event or verified result. Provider failure restores
 the event-derived row and keeps Project retryable.
@@ -1667,6 +1702,35 @@ included, so the publishing steps can tell which registration of the resource a
 grant was written under. The served permissions read keeps no such value and
 masks by the resource's current registration.
 
+F5 keeps two independently owned pointer keys. `project_resource_pointer` keeps
+one resource's latest pointer, including unnamed changes, for root, alias and
+wildcard composition. `project_named_resource_pointer` keeps the latest named
+`ResolverChanged` per `(chain_id, resource_id, logical_name_id)`, clears included.
+Only events carrying both keys write it; unnamed changes and changes naming
+another name leave it alone. A release does not delete a pointer fact: the
+composed reader still applies its binding and reachability rules. Both reducers
+use the same canonical event order and before-image journal as every family.
+
+The composed name reader fetches named pointers by exact resource/name pairs.
+Bound-name discovery uses `project_named_resource_pointer_resolver_idx` to find
+retained named pointer keys at the requested resolver, alongside the existing
+resource and registry-node pointer paths. It does not scan the resolver's
+`ResolverChanged` history. This bounds that input to retained pointer keys, not
+to page size: the candidate walk and sort can still visit the resolver's retained
+keys on each batch. Current-key listing cost remains a pre-switch performance
+check.
+
+Schema-migration `20260929140000_named_resource_pointer.sql` adds the named key
+table to an existing phase schema and atomically clears all family rows, the
+marker, journal and repair record when the table was absent, including
+`project_name_summary` when the following TYR-36 slice has already installed it.
+The next family
+run rebuilds from canonical interpreted input; fenced reads remain stale until
+the new publication is live. Reapplying the migration preserves an existing
+publication. Fresh initialization installs the same table from the baseline.
+The reducer source participates in the shared content fingerprint, so an older
+family build cannot be served under the new binary's hash.
+
 Registration and lease state also keeps every registration, renewal, release,
 reservation, expiry change and token transfer of a lease or ENSv2 triple as a
 row of its own, never pruned. Each row keeps the name the adapter emitted,
@@ -1678,6 +1742,46 @@ changed its candidates, the pointers that name it, its proxy upgrades, a
 discovery edge, address or declaration of it, or the [active manifest
 set](glossary.md#active-manifest-set-family-block), with the
 manifests active at that block, the way the served resolver build does.
+
+One family is not event-keyed: the [name summary](glossary.md#name-summary)
+(`project_name_summary`) holds, per name, the fields the child and label lists
+filter, sort and count by inside one statement: the selected authority arm,
+whether the name has a serving resource, the registration status, the expiry
+and registration times, and whether the latest registry Transfer attributed to
+the name names the zero owner, attributed as the served child build attributes
+it (by the name the Transfer carries, else the latest named registry event of
+any kind of its resource and family, read from the readable interpreted events,
+else an active surface at its node). Every name with a
+surface has a row. The selected arm remains available when an unreadable token
+lineage withholds the composed name row: child relations still use that selection,
+while optional name fields remain absent. A list cannot compose those at read for every child of a parent, so
+the name row is composed at read (ruling J3) except for this summary, which is
+stored. After a block writes its other family rows, and on a block that writes
+none, the family step composes the summary again, with the composed name
+reader's own selection, for every name the block touched: the names, nodes and
+resources of every row its journal names, each resource widened to the names
+whose candidates, key states, association targets, lifecycle events, wrapper
+row, owner events or pointer read it, every name a registry event carries on a
+resource that a registry event of a block since the family marker's carries
+(such an event can move the resource's unnamed Transfers to another name, and a
+rebuild range composes once for all its blocks), every name whose surface
+appeared since the family marker's block, and every name whose stored
+`recompose_at` the block's time has reached. `recompose_at` is the first second
+at which the name's composition can change with no fact changing: a binding
+interval opening or closing, or a NameWrapper expiry or grace boundary. It is
+stored in Unix seconds, since a NameWrapper expiry can lie past the last
+instant a timestamp holds, and kept for a name that composes no row. A summary that
+changed is journalled and written like any other family row, so an undo
+restores it from the journal and composes nothing; a rebuild composes every
+surfaced name.
+
+A stored summary is therefore refreshed only when a block touches the name or
+its scheduled boundary passes, and the work list is deliberately no wider.
+Inputs that change in place without either, such as a normalizer recompute of
+a surface's visibility or a lineage readability flip, are covered because a
+recompute only happens with a code change that rotates the interpreter
+fingerprint, which rebuilds the families. A reorg goes through undo, which
+restores the summaries from the journal.
 
 These tables are shadows today. No production serving reader reads them, and
 no served value depends on them; only the family reducers, the step 3
@@ -1718,6 +1822,16 @@ much. It reads 0 only when the family marker is the served block, hash
 included. A marker above a lowered served marker counts the blocks in between,
 and a marker off the served branch (orphaned, or another hash at the served
 height) counts at least one block.
+
+With the publication switch on, verified lookup composes its full declared
+resolution topology and indexed inventory from one family snapshot. Alias and
+wildcard inputs share that snapshot; direct and ownerless ENS use its inventory
+boundary. Basenames retains its admitted L1 transport, execution-manifest
+provenance, and the Ethereum lineage position at or before the Base publication
+time. After RPC, the guarded writer holds the captured family marker through the
+comparison and ledger write. A new family block or rebuild refuses the write;
+the stopped served name/inventory batch is not a comparison input. See
+[verified lookup storage](storage.md#verified-lookup-storage).
 
 A family failure stops the loop at the last complete block and fails the
 Project run. Failures include a failing block, a fence its transaction refuses,
@@ -2229,9 +2343,11 @@ new truth family.
   Project also owns the [owned key families](#owned-key-families), their
   marker, undo journal and repair record. With the
   [publication switch](glossary.md#publication-switch) off, the default, no
-  served path reads them; with it on, only the serving fence reads the marker,
-  and served rows still come from the projection tables. The step 3 shadow
-  readers read the family tables in the test harnesses only.
+  served path reads them; with it on, the serving fences, the verified
+  lookup's guard, `/v1/status` and the served-lag gauges read the marker, and
+  the names group reads composed rows and the child routes read the child
+  families with the stored name summary. The step 3 shadow readers read
+  the family tables in the test harnesses only.
 - The API reads projections and request-scoped lookup output.
 - Storage exposes typed reads and phase publication boundaries; it does not
   grant adapters or API handlers a projection write shortcut.

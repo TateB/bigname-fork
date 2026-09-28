@@ -138,14 +138,20 @@ pub(crate) async fn get_history(
     if storage_cursor.is_none() {
         let parent = bigname_storage::load_name_current(&state.pool, &logical_name_id)
             .await
-            .map_err(|error| {
-                tracing::error!(error = ?error, "failed to load history parent projection");
-                V2Error::internal_error(format!(
-                    "failed to load history for {}/{}",
-                    namespace, normalized.normalized_name
-                ))
-            })?;
+            .map_err(super::name_rows_error(
+                super::SnapshotReadResource::Name,
+                |error| {
+                    tracing::error!(error = ?error, "failed to load history parent projection");
+                    V2Error::internal_error(format!(
+                        "failed to load history for {}/{}",
+                        namespace, normalized.normalized_name
+                    ))
+                },
+            ))?;
         if parent.is_none() {
+            snapshot
+                .ensure_families_published(&state, super::SnapshotReadResource::Name)
+                .await?;
             let current_fence = bigname_storage::capture_interpret_redo_fence(&state.pool)
                 .await
                 .map_err(|error| map_history_page_error(error, "failed to load name history"))?;
@@ -411,6 +417,8 @@ pub(crate) fn map_history_page_error(
     {
         tracing::debug!(error = ?error, "history page refused during Interpret redo");
         history_redo_stale_error()
+    } else if bigname_storage::families::name::is_publication_unavailable(&error) {
+        V2Error::stale("history resolver classification is temporarily unavailable")
     } else if error
         .downcast_ref::<bigname_storage::InvalidHistoryCursor>()
         .is_some()

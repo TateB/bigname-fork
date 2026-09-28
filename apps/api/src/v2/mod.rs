@@ -13,6 +13,7 @@ mod event_data;
 mod events;
 mod history;
 pub(crate) mod history_keyset;
+mod list_cursor;
 pub(crate) mod lookup;
 mod name_filter;
 mod name_record;
@@ -106,7 +107,7 @@ pub(crate) use registries::{
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use resolvers::{
-    BoundNames, BoundNamesCursorBinding, bound_names_cursor_payload, bound_names_storage_cursor,
+    BoundNames, BoundNamesCursorBinding, bound_names_next_cursor, bound_names_storage_cursor,
     build_resolver_overview,
 };
 pub(crate) use resolvers::{
@@ -118,8 +119,8 @@ pub(crate) use search::get_search;
 pub(crate) use search::public_namespace_read_test_hooks as search_public_namespace_read_test_hooks;
 pub(crate) use snapshots::{
     SnapshotReadResource, api_error_to_v2, api_error_to_v2_for_resource, as_of_meta,
-    decode_at_token, encode_at_token, resolve_v2_snapshot_for, sanitized_snapshot_internal_error,
-    snapshot_meta,
+    decode_at_token, encode_at_token, name_rows_error, resolve_v2_snapshot_for,
+    sanitized_snapshot_internal_error, snapshot_meta, stale_name_rows_api_error,
 };
 pub(crate) use status::get_status;
 pub(crate) use strict_query::{

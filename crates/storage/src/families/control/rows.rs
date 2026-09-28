@@ -210,6 +210,8 @@ pub struct BindingCandidate {
     pub logical_name_id: String,
     pub authority_arm: String,
     pub resource_id: String,
+    /// The surface binding's kind (`surface_bindings.binding_kind`).
+    pub binding_kind: Option<String>,
     pub canonicality_state: Option<String>,
     pub surface_namehash: Option<String>,
     /// The binding's place: its block and the transaction and log its provenance records, with
@@ -251,12 +253,24 @@ impl BindingCandidate {
             && self.active_to_seconds.is_none_or(|to| to >= cutoff)
     }
 
+    /// The clock seconds after `clock_seconds` at which [`Self::open_at`] can change: the first
+    /// second the interval's start admits, and the first second its end excludes.
+    pub fn clock_boundaries(&self, clock_seconds: i64) -> impl Iterator<Item = i64> {
+        [self.active_from_seconds, self.active_to_seconds]
+            .into_iter()
+            .flatten()
+            .filter(|value| value.is_finite())
+            .map(|value| value.floor() as i64)
+            .filter(move |boundary| *boundary > clock_seconds)
+    }
+
     pub(crate) fn from_row(row: &Value) -> Option<Self> {
         Some(Self {
             surface_binding_id: text(row, "surface_binding_id")?,
             logical_name_id: text(row, "logical_name_id")?,
             authority_arm: text(row, "authority_arm").unwrap_or_default(),
             resource_id: text(row, "resource_id")?,
+            binding_kind: text(row, "binding_kind"),
             canonicality_state: text(row, "canonicality_state"),
             surface_namehash: lower(row, "surface_namehash"),
             block_number: row.get("block_number").and_then(Value::as_i64)?,

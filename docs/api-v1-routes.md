@@ -42,22 +42,37 @@ All collection routes use the standard `page` object: `cursor`,
 `next_cursor`, `page_size`, nullable `total_count`, and `has_more`.
 
 The product collections `GET /v1/names`, subnames, address names, and
-permissions read current state. Their cursors
-bind anchors, filters, sorting, the served project publication (including
-same-height replacement) and manifest revisions. Counts and rows use the same
-filters; time-dependent expiry filtering retains the first page's evaluation
-time (with the [publication switch](glossary.md#publication-switch) on, it is
-the published block's timestamp on every page). These reads revalidate the publication before returning and disclose
-`meta.as_of`. A changed or unavailable publication, or an older unbound cursor,
-returns `409 stale` and requires restarting without a cursor. A first page,
-which has no cursor to drop, whose publication changed while it was read
-returns the same `409 stale` with a message saying so; retrying the same
-request reads the new publication. No historical
-projection is retained by a pagination token. The binding conservatively covers
-the requested namespace, or all active public namespaces when none is selected.
-A count spanning namespaces requires readable publications for all of them;
-otherwise it returns `409 stale` rather than a misleading partial total. Registry and resolver collections use the same publication fence
-in addition to their documented selected-chain position.
+permissions read current state. Every one of them revalidates the publication
+before returning and discloses `meta.as_of`; a page whose publication changed
+while it was read returns `409 stale`. Counts and rows use the same filters. No
+historical projection is retained by a pagination token. Their cursors differ:
+
+- `GET /v1/names` uses a
+  [current-state list cursor](glossary.md#current-state-list-cursor): it binds
+  the namespace, window, and order and holds only the last row's position. A
+  continuation reads the publication current when it runs, so a newer
+  publication does not refuse it, and the `409 stale` of a page whose
+  publication changed during its read asks for a retry with the same cursor.
+  A cursor carrying the publication fields that cursors issued before that
+  contract carried returns `400 invalid_input` once. See
+  [current-state list cursors](api-v1.md#current-state-list-cursors).
+- Subnames, address names, and permissions cursors bind anchors, filters,
+  sorting, the served project publication (including same-height replacement)
+  and manifest revisions. A changed or unavailable publication, or an older
+  cursor without that binding, returns `409 stale` and requires restarting
+  without the cursor. A first page, which has no cursor to drop, whose
+  publication changed while it was read returns the same `409 stale` with a
+  message saying so; retrying the same request reads the new publication.
+  Subnames' time-dependent expiry filtering retains the first page's
+  evaluation time (with the [publication switch](glossary.md#publication-switch)
+  on, it is the published block's timestamp on every page).
+
+The publication fence of these four lists conservatively covers the requested
+namespace, or all active public namespaces when none is selected. A count
+spanning namespaces requires readable publications for all of them; otherwise
+it returns `409 stale` rather than a misleading partial total. Registry and
+resolver collections use the same publication fence in addition to their
+documented selected-chain position.
 
 The history collections, `/v1/events`, name history (with or without
 `include=child_registrations`), and address history, are
@@ -115,8 +130,13 @@ These current-state and history collections still reject `at`,
 explicit `finality=latest` is accepted. `meta.as_of_token` is omitted because
 these collection publications cannot be replayed through `at`.
 
-Search and diagnostic-event cursors retain their existing latest-state behavior
-without a publication-validity claim. Search discloses request-scope `meta.as_of`
+Search and diagnostic-event cursors carry no publication-validity claim. Search
+cursors follow the
+[current-state list cursor](api-v1.md#current-state-list-cursors) contract; a
+search cursor issued before July 2026 that still carries a snapshot field, which
+search used to ignore, now returns `400 invalid_input`, and the client restarts
+from the first page. Diagnostic-event cursors keep their existing latest-state
+behavior. Search discloses request-scope `meta.as_of`
 and `meta.as_of_completeness`; diagnostic events omit snapshot metadata. The
 per-input `POST /v1/lookup` cursor contract is documented separately. Historical
 collection replay remains deferred.
@@ -474,6 +494,11 @@ collection route carry neither header.
   `chain_heads` positions. `indexed_block` maps to the `project` phase's
   `current_block_number`. `lag_seconds` compares the timestamps of the exact
   latest-head and project-current hashes in `bigname_phase.chain_lineage`.
+  With the [publication switch](glossary.md#publication-switch) on,
+  `indexed_block` and both lags come from the
+  [family marker](glossary.md#family-marker) instead. With either setting,
+  both lags are `null` while an Interpret or Project redo is in progress,
+  since lag is unknown during a redo.
   Missing head, project, or lineage rows preserve the existing nullable fields.
   If the phase schema has not been created yet, API startup uses an empty
   expected-chain set and this route returns the same empty, `degraded` status
@@ -516,7 +541,8 @@ collection route carry neither header.
   threshold defaults to 60 seconds so a long database statement between
   five-second runner heartbeat opportunities.
 - `lag_blocks` and `lag_seconds` are independently nonnegative. Each field
-  clamps its own canonical-versus-projected difference at `0`.
+  clamps its own canonical-versus-projected difference at `0`, and both are
+  `null` during an Interpret or Project redo.
 - Pagination behavior: none.
 - Status semantics: route-local ops `status` is `ready`, `degraded`, or
   `stale`. This is the only non-result `status` enum in `v2`. `project`
@@ -575,7 +601,14 @@ collection route carry neither header.
   guarded by `jsonb_typeof(registration.expiry) = 'number'`
   (`schema-v2/baseline/06_projections.sql`; migration
   `20260911120200_name_current_registration_expiry_idx.sql` for a phase schema
-  installed before the baseline carried it). A row whose only expiry is stored
+  installed before the baseline carried it). With the
+  [publication switch](glossary.md#publication-switch) on, the listing serves
+  the same rows from [composed name rows](glossary.md#composed-name-row),
+  found by walking the retained lifecycle events and NameWrapper states by
+  expiry through `project_lifecycle_event_expiry_idx`,
+  `project_lifecycle_event_inexact_expiry_idx` and
+  `project_wrapper_state_expiry_idx` (migration
+  `20260928140000_project_families_expiry_indexes.sql`). A row whose only expiry is stored
   in another form (an RFC 3339 string at `control.expiry`, or no expiry at all)
   is outside this listing by design; `GET /v1/names/{name}` still serves its
   `expires_at`. A negative numeric expiry, or one after 9999-12-31T23:59:59Z,
@@ -605,12 +638,15 @@ collection route carry neither header.
   `registration_status`.
 - Pagination behavior: standard collection pagination by `expires_at` in the
   requested order, ties broken by namespace, name, and namehash. Cursors are
-  bound to namespace, both bounds, and order. `page.total_count` is `null`.
-- Snapshot behavior: the page and its counts use the captured current
-  publication. The response discloses `meta.as_of`; continuation cursors bind
-  the publication and return `409 stale` requiring a restart when it changes.
-  A first page whose publication changes during the read returns `409 stale`
-  too and can simply be retried.
+  bound to namespace, both bounds, and order, and hold the last row's position;
+  see [current-state list cursors](api-v1.md#current-state-list-cursors).
+  `page.total_count` is `null`.
+- Snapshot behavior: each page uses the publication current when it is read and
+  discloses it in `meta.as_of`. A continuation is not refused when a newer
+  publication has landed since the previous page: it returns the rows after the
+  cursor's position in the new publication, so a name renewed between pages can
+  appear twice or not at all. A page whose publication changes during its own
+  read returns `409 stale` and can simply be retried, with or without its cursor.
   Historical replay through `at` is not supported.
 - Status semantics: an empty window returns `200` with empty `data`.
 
@@ -1214,7 +1250,10 @@ collection route carry neither header.
     reason covers an inventory row that Project replaced after the route
     loaded it and before it read the resolver's classification: the answer is
     withheld rather than computed from the older row and the newer
-    classification, and a retry reads the new row.
+    classification, and a retry reads the new row. Family inventories capture
+    classification in the same read snapshot as their selected writes; a later
+    family reset or completed replacement therefore leaves that coherent ABI
+    answer intact while its selected event evidence remains canonical and retained.
   - `abi_content_type_not_single_bit`: a selected ABI write names a content
     type that is zero or has more than one bit set. The ENS setters reject
     such types, so only a nonstandard resolver emits them; bigname neither
@@ -2831,7 +2870,8 @@ introduces it rebuilds Project from full history before serving the option; see
   every active public namespace's chains. An explicit namespace accounts only
   for that namespace's chains, even when another public namespace is readable.
   Returned search rows do not change that denominator. The response omits
-  `meta.as_of_token`, and its cursor carries no snapshot validity claim. True
+  `meta.as_of_token`, and its cursor carries no snapshot validity claim (see
+  [current-state list cursors](api-v1.md#current-state-list-cursors)). True
   as-of search enumeration is deferred to the
   revision-bound storage follow-up. Bare search reloads the active manifest
   declarations, selected authority chain heads, project generations, and
@@ -3068,10 +3108,16 @@ For a registrar lease first identified by a later readable observation, registra
   target may precede the selected position when the row was unchanged by later
   incremental publications; it may not be ahead, and a same-height target must
   match the selected hash. The projection-phase generation is revalidated after the
-  read, and an invalid target or changed generation returns `409 stale`. A
-  publication change during a continuation returns `409 stale` and requires
-  restarting without a cursor; a request without a cursor whose publication
-  changes during the read returns `409 stale` too and can simply be retried.
+  read, and an invalid target or changed generation returns `409 stale`; a
+  publication change during the read returns `409 stale` too and the request,
+  with or without its cursor, can simply be retried. The `bound_names` cursor
+  binds the resolver and sort, and `at` when the request pinned it, and holds the last name's position; a continuation without `at` reads the
+  current publication, so a name whose resolver changed between pages can be
+  missed or appear again. A continuation with `at` returns `409 stale` once a
+  later block has been published, before any row is read (a rebuild of the
+  same block is not detected). A malformed cursor
+  returns `400 invalid_input` before the resolver or publication is read (see
+  [current-state list cursors](api-v1.md#current-state-list-cursors)).
 - Status semantics: only a request without `at` and with `finality=latest`
   applies the latest served-head Interpret-redo check and returns retryable `409
   stale` while its selected chain is undergoing a redo. Historical `at` reads

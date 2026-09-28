@@ -12,11 +12,12 @@ use serde_json::{Value, json};
 use sqlx::{PgPool, Postgres, Transaction};
 
 use super::{
-    FamilyOptions, input,
+    FamilyOptions, hydrate, input,
     input::Revision,
     keys, manifests,
     marker::{self, FamilyMarker, RecordedToken},
     reduce, repair, store,
+    tables::NAME_SUMMARY,
 };
 use crate::{Marker, ProjectError, Result};
 
@@ -86,7 +87,11 @@ pub(crate) async fn apply(
     options: &FamilyOptions,
 ) -> Result<(FamilyMarker, BlockStats)> {
     let started = Instant::now();
+    let prepared = hydrate::prepare(pool, chain_id, number, plan, options).await?;
     let mut opened = open(pool, chain_id, number, plan).await?;
+    if let Some(prepared) = &prepared {
+        prepared.require_block(&opened.block)?;
+    }
     let (events, duplicate_anomalies) =
         input::block_events(&mut opened.transaction, chain_id, &opened.block).await?;
     if duplicate_anomalies > 0 {
@@ -110,6 +115,16 @@ pub(crate) async fn apply(
         prefetched: None,
     };
     reduce::apply(&mut opened.transaction, &context, &events, &mut rows).await?;
+    if let Some(prepared) = prepared {
+        prepared
+            .apply(
+                &mut opened.transaction,
+                &context,
+                &mut rows,
+                plan.sequence + 1,
+            )
+            .await?;
+    }
     let (next, mut stats) = publish(opened, chain_id, &rows, plan, options).await?;
     stats.duplicate_anomalies = duplicate_anomalies;
     stats.elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -282,6 +297,8 @@ async fn write(
     let changes = rows.written();
     let mut stats = BlockStats::default();
     if changes.is_empty() {
+        // The name summaries follow the block clock too, which moves with no row changing.
+        refresh_derived(transaction, chain_id, block, &mut stats).await?;
         return Ok(stats);
     }
     let journal = changes
@@ -308,9 +325,25 @@ async fn write(
         let written = store::replace(transaction, super::tables::spec(name), keys, inserts).await?;
         stats.rows.insert(name, written);
     }
-    let touched = super::derived::touched(transaction, chain_id, block.number).await?;
-    super::derived::refresh(transaction, chain_id, &touched).await?;
+    refresh_derived(transaction, chain_id, block, &mut stats).await?;
     Ok(stats)
+}
+
+/// Refresh the derived rows of the keys the block touched, and count the name summaries it
+/// wrote and journalled like a family table's.
+async fn refresh_derived(
+    transaction: &mut Transaction<'_, Postgres>,
+    chain_id: &str,
+    block: &input::BlockHeader,
+    stats: &mut BlockStats,
+) -> Result<()> {
+    let touched = super::derived::touched(transaction, chain_id, block.number).await?;
+    let summary = super::derived::refresh(transaction, chain_id, &touched).await?;
+    if summary.rows > 0 {
+        stats.rows.insert(NAME_SUMMARY.name, summary.rows);
+    }
+    stats.undo_rows += summary.undo_rows;
+    Ok(())
 }
 
 pub(crate) async fn insert_journal(
