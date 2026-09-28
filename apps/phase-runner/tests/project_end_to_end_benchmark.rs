@@ -51,6 +51,7 @@ use std::{str::FromStr, time::Instant};
 
 use anyhow::{Context, Result, ensure};
 use bigname_lookup::ChainRpcUrls;
+use bigname_project::families::RebuildRanges;
 use bigname_storage::{
     PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS, load_name_current, load_served_project_generation,
 };
@@ -484,6 +485,16 @@ async fn run(
     let project = ProjectPhase::with_hydration(pool.clone(), ChainRpcUrls::default())
         .with_family_settings(FamilySettings {
             finish_each_batch: true,
+            // With no safe block published the production switch point sits 256 blocks under
+            // the target, below every fixture block, so no fixture block would form a range; the
+            // fixture corpus puts every work block below the target in rebuild ranges, so each
+            // rebuild comparison covers them. A disposable copy keeps the production policy, so
+            // its timing measures what a deployment runs.
+            rebuild_ranges: if corpus {
+                RebuildRanges::Through(i64::MAX)
+            } else {
+                RebuildRanges::BelowSafe
+            },
             ..FamilySettings::default()
         })
         .with_metrics_feed(metrics_feed.clone());

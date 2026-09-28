@@ -107,6 +107,7 @@ pub(crate) async fn apply(
         manifests: &opened.manifests,
         manifests_changed: opened.prior.admission_manifests.as_deref()
             != Some(opened.manifests.key.as_str()),
+        prefetched: None,
     };
     reduce::apply(&mut opened.transaction, &context, &events, &mut rows).await?;
     let (next, mut stats) = publish(opened, chain_id, &rows, plan, options).await?;
@@ -278,7 +279,7 @@ async fn write(
     block: &input::BlockHeader,
     rows: &store::RowSet,
 ) -> Result<BlockStats> {
-    let changes = rows.changes();
+    let changes = rows.written();
     let mut stats = BlockStats::default();
     if changes.is_empty() {
         return Ok(stats);

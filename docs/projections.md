@@ -1685,7 +1685,9 @@ no served value depends on them; only the family reducers, the step 3
 After each Project batch commits and its progress is recorded, the phase runner
 applies the families block by block, each block in
 a transaction of its own, from the [family marker](glossary.md#family-marker)
-(`project_family_marker`) up to the served marker. A batch's publication never
+(`project_family_marker`) up to the served marker. Only a rebuild groups
+blocks: below its switch point it applies the work blocks in [rebuild
+ranges](glossary.md#rebuild-range), described below. A batch's publication never
 waits for them, since it has committed before they run, but the next batch
 waits for one budgeted family run. The hook is driven by served batches and its
 pending work is held in memory, so a restart at a stalled head does not run the
@@ -1749,6 +1751,55 @@ order](glossary.md#canonical-event-order) and count on
 `phase_runner_project_family_duplicate_anomalies_total`. A failure stops the
 loop for that batch and leaves the served publication and its progress as they
 were; the next batch catches up from where the marker stands.
+
+A rebuild (a first build, or a rebuild after a content hash change, a redo
+below the kept journal or an orphaned lineage) applies its work blocks at or
+below a switch point several to a transaction, in [rebuild
+ranges](glossary.md#rebuild-range). The switch point is the chain's safe block
+minus 5, read from `chain_heads` once per run, or 256 blocks below the target
+when no safe block is published. Work blocks above it, and the target, which
+completes the rebuild, go one to a transaction as above, so a reorg near the
+head still undoes single blocks. The switch follows the safe block, not the
+finalized one, by the product owner's ruling; a safe block is not final, and a
+reorg whose fork point lies inside a range undoes that whole range and replays
+from its predecessor. The first range after the rebuild's reset holds one work
+block. After each range commits, the next asks for twice the blocks that range
+actually applied, which after an event-cap cut is fewer than it asked for; a
+later run that resumes the rebuild starts by asking for its whole remaining
+budget. A request is capped at 1,024 work blocks and at what the run's budget
+has left, since each block counts against the budget: under the default budget
+of 256 blocks a run the budget is the binding cap, and 1,024 binds only when a
+run's budget is larger. A range also ends at 4,096 events, counted per block
+before duplicates are dropped: it ends before the block that would take it past
+the cap and always holds its first block, so a first block over the cap is a
+range of its own. A range opens with its first block as a single block does,
+passing the fences above once and reading that block's lineage row, then reads
+the remaining blocks' lineage rows in one statement and their event counts in
+another. For the blocks it keeps it reads the events, surface bindings and
+resolver activations in one statement each, grouped back by block: events are
+ordered and taken once per `event_identity` within their own block, and each
+block takes its own active manifest set. Before folding it loads, once per
+table, the rows the blocks' events and prefetched bindings and activations
+name; a row a reducer finds only while folding is loaded then. It folds the
+blocks one at a time through the same reducers, each block seeing the families
+as the blocks before it left them. The eight reads that go to a family table
+mid-fold also see the rows the range changed and has not written yet: the name
+candidates, registry-only candidates, retained grants and predecessor releases
+of F1's binding candidates, F3's stored classifications, the lease candidates
+and unnamed registrar rows of name decoding, and the lifecycle rows of F13's
+registrant fold. The classification read adds the resolvers the range stored;
+one the range removed still comes from the table, but with no candidate left it
+gets no row, as block by block. A block classifies resolvers and reads a name's
+current binding at its own height. The range then journals, for every row it
+changed, the row as it was before the range and the prior marker, under its
+last block, writes once, advances the marker to its last block still in
+`bootstrap_pending`, prunes and commits: one generation. An undo takes the
+whole range back at once, so undo to a block inside a range stops on the
+range's predecessor. The family tables, and the marker apart from its
+generation, equal applying the same blocks one by one
+(`crates/project/tests/families_range.rs`, and every test's rebuild comparison,
+which rebuilds both ways); the undo rows and the generation count differ by
+design. Redo replay and live follow stay one block to a transaction.
 
 Facts within one emission batch apply in adapter write order: within one
 block, transaction and log the trailing
@@ -1838,7 +1889,9 @@ gives, which checks the digits before it casts.
 Undo rows are kept back to the lowest of: 256 blocks below the family marker,
 the chain's finalized block, its safe block, and the block an active repair
 still has to undo to or replay from. Without a finalized and a safe block
-nothing is pruned.
+nothing is pruned. A rebuild range's undo rows are one journal entry under the
+range's last block (the `project_family_undo` table comment still says "per
+applied block").
 
 A Project redo undoes the families from their journal down to the block before
 the redo range and replays them to the served marker. A marker left on a block
@@ -1863,8 +1916,14 @@ move to replaying, and the final replayed or rebuilt block with the
 completion. A run that stops between blocks is resumed by the next. A redo
 retried after it completed is recognised only while the marker, its
 generation and the content hash still match. A rebuild refreshes the planner
-statistics of the family tables after 1, 2, 4, 8, ... blocks rebuilt since its
-reset, counted across runs from the generation the reset recorded.
+statistics of the family tables after 1, 2, 4, 8, ... generations (single
+blocks or rebuild ranges) committed since its reset, counted across runs from
+the generation the reset recorded. Because a range is one generation, a
+rebuild in ranges refreshes after more blocks than one block by block. With
+the default 256-block budget, no event-cap cuts and work still below the
+range switch, the first run commits nine generations (1, 2, 4, ..., 128 and 1
+blocks) and each later run one, so the fifth refresh (after 16 generations)
+lands after 2,048 work blocks and the eighth (after 128) after 30,720.
 
 The families differ from the served build in these known places, which the
 steps that read them must key on. Each label names a family as the

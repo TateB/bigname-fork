@@ -7,7 +7,7 @@ mod families_support;
 use anyhow::Result;
 use bigname_project::{
     Marker,
-    families::{self, FamilyMode, FamilyOptions},
+    families::{self, FamilyMode, FamilyOptions, RebuildRanges},
 };
 use families_support::{CHAIN, CONTENT_HASH, Fixture, hash};
 use serde_json::{Value, json};
@@ -485,25 +485,55 @@ async fn a_key_written_twice_in_one_block_undoes_to_its_state_before_the_block()
     fixture.cleanup().await
 }
 
-// A rebuild refreshes the family statistics after 1, 2, 4, 8, ... blocks since its reset, counted
-// across runs: a rebuild split over two runs refreshes at each of those points once.
+// A rebuild refreshes the family statistics after 1, 2, 4, 8, ... generations since its reset,
+// counted across runs: a rebuild split over two runs refreshes at each of those points once. A
+// generation is one committed transaction, a single block or a range: block by block the
+// generations are the blocks, in ranges fewer.
 #[tokio::test]
 async fn a_rebuild_over_two_runs_refreshes_the_statistics_once_per_threshold() -> Result<()> {
     let fixture = Fixture::new("families_repair_statistics", 40).await?;
     seed(&fixture, 11..=30).await?;
-    let small = FamilyOptions::new(CONTENT_HASH).with_max_blocks_per_run(5);
+    let small = FamilyOptions::new(CONTENT_HASH)
+        .with_max_blocks_per_run(5)
+        .with_rebuild_ranges(RebuildRanges::Off);
     let first = fixture.apply_with(30, FamilyMode::Rebuild, &small).await;
     assert_eq!((first.skipped.as_deref(), first.blocks), (None, 5));
     assert_eq!(
         first.statistics_refreshes, 3,
-        "after 1, 2 and 4 rebuilt blocks"
+        "after 1, 2 and 4 generations, one block each"
     );
     let second = fixture.apply_with(30, FamilyMode::Normal, &small).await;
     assert_eq!((second.skipped.as_deref(), second.blocks), (None, 5));
     assert_eq!(
         second.statistics_refreshes, 1,
-        "after 8 rebuilt blocks; 1, 2 and 4 were the first run's"
+        "after 8 generations; 1, 2 and 4 were the first run's"
     );
+
+    // In ranges, the first run commits [11], [12, 13] and [14, 15]: three generations for five
+    // blocks, refreshed after the first and the second. The second run resumes the rebuild with
+    // one range of its whole budget, [16 to 20], generation 4; the refresh after it runs at the
+    // start of the third run, before that run's range [21 to 25].
+    let ranged = FamilyOptions::new(CONTENT_HASH)
+        .with_max_blocks_per_run(5)
+        .with_rebuild_ranges(RebuildRanges::Through(30));
+    let first = fixture.apply_with(30, FamilyMode::Rebuild, &ranged).await;
+    assert_eq!(
+        (first.skipped.as_deref(), first.blocks, first.ranges),
+        (None, 5, 3)
+    );
+    assert_eq!(first.statistics_refreshes, 2, "after 1 and 2 generations");
+    let second = fixture.apply_with(30, FamilyMode::Normal, &ranged).await;
+    assert_eq!(
+        (second.skipped.as_deref(), second.blocks, second.ranges),
+        (None, 5, 1)
+    );
+    assert_eq!(second.statistics_refreshes, 0, "generation 4 ends the run");
+    let third = fixture.apply_with(30, FamilyMode::Normal, &ranged).await;
+    assert_eq!(
+        (third.skipped.as_deref(), third.blocks, third.ranges),
+        (None, 5, 1)
+    );
+    assert_eq!(third.statistics_refreshes, 1, "after 4 generations");
     fixture.cleanup().await
 }
 
@@ -602,10 +632,12 @@ async fn edge_starting_at(fixture: &Fixture, block: i64) -> Result<()> {
 // read it has the whole remainder and adds the target when no work falls on it; with more, it
 // applies its budget, reports it spent, and leaves the target to the next run. Every block carries
 // two events, and one case adds a discovery edge that starts on an event block: each block is
-// work once.
+// work once. Each case runs with ranges off and with every work block below the target in
+// ranges, on a fresh fixture each: the budget counts the blocks of a range as it counts single
+// blocks, so both see the same runs, and only the ranged runs that apply work below the target
+// commit ranges.
 #[tokio::test]
 async fn a_rebuild_run_reads_one_work_block_past_its_budget() -> Result<()> {
-    let small = FamilyOptions::new(CONTENT_HASH).with_max_blocks_per_run(3);
     // (work blocks, a discovery edge starting at, per run: marker, blocks applied, budget spent)
     type Run = (i64, u64, bool);
     let cases: [(&[i64], Option<i64>, &[Run]); 7] = [
@@ -618,30 +650,49 @@ async fn a_rebuild_run_reads_one_work_block_past_its_budget() -> Result<()> {
         (&[5, 7, 9], Some(7), &[(9, 3, true), (12, 1, false)]),
     ];
     for (work, edge, runs) in cases {
-        let fixture = Fixture::new("families_repair_work_budget", 20).await?;
-        for &block in work {
-            seed(&fixture, block..=block).await?;
+        for ranges in [RebuildRanges::Off, RebuildRanges::Through(12)] {
+            let small = FamilyOptions::new(CONTENT_HASH)
+                .with_max_blocks_per_run(3)
+                .with_rebuild_ranges(ranges);
+            let fixture = Fixture::new("families_repair_work_budget", 20).await?;
+            for &block in work {
+                seed(&fixture, block..=block).await?;
+            }
+            if let Some(block) = edge {
+                edge_starting_at(&fixture, block).await?;
+            }
+            let mut seen = Vec::new();
+            for run in 0..runs.len() {
+                let mode = if run == 0 {
+                    FamilyMode::Rebuild
+                } else {
+                    FamilyMode::Normal
+                };
+                // A fresh fixture has no family marker before its first run.
+                let before = match run {
+                    0 => None,
+                    _ => fixture.marker().await?.0,
+                };
+                let outcome = fixture.apply_with(12, mode, &small).await;
+                assert_eq!(outcome.skipped, None, "{work:?} {ranges:?}");
+                let marker = fixture.marker().await?.0.unwrap_or(-1);
+                // The target is applied on its own, so the run's other blocks are its work
+                // below the target.
+                let target = u64::from(marker == 12 && before != Some(12));
+                let below_target = outcome.blocks - target;
+                assert_eq!(
+                    outcome.ranges > 0,
+                    matches!(ranges, RebuildRanges::Through(_)) && below_target > 0,
+                    "work {work:?}, edge {edge:?}, {ranges:?}, run {run}: {} ranges for {} \
+                     blocks",
+                    outcome.ranges,
+                    outcome.blocks
+                );
+                seen.push((marker, outcome.blocks, outcome.budget_exhausted));
+            }
+            assert_eq!(seen, runs, "work {work:?}, edge {edge:?}, {ranges:?}");
+            fixture.cleanup().await?;
         }
-        if let Some(block) = edge {
-            edge_starting_at(&fixture, block).await?;
-        }
-        let mut seen = Vec::new();
-        for run in 0..runs.len() {
-            let mode = if run == 0 {
-                FamilyMode::Rebuild
-            } else {
-                FamilyMode::Normal
-            };
-            let outcome = fixture.apply_with(12, mode, &small).await;
-            assert_eq!(outcome.skipped, None, "{work:?}");
-            seen.push((
-                fixture.marker().await?.0.unwrap_or(-1),
-                outcome.blocks,
-                outcome.budget_exhausted,
-            ));
-        }
-        assert_eq!(seen, runs, "work {work:?}, edge {edge:?}");
-        fixture.cleanup().await?;
     }
     Ok(())
 }

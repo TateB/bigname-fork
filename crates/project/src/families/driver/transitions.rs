@@ -110,13 +110,33 @@ impl Run<'_> {
         if whole && blocks.last() != Some(&self.target.number) {
             blocks.push(self.target.number);
         }
-        for number in blocks {
+        // Work blocks at or below the switch point go in ranges; the rest and the target one by
+        // one. Right after the reset the first range holds one block, so the families gain rows
+        // and the statistics refresh below runs before a range grows large; a run that resumes
+        // a rebuild starts with a range of its whole remaining budget. The next range asks for
+        // twice the blocks the last one applied, up to the cap, and a range never holds more
+        // blocks than the budget has left.
+        let switch = self.switch_point().await?;
+        let ranged = |number: &i64| {
+            *number != self.target.number && switch.is_some_and(|switch| *number <= switch)
+        };
+        let cap = usize::try_from(self.options.max_range_blocks)
+            .unwrap_or(usize::MAX)
+            .max(1);
+        let mut size = if family.sequence == reset_sequence {
+            1
+        } else {
+            cap
+        };
+        let mut index = 0;
+        while let Some(&number) = blocks.get(index) {
             if !self.budget.take(outcome) {
                 return Ok(());
             }
             // A rebuild grows the families from empty faster than autovacuum samples them, and
             // plans made on empty-table statistics scan whole families per key. Refresh the
-            // statistics after 1, 2, 4, 8, ... blocks rebuilt since the reset, across runs.
+            // statistics after 1, 2, 4, 8, ... generations (single blocks or ranges) rebuilt
+            // since the reset, across runs.
             let rebuilt = u64::try_from(family.sequence - reset_sequence).unwrap_or(0);
             if rebuilt > 0 && rebuilt.is_power_of_two() {
                 analyze(self.pool, self.chain_id).await;
@@ -132,11 +152,22 @@ impl Run<'_> {
                 role: block::Role::Rebuild { attempt, completes },
                 manifests: &manifests,
             };
+            let eligible = blocks[index..].iter().take_while(|n| ranged(n)).count();
+            if eligible > 0 {
+                let (next, applied) = self
+                    .range(&blocks[index..index + eligible], size, &plan, outcome)
+                    .await?;
+                family = next;
+                index += applied;
+                size = applied.saturating_mul(2).min(cap);
+                continue;
+            }
             let (next, stats) = block::apply(self.pool, self.chain_id, number, &plan, self.options)
                 .await
                 .map_err(|error| at_block(number, error))?;
             outcome.record(stats);
             family = next;
+            index += 1;
         }
         Ok(())
     }
