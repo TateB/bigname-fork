@@ -598,6 +598,7 @@ check_served_projection_removal() {
             fi
             emit_phase_migration "$ROOT/migrations/20260929170000_project_name_summary_owner.sql" baseline-first
             emit_phase_migration "$ROOT/migrations/20260929180000_project_resource_pointer_root_node_index.sql" baseline-first
+            emit_phase_migration "$ROOT/migrations/20260929190000_project_family_name_lookup_indexes.sql" baseline-first
         done
         printf "SET bigname.removal_schema = '%s_removal'; SET bigname.fresh_schema = '%s_fresh';\n" "$original_schema" "$original_schema"
         cat "$ROOT/schema-v2/fixtures/removal-parity.sql"
@@ -711,7 +712,8 @@ for migration_file in \
     "$ROOT/migrations/20260929140000_named_resource_pointer.sql" \
     "$ROOT/migrations/20260929160000_remove_served_projections.sql" \
     "$ROOT/migrations/20260929170000_project_name_summary_owner.sql" \
-    "$ROOT/migrations/20260929180000_project_resource_pointer_root_node_index.sql"
+    "$ROOT/migrations/20260929180000_project_resource_pointer_root_node_index.sql" \
+    "$ROOT/migrations/20260929190000_project_family_name_lookup_indexes.sql"
 do
     emit_phase_migration "$migration_file" empty-schema | run_psql
 done
@@ -1039,7 +1041,9 @@ for migration_file in \
     "$ROOT/migrations/20260929170000_project_name_summary_owner.sql" \
     "$ROOT/migrations/20260929170000_project_name_summary_owner.sql" \
     "$ROOT/migrations/20260929180000_project_resource_pointer_root_node_index.sql" \
-    "$ROOT/migrations/20260929180000_project_resource_pointer_root_node_index.sql"
+    "$ROOT/migrations/20260929180000_project_resource_pointer_root_node_index.sql" \
+    "$ROOT/migrations/20260929190000_project_family_name_lookup_indexes.sql" \
+    "$ROOT/migrations/20260929190000_project_family_name_lookup_indexes.sql"
 do
     emit_phase_migration "$migration_file" baseline-first | run_psql
 done
