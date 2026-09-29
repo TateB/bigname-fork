@@ -47,16 +47,16 @@ before returning and discloses `meta.as_of`; a page whose publication changed
 while it was read returns `409 stale`. Counts and rows use the same filters. No
 historical projection is retained by a pagination token. Their cursors differ:
 
-- `GET /v1/names` uses a
+- `GET /v1/names` and `GET /v1/addresses/{address}/names?relation=former_registrant` use a
   [current-state list cursor](glossary.md#current-state-list-cursor): it binds
-  the namespace, window, and order and holds only the last row's position. A
+  the namespace, window, order, and address when applicable, and holds only the last row's position. A
   continuation reads the publication current when it runs, so a newer
   publication does not refuse it, and the `409 stale` of a page whose
   publication changed during its read asks for a retry with the same cursor.
   A cursor carrying the publication fields that cursors issued before that
   contract carried returns `400 invalid_input` once. See
   [current-state list cursors](api-v1.md#current-state-list-cursors).
-- Subnames, address names, and permissions cursors bind anchors, filters,
+- Subnames, address names other than `former_registrant`, and permissions cursors bind anchors, filters,
   sorting, the served project publication (including same-height replacement)
   and manifest revisions. A changed or unavailable publication, or an older
   cursor without that binding, returns `409 stale` and requires restarting
@@ -629,10 +629,12 @@ collection route carry neither header.
   expiry with the entry, so it is outside every window; `GET /v1/names/{name}`
   serves it as `released` without `expires_at`. A released row has
   `registration_status: released`, its old `expires_at`, and
-  no `owner` or `registrant`. The row shape has no `lapsed_registration` field;
-  `GET /v1/names/{name}` serves that block, with the last holder, for a released
-  ENSv1 name. A client that wants only held names filters rows on
-  `registration_status`.
+  no `owner` or `registrant`, and carries the
+  [`lapsed_registration`](api-v1.md#lapsed-registration) block with the ended
+  registration's last holder, as `GET /v1/names/{name}` serves it. A client that
+  wants only held names filters rows on `registration_status`; one that wants
+  the names a given address last held asks
+  `GET /v1/addresses/{address}/names?relation=former_registrant`.
 - Pagination behavior: standard collection pagination by `expires_at` in the
   requested order, ties broken by namespace, name, and namehash. Cursors are
   bound to namespace, both bounds, and order, and hold the last row's position;
@@ -677,12 +679,13 @@ collection route carry neither header.
   `registration_id` is the BaseRegistrar lease whether or not the name is
   wrapped; see
   [registration identity of wrapped names](api-v1.md#registration-identity-of-wrapped-names).
-  A released ENSv1 name keeps its lapsed `expires_at`, serves no current
-  `registrant`, and carries
-  `lapsed_registration: {registrant?, held_through?, released_at?}` with the
-  holder the lease had when it lapsed; see
-  [lapsed registration](api-v1.md#lapsed-registration). The block is omitted
-  for every name that is not released. An ENSv1 wrapper-backed row also carries
+  A released ENSv1 lease or a supported ENSv2 expiry/unregister release carries
+  `lapsed_registration: {registrant?, held_through?, released_at?, release_kind?}`
+  with its last holder and how it ended; see
+  [lapsed registration](api-v1.md#lapsed-registration) for the supported causes,
+  pinned contract evidence, and expiry/grace field rules. It serves no current
+  `registrant`. The block is omitted for names that are not released and for other
+  release causes. An ENSv1 wrapper-backed row also carries
   `wrapper_state` with the current [`wrapped`](glossary.md#wrapped-namewrapper-state),
   [`emancipated`](glossary.md#emancipated-namewrapper-state), or
   [`locked`](glossary.md#locked-namewrapper-state) lifecycle value and the typed
@@ -2732,7 +2735,39 @@ introduces it rebuilds Project from full history before serving the option; see
   [address collections](projections.md#address-and-child-collections)), so a
   page that omits a name does not prove the address holds no permission on
   it. `dedupe=name` groups by name surface and is the
-  default; `dedupe=registration` groups by registration resource.
+  default; `dedupe=registration` groups by registration resource on the authority
+  and `resolves_to` listings.
+  `relation=former_registrant` lists the released names whose ended
+  registration the path address last held, for renewal reminders: an ENSv1
+  lease that lapsed past its grace, or an ENSv2 registration that expired or was
+  unregistered (the row's `lapsed_registration.registrant`; see
+  [lapsed registration](api-v1.md#lapsed-registration)). It stands alone like
+  `resolves_to`: combined with another relation or `any` it returns
+  `400 invalid_input`, `any` never includes it, and it never feeds `owner`,
+  `manager`, `registrant` or a permission. A re-registration of the name drops
+  it. Rows carry `relations: ["former_registrant"]`, `registration_status:
+  released`, the ended registration's `expires_at` and `grace_ends_at`, and the
+  `lapsed_registration` block, and no current `owner` or `registrant`. The read
+  takes `expires_after` (inclusive) and `expires_before` (exclusive) as RFC 3339
+  UTC bounds on `expires_at`, which only this relation accepts; a row without
+  an expiry (an unregistered ENSv2 name) is outside every window. It sorts by
+  `expires_at` only (`sort=expires_at` is the default here; any other value is
+  `400 invalid_input`), ties broken by namespace, name and namehash, with rows
+  without an expiry last ascending and first descending. `coin_type`,
+  `authority`, `is_migrated`, `q` and `include` return `400 invalid_input` with
+  it. Only name deduplication is supported: omitted `dedupe` and `dedupe=name`
+  are equivalent; `dedupe=registration` returns `400 invalid_input`, including
+  with a continuation cursor. Released names have no current registration resource
+  by which this relation can group them. `page.total_count` is `null`. Its cursor binds the address,
+  namespace, both bounds and order, and holds the last row's position, as on
+  `GET /v1/names`. An app looking for names still renewable in grace asks for
+  `expires_after` at `now` minus the longest grace and checks `grace_ends_at`
+  and the contract's own renewal rules: an explicitly unregistered ENSv2
+  name cannot be renewed through the ETHRegistrar, whose grace renewal requires
+  a retained latest owner; unregister burns that owner and advances the token
+  version.
+  (upstream: .refs/ens_v2_sepolia_20260916/contracts/src/registry/PermissionedRegistry.sol:L224-L235 @ ens_v2_sepolia_20260916@366de741)
+  (upstream: .refs/ens_v2_sepolia_20260916/contracts/src/registrar/ETHRegistrar.sol:L264-L291 @ ens_v2_sepolia_20260916@366de741)
   `relation=resolves_to` is the resolver-record relation: the names whose
   current `addr:<coin_type>` resolver record resolves to the path address, read
   from the address-to-record family indexes rather than the authority
@@ -2803,7 +2838,8 @@ introduces it rebuilds Project from full history before serving the option; see
   and therefore no permission authority, omits it.
   Address-name rows add `is_primary` and `relations`, where `relations` is the
   subset of `owner`, `manager`, `registrant`, and `role_holder` that matched,
-  or `["resolves_to"]` on a `relation=resolves_to` read. A `resolves_to` row also
+  or `["resolves_to"]` / `["former_registrant"]` on the corresponding relation read.
+  A `resolves_to` row also
   carries `resolution: {coin_type, record_key}`: the coin type asked about and
   the resolver record key that answered (`addr:<coin_type>`, or
   `addr:2147483648` when the ENSIP-19 default EVM address answered). On a

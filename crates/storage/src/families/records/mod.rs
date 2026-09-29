@@ -14,6 +14,7 @@ mod address_roles;
 mod assemble;
 mod candidates;
 mod facts;
+mod former_registrants;
 mod inventory;
 mod links;
 mod mirror;
@@ -40,6 +41,10 @@ pub(crate) use address_names::{compose_address_name_rows, name_relations_on};
 pub use facts::{
     ResolverClassification as FamilyResolverClassification,
     load_classification as load_family_resolver_classification,
+};
+pub use former_registrants::{
+    FormerRegistrantFilter, FormerRegistrantPage, lapsed_registrant,
+    load_family_former_registrant_page,
 };
 pub use inventory::{
     FamilyAttribution, FamilyRecordInventory, load_family_record_counts,

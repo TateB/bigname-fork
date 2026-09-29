@@ -308,7 +308,7 @@ fn parse_timestamp_bound(
 
 /// Canonical RFC 3339 UTC form; fractional seconds are kept only when present so
 /// whole-second inputs keep the same shape as row timestamps.
-fn format_timestamp_bound(value: OffsetDateTime) -> String {
+pub(super) fn format_timestamp_bound(value: OffsetDateTime) -> String {
     let value = value.to_offset(sqlx::types::time::UtcOffset::UTC);
     let mut formatted = format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
@@ -358,6 +358,16 @@ pub(crate) fn parse_relation_set_param(value: Option<&str>) -> V2Result<Option<R
     if mixes_resolves_to {
         return Err(V2Error::invalid_input(
             "relation=resolves_to cannot be combined with owner, manager, registrant, role_holder, or any",
+        ));
+    }
+    let mixes_former_registrant = relations.contains(&Relation::FormerRegistrant)
+        && (has_any
+            || relations
+                .iter()
+                .any(|relation| *relation != Relation::FormerRegistrant));
+    if mixes_former_registrant {
+        return Err(V2Error::invalid_input(
+            "relation=former_registrant cannot be combined with another relation or any",
         ));
     }
     if has_any {

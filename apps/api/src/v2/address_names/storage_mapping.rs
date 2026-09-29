@@ -13,7 +13,7 @@ pub(crate) fn relation_to_storage(relation: Relation) -> Option<AddressNameRelat
         Relation::Manager => Some(AddressNameRelation::EffectiveController),
         Relation::Registrant => Some(AddressNameRelation::Registrant),
         Relation::RoleHolder => Some(AddressNameRelation::RoleHolder),
-        Relation::ResolvesTo => None,
+        Relation::ResolvesTo | Relation::FormerRegistrant => None,
     }
 }
 
