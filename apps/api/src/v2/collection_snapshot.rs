@@ -82,22 +82,7 @@ impl CollectionSnapshot {
         }
         let token = namespaces.collection_fingerprint();
 
-        let evaluated_at = if bigname_storage::publication_source::serve_from_families() {
-            publication_clock(&namespaces)?
-        } else {
-            match cursor.as_ref() {
-                Some(cursor) => bigname_storage::parse_rfc3339_utc_timestamp(
-                    cursor
-                        .evaluated_at
-                        .as_deref()
-                        .ok_or_else(restart_required)?,
-                )
-                .map_err(|_| super::cursor::invalid_cursor_error())?,
-                None => OffsetDateTime::now_utc()
-                    .replace_nanosecond(0)
-                    .expect("zero nanoseconds are valid"),
-            }
-        };
+        let evaluated_at = { publication_clock(&namespaces)? };
         let snapshot = Self {
             namespaces,
             token,
@@ -137,18 +122,15 @@ impl CollectionSnapshot {
         bounds
     }
 
-    /// Under the [publication switch](bigname_storage::publication_source), a name with no
+    /// A name with no
     /// composed row may be one a family rebuild has yet to reach: before a route answers it not
     /// found, the family markers of this snapshot's chains must be servable, otherwise it is the
-    /// stale 409 for `resource`. A no-op with the switch off.
+    /// stale 409 for `resource`.
     pub(crate) async fn ensure_families_published(
         &self,
         state: &AppState,
         resource: super::SnapshotReadResource,
     ) -> V2Result<()> {
-        if !bigname_storage::publication_source::serve_from_families() {
-            return Ok(());
-        }
         let chains: Vec<String> = self.block_bounds().into_keys().collect();
         bigname_storage::families::name::ensure_family_publications(&state.pool, &chains)
             .await
@@ -207,7 +189,7 @@ impl CollectionSnapshot {
     }
 }
 
-/// The expiry clock while the publication switch is on: the published block's time, on a first
+/// The expiry clock: the published block's time, on a first
 /// page and every continuation alike (a cursor's `evaluated_at` is still written but no longer
 /// read). Every selected position is the family marker's block, since the fence admits a scope
 /// only when the marker sits exactly there, so its lineage timestamp is the marker's

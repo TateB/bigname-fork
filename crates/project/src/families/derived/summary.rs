@@ -1,4 +1,4 @@
-//! The name summary family (`project_name_summary`, TYR-36 step 7b slice 2b): after a block (or a
+//! The name summary family (`project_name_summary`): after a block (or a
 //! rebuild range) writes its family rows, the summaries of the names it touched are composed
 //! again from the families as they now stand, by the composed name reader's own code
 //! (`bigname_storage::families::name::compose_name_summaries`) on the block's transaction, and
@@ -84,7 +84,7 @@ pub(super) async fn refresh(
     let mut keys = Vec::new();
     let mut rows = Vec::new();
     for chunk in names.chunks(CHUNK) {
-        let fresh = bigname_storage::families::name::compose_name_summaries(
+        let fresh = bigname_storage::families::name::compose_name_summary_publication(
             transaction,
             &publication,
             chunk,
@@ -96,6 +96,21 @@ pub(super) async fn refresh(
                  {error:#}"
             ))
         })?;
+        if !fresh.null_resolver_names.is_empty() {
+            sqlx::query(
+                "/* project:families.derived.retire_null_resolver_divergences */
+                UPDATE resolution_divergences
+                SET cleared_at = GREATEST(statement_timestamp(), last_observed_at)
+                WHERE logical_name_id = ANY($1) AND resolver_chain_id = 'ethereum-mainnet'
+                  AND cleared_at IS NULL",
+            )
+            .bind(&fresh.null_resolver_names)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|error| {
+                ProjectError::database("failed to retire null-resolver evidence", error)
+            })?;
+        }
         let stored: BTreeMap<String, Value> = sqlx::query_as::<_, (String, Value)>(
             "/* project:families.derived.summary_rows */ SELECT summary.logical_name_id,
                     to_jsonb(summary)
@@ -111,7 +126,7 @@ pub(super) async fn refresh(
         .collect();
         for name in chunk {
             let before = stored.get(name);
-            let after = fresh.get(name);
+            let after = fresh.rows.get(name);
             if before == after {
                 continue;
             }

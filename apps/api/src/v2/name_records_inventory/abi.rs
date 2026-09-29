@@ -71,8 +71,8 @@ pub(crate) async fn fill_records_route_abi_content_types(
                 V2Error::internal_error("failed to load record inventory ABI content types")
             })?;
             let input = abi_input_for_row(row, &boundary_key);
-            if bigname_storage::publication_source::serve_from_families() {
-                // The route's row is a family inventory under the switch (TYR-36 step 7b).
+            {
+                // Admission uses the classification captured with this inventory.
                 #[cfg(test)]
                 abi_content_types_test_hooks::record(pool, 1).await;
                 bigname_storage::load_family_record_inventory_abi_content_types(pool, &[input])
@@ -85,11 +85,6 @@ pub(crate) async fn fill_records_route_abi_content_types(
                         );
                         V2Error::internal_error("failed to load record inventory ABI content types")
                     })?
-                    .pop()
-                    .expect("one ABI answer per inventory row")
-            } else {
-                load_abi_content_types(pool, &[input])
-                    .await?
                     .pop()
                     .expect("one ABI answer per inventory row")
             }
@@ -124,8 +119,8 @@ pub(crate) async fn load_abi_content_types(
 }
 
 /// Records the input count of each batched read so a test can assert one read per request, and
-/// can run one statement after the route loaded its inventory rows and before the ABI read, so a
-/// test can publish a newer projection in that window.
+/// can pause a request after it loaded its inventory rows and before the ABI read, so a test can
+/// publish in that window.
 #[cfg(test)]
 pub(crate) mod abi_content_types_test_hooks {
     use std::sync::{Arc, Mutex};
@@ -139,7 +134,6 @@ pub(crate) mod abi_content_types_test_hooks {
     type Calls = Arc<Mutex<Vec<usize>>>;
 
     static HOOKS: ScopedTestHookRegistry<String, Calls> = ScopedTestHookRegistry::new();
-    static INTERLEAVED: ScopedTestHookRegistry<String, String> = ScopedTestHookRegistry::new();
     static PAUSED: ScopedTestHookRegistry<String, Pause> = ScopedTestHookRegistry::new();
 
     #[derive(Clone, Default)]
@@ -173,14 +167,6 @@ pub(crate) mod abi_content_types_test_hooks {
         Ok((guard, calls))
     }
 
-    /// Run `statement` once, just before the next ABI read on this test database.
-    pub(crate) async fn interleave(
-        pool: &PgPool,
-        statement: &str,
-    ) -> Result<ScopedTestHookGuard<String, String>> {
-        Ok(INTERLEAVED.install(current_test_database(pool).await?, statement.to_owned()))
-    }
-
     pub(super) async fn record(pool: &PgPool, inputs: usize) {
         let Ok(database) = current_test_database(pool).await else {
             return;
@@ -191,12 +177,6 @@ pub(crate) mod abi_content_types_test_hooks {
         if let Some(pause) = PAUSED.take(&database) {
             pause.reached.notify_one();
             pause.resume.notified().await;
-        }
-        if let Some(statement) = INTERLEAVED.take(&database) {
-            sqlx::raw_sql(&statement)
-                .execute(pool)
-                .await
-                .expect("interleaved ABI test statement");
         }
     }
 }

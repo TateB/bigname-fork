@@ -1,18 +1,16 @@
-//! The name summary family (TYR-36 step 7b slice 2b, `project_name_summary`): the per-name fields
+//! The name summary family (`project_name_summary`): the per-name fields
 //! the child and label lists read inside one statement, written by the family step for the names
 //! a block touches and journalled like every other family. A block that touches one name rewrites
 //! that name's row and no other, undo puts the previous row back, and a rebuild writes the same
-//! rows as the incremental follow. Every row carries the fields of the name's served row, and a
+//! rows as the incremental follow. Every row carries the fields of the name's composed row, and a
 //! name whose composition the clock changes is composed again at the first block past it.
-#[path = "families_shadow_support/mod.rs"]
-mod shadow_support;
 #[path = "families_support/mod.rs"]
 mod support;
 
 use anyhow::{Result, ensure};
 use bigname_project::families;
+use bigname_storage::families::name::load_family_name;
 use serde_json::{Value, json};
-use shadow_support::{publish, served};
 use support::{CHAIN, Event, Fixture, uuid};
 
 const REGISTRAR: &str = "0x00000000000000000000000000000000000000e3";
@@ -89,7 +87,9 @@ async fn assert_matches_served(fixture: &Fixture, logical_name_id: &str) -> Resu
     let (row, _) = summary(fixture, logical_name_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("{logical_name_id} has no summary row"))?;
-    let served = served(fixture, logical_name_id).await?;
+    let served = load_family_name(&fixture.pool, logical_name_id)
+        .await?
+        .expect("composed name");
     let expiry: Option<i64> = sqlx::query_scalar(
         "SELECT extract(epoch FROM expires_at)::bigint FROM project_name_summary
          WHERE chain_id = $1 AND logical_name_id = $2",
@@ -113,14 +113,15 @@ async fn assert_matches_served(fixture: &Fixture, logical_name_id: &str) -> Resu
         served.provenance
     );
     ensure!(
-        row["registration_status"] == served.registration("status"),
+        row["registration_status"] == served.declared_summary["registration"]["status"],
         "{logical_name_id}: status {row} against {}",
-        served.summary
+        served.declared_summary
     );
     ensure!(
-        expiry.map(Value::from).unwrap_or(Value::Null) == served.registration("expiry"),
+        expiry.map(Value::from).unwrap_or(Value::Null)
+            == served.declared_summary["registration"]["expiry"],
         "{logical_name_id}: expiry {expiry:?} against {}",
-        served.summary
+        served.declared_summary
     );
     Ok(row)
 }
@@ -152,7 +153,6 @@ async fn a_block_rewrites_the_summary_of_the_name_it_touches_and_undo_restores_i
             REGISTRAR,
         )
         .await?;
-    shadow_support::publish_served(&fixture, 8).await?;
     let outcome = fixture
         .apply(8, bigname_project::families::FamilyMode::Normal)
         .await?;
@@ -228,7 +228,6 @@ async fn the_family_undo_and_rebuild_keep_every_summary_row() -> Result<()> {
     let fixture = Fixture::new("families_name_summary_undo", 12).await?;
     registered(&fixture, 1, 2, 2_000_000_000).await?;
     registered(&fixture, 2, 6, 2_100_000_000).await?;
-    shadow_support::publish_served(&fixture, 9).await?;
     // Block 7 grants the second name: undoing it restores its summary row as block 6 left it.
     fixture.assert_undo_restores(7).await?;
     fixture
@@ -792,4 +791,9 @@ async fn a_rebuild_range_reads_the_registry_events_of_every_block_it_applies() -
         );
     }
     fixture.cleanup().await
+}
+
+async fn publish(fixture: &Fixture, target: i64) -> Result<()> {
+    fixture.apply(target, families::FamilyMode::Normal).await?;
+    Ok(())
 }

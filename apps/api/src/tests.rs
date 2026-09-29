@@ -104,6 +104,13 @@ async fn health_and_registry_routes_work_with_documented_api_role_privileges() -
             registry_results.push((uri, response.status(), read_json::<Value>(response).await?));
         }
     }
+    // The children read also joins label preimages, discovery edges and migration associations.
+    let uri = "/v1/names/alpha.eth/subnames".to_owned();
+    let response = app
+        .clone()
+        .oneshot(Request::builder().uri(&uri).body(Body::empty())?)
+        .await?;
+    registry_results.push((uri, response.status(), read_json::<Value>(response).await?));
     restricted_pool.close().await;
     sqlx::query(&format!("DROP OWNED BY {role}"))
         .execute(&database.lookup_pool)
@@ -113,9 +120,15 @@ async fn health_and_registry_routes_work_with_documented_api_role_privileges() -
         .await?;
 
     assert_eq!(status, StatusCode::OK);
-    for (uri, status, payload) in registry_results {
-        assert_eq!(status, StatusCode::OK, "{uri}: {payload}");
+    for (uri, status, payload) in &registry_results {
+        assert_eq!(*status, StatusCode::OK, "{uri}: {payload}");
     }
+    let (_, _, subnames) = registry_results.last().context("subnames result")?;
+    assert_eq!(
+        subnames["data"].as_array().map(Vec::len),
+        Some(3),
+        "{subnames}"
+    );
     assert!(
         payload["database"]["identity"]
             .as_str()
@@ -388,8 +401,8 @@ include!("tests/v2_history_redo.rs");
 include!("tests/v2_history_paging.rs");
 include!("tests/v2_history_keyset.rs");
 include!("tests/v2_history_keyset_walk.rs");
-include!("tests/v2_history_d12.rs");
-include!("tests/v2_history_d12_children.rs");
+include!("tests/v2_history_block_order.rs");
+include!("tests/v2_history_block_order_children.rs");
 include!("tests/v2_history_child_registrations.rs");
 include!("tests/v2_diag_events.rs");
 include!("tests/v2_address_names.rs");
@@ -429,20 +442,21 @@ include!("tests/api_storage_quick_wins.rs");
 
 include!("tests/v2_publication_bindings.rs");
 include!("tests/v2_family_marker_fence.rs");
-include!("tests/v2_switch_names.rs");
-include!("tests/v2_flip_readiness.rs");
-include!("tests/v2_switch_records.rs");
-include!("tests/v2_switch_reverse_page.rs");
-include!("tests/v2_switch_lookup.rs");
-#[path = "tests/v2_switch_lookup_redo.rs"]
+include!("tests/v2_family_names.rs");
+include!("tests/v2_family_status.rs");
+include!("tests/v2_family_records.rs");
+include!("tests/v2_family_reverse_page.rs");
+include!("tests/v2_family_lookup.rs");
+#[path = "tests/v2_family_lookup_redo.rs"]
 mod lookup_redo;
-include!("tests/v2_switch_permissions.rs");
-include!("tests/v2_switch_history_publication.rs");
-include!("tests/v2_switch_records_review.rs");
+include!("tests/v2_family_permissions.rs");
+include!("tests/v2_family_history_publication.rs");
+include!("tests/v2_family_records_review.rs");
 include!("tests/v2_list_cursor.rs");
-include!("tests/v2_switch_children.rs");
-include!("tests/v2_switch_name_publication_changes.rs");
-include!("tests/v2_switch_name_recompute.rs");
-include!("tests/v2_switch_resolver_history.rs");
-include!("tests/v2_switch_child_authority.rs");
-include!("tests/v2_switch_name_display.rs");
+include!("tests/v2_family_children.rs");
+include!("tests/v2_family_name_publication_changes.rs");
+include!("tests/v2_family_name_recompute.rs");
+include!("tests/v2_family_resolver_history.rs");
+include!("tests/v2_family_child_authority.rs");
+include!("tests/v2_family_name_display.rs");
+include!("tests/family_fixture_inputs_b.rs");

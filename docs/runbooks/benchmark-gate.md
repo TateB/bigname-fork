@@ -68,10 +68,10 @@ The indexing half measures the existing Interpret and
 database copy because all three operations write derived state:
 
 - one published-head Project re-apply at the selected head must finish within
-  1 second, the live poll interval, including canonical-head record hydration;
+  1 second using the operator redo path and permanent family journal;
 - a full Project rebuild must finish within 6 hours inside an operator-scheduled
   window of at least 8 hours, leaving at least 2 hours of headroom; the measured
-  wall-clock includes canonical-head record hydration;
+  wall-clock includes family reconstruction and retained hydration observation replay;
 - an Interpret redo over a dense-era range must sustain at least 500,000 blocks
   per hour; its wall-clock deadline is the smaller of twice the duration implied
   by the selected block count and that throughput floor, or the checked-in
@@ -87,7 +87,11 @@ database copy because all three operations write derived state:
 The published-head re-apply starts from a copy whose selected head is already
 published under the current
 [interpreter content hash](../glossary.md#interpreter-content-hash), then
-measures Project deleting and rebuilding that head's affected projection rows.
+measures the real Project redo transition, journal undo and replay of that head.
+Every invocation receives a fresh redo attempt, so repeating the measurement cannot
+become a completed-attempt no-op. Rebuild and redo perform no provider calls.
+The existing hydration-updated-row report fields therefore report zero for these
+replay measurements; they do not establish live-follow hydration acceptance.
 It is not a live head-minus-one to head transition. It does not observe
 first-time row insertion, newly affected-row discovery, or publication advancement;
 [issue #467](https://github.com/ensdomains/bigname/issues/467) tracks the missing
@@ -133,8 +137,8 @@ manifest rows. A family
 that Project admits from its latest event but whose stored row is missing or not
 active is red; a family deprecated in both places remains outside the workload.
 For every stored active row, the version, normalizer version, and payload must
-equal the latest Project-eligible event. Each projected resolver row must cite
-that exact event through `provenance.manifest_event_id`. A reconciliation or
+equal the latest Project-eligible event. Each resolver classification row must cite
+that exact event through `manifest_event_id`. A reconciliation or
 event-ID mismatch is red and names the manifest, chain, source family, and both
 stored and event versions where available; this detects a manifest
 event that disagrees with its stored manifest row without changing manifest
@@ -144,10 +148,10 @@ ENSv1 and Basenames families use currently applicable concrete `contracts`
 declarations. ENSv2 families that declare `resolver_implementations` instead use
 the latest canonical `Upgraded` event for each discovered proxy and admit the
 proxy only when that event names a declared implementation. This mirrors
-Project's implementation-based ENSv2 resolver admission and binds the projected
-row to both the manifest event and upgrade event. The row's recorded upgrade
-block number and hash must match that event, and its Project target cannot
-predate the upgrade. A valid empty declaration set is reportable as zero; a
+Project's implementation-based ENSv2 resolver admission and binds the
+classification row to both the manifest event and upgrade event. The row's
+recorded upgrade event and block number must match that event, and the family
+publication cannot predate the upgrade. A valid empty declaration set is reportable as zero; a
 non-array value or an entry without an address is also preserved as a zero-count
 report row but makes the gate red as a malformed resolver-manifest payload. The
 failure names whether the stored row or the latest Project event supplied that
@@ -159,20 +163,20 @@ API's [interpreter content hash](../glossary.md#interpreter-content-hash); a
 missing, running, stale, or invalidated head
 makes the gate red. A concrete declaration whose `start_block` is no later than
 that head must have a
-supported `resolver_current` row from that active manifest version. The row must
-pass the API's canonical-lineage read filter. The gate additionally requires
-the row's declared block hash and number to identify the same readable lineage
-block; the publication target cannot precede the latest applicable `start_block`
-for that address. A missing or unsupported row, a row from another manifest
-version, a row published before `start_block`, a canonically hidden row, or an
-incoherent block anchor makes the run red and names its chain and source family.
+supported `project_resolver_classification` row bound to the manifest event of
+that active manifest version; for an ENSv2 implementation-admitted proxy the row
+must also carry the admitting upgrade event. The live family publication cannot
+precede the latest applicable `start_block` for that address. A missing or
+unsupported classification, one bound to another manifest version or upgrade,
+or a publication before `start_block` makes the run red and names its chain and
+source family.
 If [eligible interpreted resolver evidence](../projections.md#live-maintenance)
-exists but its projection row is missing or stale, rebuild Project. If that
+exists but its classification is missing or stale, rebuild Project. If that
 evidence should exist but is missing or stale, repair chain intake or Interpret
 first, then rebuild Project. A raw log-emitter address alone is not resolver
 evidence. If the selected chain has no eligible evidence for the declared
-address, a Project rebuild cannot create the row: check the manifest declaration
-against the chain instead. A
+address, a Project rebuild cannot create the classification: check the manifest
+declaration against the chain instead. A
 declaration that starts after that head keeps its family visible in
 the report but is not yet demanded. If no declaration is currently applicable,
 the resolver workload cannot be constructed and the gate is red. Request volume
@@ -197,14 +201,15 @@ each projection and its referenced identity rows as their API reads, so hidden
 rows cannot satisfy a corpus floor or enter the timed request set.
 The report records the name and parent counts contributed by each namespace,
 and name-mode lookup batches alternate those namespace buckets. Before sampling
-that corpus, it counts API-visible rows in active public namespaces in the
-`name_current` and `address_names_current` tables and requires at least 3
-million supported rows in each. Unsupported rows, rows from inactive
-namespaces, and rows whose projection or referenced identity rows are not
-read-safe are excluded because the API cannot return them as request seeds.
+that corpus, it counts, through the same family readers the API uses, the
+API-visible names and address/name relations in active public namespaces and
+requires at least 3 million supported entries of each kind. Unsupported names,
+names from inactive namespaces, and names whose publication or referenced
+identity rows are not read-safe are excluded because the API cannot return them
+as request seeds.
 These floors leave headroom below the roughly 3.5 million names in the
 production dataset while excluding staging-sized databases. The JSON report
-records both API-visible supported-row totals and both floors. Except for the
+records both API-visible supported totals and both floors. Except for the
 primary-name live-RPC default described below, every exercised endpoint has a
 deterministically interleaved default request form alongside its parameterized
 forms. Default forms omit optional filters, omit `namespace` when
@@ -299,8 +304,8 @@ Use two targets:
    rewrites interpreted and projected state. Never point this command at the
    production database, even while traffic is drained. Record the copy's exact
    database name and the selected chain's production JSON-RPC URL; the command
-   requires both so the Project measurement follows the deployed hydration
-   path.
+   retains both inputs for the configured Project phase. Replay does not call
+   the provider; representative live-follow hydration remains a separate acceptance check.
 2. The new API generation while public traffic is drained. Use its real
    production-scale database. The harness forces its own PostgreSQL sessions
    into read-only mode, and a database login with only `CONNECT`, schema
@@ -521,7 +526,7 @@ interval, validated count, and invalid count.
 
 Corpus cardinality and active-namespace shortfalls, seed transport or parsing
 failures, exhausted seed evidence, a reachable `/healthz` response missing
-`database.identity`, and a published-head Project re-apply or hydration timeout
+`database.identity`, and a published-head Project redo timeout
 all produce a named red JSON report. They do not discard the evidence by
 exiting before report construction.
 

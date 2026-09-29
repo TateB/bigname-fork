@@ -1,10 +1,8 @@
-//! The composed name listings (TYR-36 step 7b): the /v1/search page (ruling J8) and the
-//! expiring listing of /v1/names, served from composed name rows under the publication switch.
+//! The composed name listings: the /v1/search page and the
+//! expiring listing of /v1/names, served from composed name rows at family publication.
 //!
-//! Both page through the same `filtered_names` CTE, derived columns, predicates, order and
-//! cursor as the served readers (name_current/list.rs, expiring.rs), with the composed rows bound
-//! as the CTE's source in place of `name_current`. What differs is how the candidate names are
-//! found, since no composed row is stored:
+//! Both page through a `filtered_names` CTE populated from composed rows, with shared predicates
+//! and keyset ordering. Their candidate walks differ because no composed row is stored:
 //!
 //! - search walks the readable name surfaces (an input table) in the page order, which is the
 //!   surface's raw name then namespace and namehash, so the first `page_size + 1` composed rows
@@ -53,6 +51,7 @@ pub(super) fn source_row(row: &NameCurrentRow) -> Value {
         "logical_name_id": row.logical_name_id,
         "namespace": row.namespace,
         "raw_name": row.normalized_name,
+        "display_name": row.canonical_display_name,
         "namehash": row.namehash,
         "surface_binding_id": row.surface_binding_id,
         "resource_id": row.resource_id,
@@ -94,8 +93,8 @@ impl Gathered {
     }
 }
 
-/// The composed /v1/search page: `filter` must carry no address filter (the address membership
-/// is still the served table's), and the page is sorted by name ascending.
+/// The composed /v1/search page: `filter` must carry no address filter (the search route has
+/// none), and the page is sorted by name ascending.
 pub async fn load_family_search_page(
     pool: &PgPool,
     filter: &NameCurrentListFilter,
@@ -108,13 +107,11 @@ pub async fn load_family_search_page(
     );
     let order = (NameCurrentListSort::Name, NameCurrentListOrder::Asc);
     let batch = batch_size(page_size);
+    // The page sorts by normalized name, the surfaces' order; the cursor's display name is only
+    // echoed back to the client.
     let mut after = cursor.map(|cursor| {
-        let name = match &cursor.sort_value {
-            NameCurrentListCursorValue::Name(name) => name.clone(),
-            NameCurrentListCursorValue::Timestamp(_) => cursor.normalized_name.clone(),
-        };
         (
-            name,
+            cursor.normalized_name.clone(),
             cursor.namespace.clone(),
             cursor.normalized_name.clone(),
             cursor.namehash.clone(),
@@ -143,15 +140,8 @@ pub async fn load_family_search_page(
             )
             .await?;
         let source = gathered.source();
-        let page = list_page_from(
-            &mut *snapshot,
-            filter,
-            order,
-            cursor,
-            page_size,
-            Some(&source),
-        )
-        .await?;
+        let page =
+            list_page_from(&mut *snapshot, filter, order, cursor, page_size, &source).await?;
         if exhausted || page.next_cursor.is_some() {
             snapshot.commit().await?;
             return Ok(page);
@@ -230,7 +220,7 @@ async fn search_candidates(
         .collect()
 }
 
-/// The composed expiring page of /v1/names (`load_name_current_expiring_page`'s contract).
+/// The composed expiring page of /v1/names.
 /// `chains` are the chains the request selected for `filter.namespace`: their markers are read
 /// before the walk, which reads family tables a rebuild empties, so a rebuild refuses rather than
 /// answers an empty page. Only names of `filter.namespace` are walked and composed.
@@ -297,7 +287,7 @@ pub async fn load_family_expiring_page(
             order,
             cursor,
             page_size + 1,
-            Some(&source),
+            &source,
         )
         .await?;
         let settled = page.rows.len() as u64 > page_size

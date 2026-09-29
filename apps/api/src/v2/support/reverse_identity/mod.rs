@@ -1,33 +1,15 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use bigname_storage::{
-    IdentityNameRecordRow, IdentityPrimaryNameSnapshot, PrimaryNameClaimStatus,
-    READABLE_REVERSE_IDENTITY_CTES, ReverseIdentityGroup, ReverseIdentityRecordRow,
-    ReverseIdentityRoles, ReverseIdentityStorageInput,
+    IdentityPrimaryNameSnapshot, ReverseIdentityGroup, ReverseIdentityStorageInput,
 };
-use sqlx::{PgPool, Row};
-
-mod page;
-
-#[cfg(test)]
-pub(crate) use page::explain_reverse_identity_page;
+use sqlx::PgPool;
 
 #[cfg(test)]
 mod hooks;
 #[cfg(test)]
-pub(crate) use hooks::{primary_coherence_test_hooks, relation_page_test_hooks, test_hooks};
-
-#[derive(Clone)]
-struct ReverseIdentityPageRow {
-    input_index: usize,
-    logical_name_id: String,
-    normalized_name: String,
-    canonical_display_name: String,
-    labelhash: Option<String>,
-    labelhash_count: Option<i32>,
-    primary_name: Option<IdentityPrimaryNameSnapshot>,
-}
+pub(crate) use hooks::{relation_page_test_hooks, test_hooks};
 
 pub(crate) async fn load_reverse_identity_records_live(
     pool: &PgPool,
@@ -73,44 +55,22 @@ pub(crate) async fn load_reverse_identity_primary_snapshots(
     public_namespaces: &[String],
     selected: Option<&bigname_storage::SelectedSnapshot>,
 ) -> Result<BTreeMap<String, IdentityPrimaryNameSnapshot>> {
-    if bigname_storage::publication_source::serve_from_families() {
-        let chains = selected.map(|selected| {
-            selected
-                .chain_positions
-                .as_map()
-                .values()
-                .map(|position| position.chain_id.clone())
-                .collect::<Vec<_>>()
-        });
-        return bigname_storage::families::records::load_family_reverse_primary_snapshots(
-            pool,
-            address,
-            coin_type,
-            public_namespaces,
-            chains.as_deref(),
-        )
-        .await;
-    }
-    let input = ReverseIdentityStorageInput {
-        address: address.to_owned(),
-        coin_type: coin_type.to_owned(),
-        roles: ReverseIdentityRoles::Both,
-        page_size: 1,
-        cursor: None,
-    };
-    let mut loaded =
-        page::load_primary_names(pool, std::slice::from_ref(&input), public_namespaces).await?;
-    let by_namespace = loaded
-        .pop()
-        .and_then(|value| match value {
-            serde_json::Value::Object(map) => Some(map),
-            _ => None,
-        })
-        .unwrap_or_default();
-    by_namespace
-        .into_iter()
-        .map(|(namespace, value)| Ok((namespace, page::decode_primary_name(value)?)))
-        .collect()
+    let chains = selected.map(|selected| {
+        selected
+            .chain_positions
+            .as_map()
+            .values()
+            .map(|position| position.chain_id.clone())
+            .collect::<Vec<_>>()
+    });
+    return bigname_storage::families::records::load_family_reverse_primary_snapshots(
+        pool,
+        address,
+        coin_type,
+        public_namespaces,
+        chains.as_deref(),
+    )
+    .await;
 }
 
 pub(crate) async fn prepare_reverse_identity_additional_scan(
@@ -144,286 +104,24 @@ async fn load_reverse_identity_records_live_with_count_mode(
         return Ok(Vec::new());
     }
 
-    if bigname_storage::publication_source::serve_from_families() {
-        let chains = selected.map(|selected| {
-            selected
-                .chain_positions
-                .as_map()
-                .values()
-                .map(|position| position.chain_id.clone())
-                .collect::<Vec<_>>()
-        });
-        #[cfg(test)]
-        if matches!(count_mode, ReverseCountMode::Include) {
-            test_hooks::record(pool).await?;
-        }
-        return bigname_storage::families::records::load_family_reverse_identity_groups(
-            pool,
-            inputs,
-            public_namespaces,
-            chains.as_deref(),
-            matches!(count_mode, ReverseCountMode::Include),
-        )
-        .await;
-    }
-
-    let first_page_feed = inputs
-        .iter()
-        .all(|input| input.page_size == 1 && input.cursor.is_none());
-    let page_records_future = async {
-        let page_rows =
-            page::load_reverse_identity_page_rows(pool, inputs, public_namespaces).await?;
-        let logical_name_ids =
-            dedupe_in_order(page_rows.iter().map(|row| row.logical_name_id.clone()));
-        let name_records =
-            bigname_storage::load_phase_identity_records_by_ids(pool, &logical_name_ids)
-                .await?
-                .into_iter()
-                .map(|record| (record.row.logical_name_id.clone(), record))
-                .collect::<BTreeMap<_, _>>();
-        Result::<_>::Ok((page_rows, name_records))
-    };
-
-    let total_counts_future = async {
-        match count_mode {
-            ReverseCountMode::Include => {
-                load_reverse_identity_total_counts_live(pool, inputs, public_namespaces)
-                    .await
-                    .map(Some)
-            }
-            ReverseCountMode::Omit => Ok(None),
-        }
-    };
-    let ((page_rows, name_records), total_counts) =
-        tokio::try_join!(page_records_future, total_counts_future)?;
-
-    let rows_by_input = page_rows.into_iter().fold(
-        BTreeMap::<usize, Vec<ReverseIdentityPageRow>>::new(),
-        |mut grouped, row| {
-            grouped.entry(row.input_index).or_default().push(row);
-            grouped
-        },
-    );
-
-    Ok(inputs
-        .iter()
-        .enumerate()
-        .map(|(input_index, input)| {
-            let mut entries = rows_by_input
-                .get(&input_index)
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|row| reverse_identity_record(&name_records, input, row))
-                .collect::<Vec<_>>();
-            let total_count = total_counts.as_ref().map(|counts| {
-                *counts
-                    .get(&(input.address.clone(), input.roles))
-                    .unwrap_or(&0)
-            });
-            let has_more = match (first_page_feed, total_count) {
-                (true, Some(total_count)) => {
-                    total_count > input.page_size.max(0) as u64 && !entries.is_empty()
-                }
-                _ => entries.len() as i64 > input.page_size,
-            };
-            entries.truncate(input.page_size.max(0) as usize);
-
-            ReverseIdentityGroup {
-                input: input.clone(),
-                entries,
-                total_count,
-                has_more,
-            }
-        })
-        .collect())
-}
-
-fn reverse_identity_record(
-    name_records: &BTreeMap<String, IdentityNameRecordRow>,
-    input: &ReverseIdentityStorageInput,
-    row: ReverseIdentityPageRow,
-) -> Option<ReverseIdentityRecordRow> {
-    let mut name_record = name_records.get(&row.logical_name_id)?.clone();
-    name_record.row.normalized_name = row.normalized_name;
-    name_record.row.canonical_display_name = row.canonical_display_name;
-    name_record.row.labelhash = row.labelhash;
-    name_record.row.labelhash_count = row.labelhash_count;
-    let primary_name = row.primary_name;
-    let mut relation_facets = name_record
-        .relations
-        .iter()
-        .filter(|relation| {
-            relation.address == input.address && input.roles.includes(relation.relation)
-        })
-        .map(|relation| relation.relation)
-        .collect::<Vec<_>>();
-    relation_facets.sort();
-    relation_facets.dedup();
-
-    Some(ReverseIdentityRecordRow {
-        name_record,
-        relation_facets,
-        primary_chain_positions: primary_name
-            .as_ref()
-            .and_then(|primary| primary.chain_positions.clone()),
-        primary_name,
-        requested_coin_type: input.coin_type.clone(),
-    })
-}
-
-async fn query_reverse_identity_total_counts(
-    pool: &PgPool,
-    inputs: &[ReverseIdentityStorageInput],
-    public_namespaces: &[String],
-    explain: bool,
-) -> Result<Vec<sqlx::postgres::PgRow>> {
-    let requests = inputs
-        .iter()
-        .map(|input| (input.address.clone(), input.roles))
-        .collect::<BTreeSet<_>>();
-    let addresses = requests
-        .iter()
-        .map(|(address, _)| address.clone())
-        .collect::<Vec<_>>();
-    let roles = requests
-        .iter()
-        .map(|(_, roles)| roles_storage_value(*roles).to_owned())
-        .collect::<Vec<_>>();
-
-    let query = format!(
-        r#"
-        WITH {READABLE_REVERSE_IDENTITY_CTES}, requested AS MATERIALIZED (
-            SELECT *
-            FROM UNNEST($1::TEXT[], $2::TEXT[]) AS request_input(address, roles)
-        ), readable_candidates AS MATERIALIZED (
-            SELECT seed.address, seed.relation, readable_relation.logical_name_id
-            FROM bigname_phase.address_names_current seed
-            JOIN LATERAL (
-                SELECT anc.logical_name_id
-                FROM readable_relations anc
-                WHERE anc.address = seed.address
-                  AND anc.logical_name_id = seed.logical_name_id
-                  AND anc.relation = seed.relation
-                -- Recheck this stored relation once before per-input aggregation.
-                OFFSET 0
-            ) readable_relation ON TRUE
-            WHERE seed.address = ANY($1::TEXT[])
-              AND seed.namespace = ANY($3::TEXT[])
-              AND EXISTS (
-                  SELECT 1 FROM requested request_match
-                  WHERE request_match.address = seed.address
-                    AND (
-                        request_match.roles = 'both'
-                        OR (request_match.roles = 'owned'
-                            AND seed.relation IN ('registrant', 'token_holder'))
-                        OR (request_match.roles = 'managed'
-                            AND seed.relation = 'effective_controller')
-                    )
-                  OFFSET 0
-              )
-        )
-        SELECT
-            requested.address,
-            requested.roles,
-            COUNT(DISTINCT anc.logical_name_id)::BIGINT AS total_count
-        FROM requested
-        LEFT JOIN readable_candidates anc
-          ON anc.address = requested.address
-         AND (
-             requested.roles = 'both'
-             OR (requested.roles = 'owned' AND anc.relation IN ('registrant', 'token_holder'))
-             OR (requested.roles = 'managed' AND anc.relation = 'effective_controller')
-         )
-        GROUP BY requested.address, requested.roles
-        ORDER BY requested.address, requested.roles
-        "#
-    );
-    #[cfg(not(test))]
-    let _ = explain;
+    let chains = selected.map(|selected| {
+        selected
+            .chain_positions
+            .as_map()
+            .values()
+            .map(|position| position.chain_id.clone())
+            .collect::<Vec<_>>()
+    });
     #[cfg(test)]
-    let query = if explain {
-        format!("EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON) {query}")
-    } else {
-        query
-    };
-    let rows = sqlx::query(&query)
-        .bind(&addresses)
-        .bind(&roles)
-        .bind(public_namespaces)
-        .fetch_all(pool)
-        .await
-        .with_context(|| {
-            format!(
-                "failed to live-count reverse identity rows for {} inputs",
-                inputs.len()
-            )
-        })?;
-
-    Ok(rows)
-}
-
-#[cfg(test)]
-pub(crate) async fn explain_reverse_identity_count(
-    pool: &PgPool,
-    inputs: &[ReverseIdentityStorageInput],
-    public_namespaces: &[String],
-) -> Result<serde_json::Value> {
-    let rows = query_reverse_identity_total_counts(pool, inputs, public_namespaces, true).await?;
-    anyhow::ensure!(rows.len() == 1, "expected exactly one reverse count plan");
-    Ok(rows[0].try_get("QUERY PLAN")?)
-}
-
-async fn load_reverse_identity_total_counts_live(
-    pool: &PgPool,
-    inputs: &[ReverseIdentityStorageInput],
-    public_namespaces: &[String],
-) -> Result<BTreeMap<(String, ReverseIdentityRoles), u64>> {
-    #[cfg(test)]
-    test_hooks::record(pool).await?;
-    let rows = query_reverse_identity_total_counts(pool, inputs, public_namespaces, false).await?;
-
-    rows.into_iter()
-        .map(|row| {
-            let address = row.try_get::<String, _>("address")?;
-            let roles = parse_roles(&row.try_get::<String, _>("roles")?)?;
-            let total_count = row.try_get::<i64, _>("total_count")?;
-            Ok(((address, roles), u64::try_from(total_count).unwrap_or(0)))
-        })
-        .collect()
-}
-
-pub(super) fn parse_primary_name_claim_status(value: &str) -> Result<PrimaryNameClaimStatus> {
-    match value {
-        "success" => Ok(PrimaryNameClaimStatus::Success),
-        "not_found" => Ok(PrimaryNameClaimStatus::NotFound),
-        "unsupported" => Ok(PrimaryNameClaimStatus::Unsupported),
-        "invalid_name" => Ok(PrimaryNameClaimStatus::InvalidName),
-        _ => bail!("unknown identity primary-name status {value}"),
+    if matches!(count_mode, ReverseCountMode::Include) {
+        test_hooks::record(pool).await?;
     }
-}
-
-fn roles_storage_value(roles: ReverseIdentityRoles) -> &'static str {
-    match roles {
-        ReverseIdentityRoles::Owned => "owned",
-        ReverseIdentityRoles::Managed => "managed",
-        ReverseIdentityRoles::Both => "both",
-    }
-}
-
-fn parse_roles(value: &str) -> Result<ReverseIdentityRoles> {
-    match value {
-        "owned" => Ok(ReverseIdentityRoles::Owned),
-        "managed" => Ok(ReverseIdentityRoles::Managed),
-        "both" => Ok(ReverseIdentityRoles::Both),
-        _ => bail!("unknown reverse identity roles {value}"),
-    }
-}
-
-fn dedupe_in_order(values: impl IntoIterator<Item = String>) -> Vec<String> {
-    let mut seen = BTreeSet::new();
-    values
-        .into_iter()
-        .filter(|value| seen.insert(value.clone()))
-        .collect()
+    return bigname_storage::families::records::load_family_reverse_identity_groups(
+        pool,
+        inputs,
+        public_namespaces,
+        chains.as_deref(),
+        matches!(count_mode, ReverseCountMode::Include),
+    )
+    .await;
 }

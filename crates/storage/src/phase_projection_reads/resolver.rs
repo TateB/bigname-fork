@@ -1,6 +1,5 @@
-use anyhow::{Context, Result};
-use serde_json::json;
-use sqlx::{PgPool, Row};
+use anyhow::Result;
+use sqlx::PgPool;
 
 use crate::ResolverCurrentRow;
 
@@ -20,62 +19,11 @@ pub const DEFAULT_RESOLVER_CURRENT_READ_FILTER: &str = r#"
   )
 "#;
 
-/// The resolver overview row. Under the publication switch it comes from the F3 classification
-/// at the family marker's publication instead (`families::topology::load_family_resolver_current`).
+/// The resolver overview from F3 classification at the selected family publication.
 pub async fn load_phase_resolver_current(
     pool: &PgPool,
     chain_id: &str,
     resolver_address: &str,
 ) -> Result<Option<ResolverCurrentRow>> {
-    if crate::publication_source::serve_from_families() {
-        return crate::families::topology::load_family_resolver_current(
-            pool,
-            chain_id,
-            resolver_address,
-        )
-        .await;
-    }
-    let address = resolver_address.to_ascii_lowercase();
-    let row = sqlx::query(&format!(
-        r#"
-        SELECT chain_id, resolver_address, declared_summary, support_status,
-               unsupported_reason, provenance, chain_positions,
-               canonicality_summary, manifest_version, last_recomputed_at
-        FROM bigname_phase.resolver_current resolver
-        WHERE chain_id = $1 AND lower(resolver_address) = $2
-          {DEFAULT_RESOLVER_CURRENT_READ_FILTER}
-        "#
-    ))
-    .bind(chain_id)
-    .bind(&address)
-    .fetch_optional(pool)
-    .await
-    .with_context(|| format!("failed to load phase resolver {chain_id}:{address}"))?;
-    row.map(|row| {
-        let support_status: String = row.try_get("support_status")?;
-        let unsupported_reason: Option<String> = row.try_get("unsupported_reason")?;
-        let coverage = if support_status == "supported" {
-            json!({"status": "projected", "exhaustiveness": "not_asserted"})
-        } else {
-            json!({
-                "status": "unsupported",
-                "exhaustiveness": "not_asserted",
-                "unsupported_reason": unsupported_reason,
-            })
-        };
-        Ok(ResolverCurrentRow {
-            chain_id: row.try_get("chain_id")?,
-            resolver_address: row
-                .try_get::<String, _>("resolver_address")?
-                .to_ascii_lowercase(),
-            declared_summary: row.try_get("declared_summary")?,
-            provenance: row.try_get("provenance")?,
-            coverage,
-            chain_positions: row.try_get("chain_positions")?,
-            canonicality_summary: row.try_get("canonicality_summary")?,
-            manifest_version: row.try_get("manifest_version")?,
-            last_recomputed_at: row.try_get("last_recomputed_at")?,
-        })
-    })
-    .transpose()
+    crate::families::topology::load_family_resolver_current(pool, chain_id, resolver_address).await
 }

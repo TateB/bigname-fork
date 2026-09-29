@@ -34,6 +34,7 @@ pub fn uuid(n: u32) -> String {
 
 /// Journalled family tables, compared by the undo and rebuild tests.
 pub const FAMILY_TABLES: &[&str] = &[
+    "child_registration_events",
     "project_name_state",
     "project_binding_candidate",
     "project_lifecycle_key_state",

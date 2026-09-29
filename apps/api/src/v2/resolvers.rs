@@ -40,8 +40,8 @@ mod snapshot_checks;
 use snapshot_checks::{require_phase_name_snapshot, require_phase_target_snapshot};
 
 use super::{
-    Envelope, Finality, NameRecord, PRODUCT_PIPELINE_TERMS, Page, QueryParamAllowlist,
-    SnapshotReadResource, StrictQueryParams, V2Error, V2Result, api_error_to_v2, build_name_record,
+    Envelope, NameRecord, PRODUCT_PIPELINE_TERMS, Page, QueryParamAllowlist, SnapshotReadResource,
+    StrictQueryParams, V2Error, V2Result, api_error_to_v2, build_name_record,
     contains_boundary_vocabulary, encode_at_token, name_record, numeric_to_slug,
     resolve_v2_snapshot_for, snapshot_meta, snapshot_slot_for_slug,
     vocab::{Resolver, Status},
@@ -115,8 +115,7 @@ pub(crate) async fn get_resolver(
     let scope = resolver_snapshot_scope(chain_id_slug)?;
     // Family bound names describe only their publication, including an empty page. A served
     // resolver row can retain an older target, so checking returned rows alone is insufficient.
-    let require_selected_head = bigname_storage::publication_source::serve_from_families()
-        || (params.at.is_none() && params.finality == Finality::Latest);
+    let require_selected_head = true;
     let selected_snapshot = resolve_v2_snapshot_for(
         &state.pool,
         &scope,
@@ -143,7 +142,7 @@ pub(crate) async fn get_resolver(
         .as_deref()
         .map(|cursor| bound_names_storage_cursor(cursor, &cursor_binding))
         .transpose()?;
-    // A cursor pinned to `at` is tied to that block (ruling J5): once a later block is published,
+    // A cursor pinned to `at` is tied to that block: once a later block is published,
     // the continuation is stale, whatever rows the later block changed. A same-block rebuild is
     // not detected; the cursor holds no generation (`list_cursor`).
     if storage_cursor.is_some() && params.at.is_some() {
@@ -306,27 +305,15 @@ async fn load_bound_name_rows(
     resolver_address: &str,
 ) -> V2Result<(Vec<NameCurrentListRow>, Option<NameCurrentListCursor>)> {
     let limit = page_size.saturating_add(1) as i64;
-    let loaded = if bigname_storage::publication_source::serve_from_families() {
-        bigname_storage::families::name::load_family_bound_names(
-            pool,
-            chain_id_slug,
-            resolver_address,
-            namespace,
-            cursor,
-            limit,
-        )
-        .await
-    } else {
-        bigname_storage::load_phase_resolver_bound_name_rows(
-            pool,
-            chain_id_slug,
-            resolver_address,
-            namespace,
-            cursor,
-            limit,
-        )
-        .await
-    }
+    let loaded = bigname_storage::families::name::load_family_bound_names(
+        pool,
+        chain_id_slug,
+        resolver_address,
+        namespace,
+        cursor,
+        limit,
+    )
+    .await
     .map_err(crate::v2::name_rows_error(
         SnapshotReadResource::Resolver,
         |_| {

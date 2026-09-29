@@ -7,18 +7,16 @@ mod snapshot;
 
 use std::collections::BTreeMap;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use sqlx::{PgPool, types::Uuid};
 
+pub use expiring::NameCurrentExpiringFilter;
 pub(crate) use expiring::expiring_page_from;
-pub use expiring::{NameCurrentExpiringFilter, load_name_current_expiring_page};
 pub(crate) use list::{COMPOSED_NC_COLUMNS, escape_like_pattern, list_page_from};
 pub use list::{
     NameCurrentAddressFilter, NameCurrentAddressRelationFilter, NameCurrentListCursor,
     NameCurrentListCursorValue, NameCurrentListFilter, NameCurrentListOrder, NameCurrentListPage,
-    NameCurrentListRow, NameCurrentListSort, count_name_current_list, load_name_current_list_page,
-    load_name_current_list_page_offset, load_name_current_list_row_by_name,
-    load_name_current_list_row_by_namehash, name_current_list_cursor_from_row,
+    NameCurrentListRow, NameCurrentListSort, name_current_list_cursor_from_row,
 };
 pub use migration::{
     MIGRATION_AUTHORITY_TRANSITION_PROOF_KIND, load_name_migration_transition_timestamps,
@@ -220,70 +218,12 @@ pub const DEFAULT_ADDRESS_NAMES_MEMBERSHIP_JOINS: &str = r#"
    AND membership_token_lineage_lineage.block_hash = membership_token_lineage.block_hash
 "#;
 
-/// Load one current exact-name projection row by deterministic logical name identity. Under the
-/// publication switch the row is composed from the owned key families instead
-/// (`families::name`).
+/// Compose a current exact-name row by deterministic logical name identity from the families.
 pub async fn load_name_current(
     pool: &PgPool,
     logical_name_id: &str,
 ) -> Result<Option<NameCurrentRow>> {
-    if crate::publication_source::serve_from_families() {
-        return crate::families::name::load_family_name(pool, logical_name_id).await;
-    }
-    let row = sqlx::query(&format!(
-        r#"
-        SELECT
-            nc.logical_name_id,
-            nc.namespace,
-            nc.raw_name AS canonical_display_name,
-            nc.raw_name AS normalized_name,
-            nc.namehash,
-            nc.surface_binding_id,
-            nc.resource_id,
-            nc.serving_resource_id,
-            nc.token_lineage_id,
-            nc.binding_kind,
-            nc.declared_summary,
-            nc.provenance,
-            -- Status and reason come from the support columns; the source classes and
-            -- enumeration basis Project derived from the selected arm come from the summary.
-            CASE WHEN nc.support_status = 'supported'
-                 THEN jsonb_build_object('status', 'projected', 'exhaustiveness', 'not_asserted')
-                 ELSE jsonb_build_object(
-                     'status', 'unsupported', 'exhaustiveness', 'not_asserted',
-                     'unsupported_reason', nc.unsupported_reason
-                 ) END || jsonb_strip_nulls(jsonb_build_object(
-                     'source_classes_considered',
-                     nc.declared_summary #> '{{coverage,source_classes_considered}}',
-                     'enumeration_basis',
-                     nc.declared_summary #> '{{coverage,enumeration_basis}}'
-                 )) AS coverage,
-            nc.chain_positions,
-            nc.canonicality_summary,
-            nc.manifest_version,
-            nc.last_recomputed_at
-        FROM bigname_phase.name_current nc
-        JOIN bigname_phase.name_surfaces surface
-          ON surface.logical_name_id = nc.logical_name_id
-        LEFT JOIN bigname_phase.resources resource
-          ON resource.resource_id = nc.resource_id
-        LEFT JOIN bigname_phase.surface_bindings binding
-          ON binding.surface_binding_id = nc.surface_binding_id
-        LEFT JOIN bigname_phase.token_lineages token_lineage
-          ON token_lineage.token_lineage_id = nc.token_lineage_id
-        {DEFAULT_NAME_CURRENT_LINEAGE_JOINS}
-        WHERE nc.logical_name_id = $1
-        {DEFAULT_NAME_CURRENT_READ_FILTER}
-        "#,
-    ))
-    .bind(logical_name_id)
-    .fetch_optional(pool)
-    .await
-    .with_context(|| {
-        format!("failed to load name_current row for logical_name_id {logical_name_id}")
-    })?;
-
-    row.map(decode_name_current_row).transpose()
+    crate::families::name::load_family_name(pool, logical_name_id).await
 }
 
 /// Load current exact-name projection rows for a set of logical name identities.
@@ -291,7 +231,7 @@ pub async fn load_name_current(
 /// The returned map is keyed by `logical_name_id`, so duplicate requested ids collapse into one
 /// found row and missing rows are omitted. Iteration order is deterministic `BTreeMap` key order;
 /// callers that need request or page order should iterate their original ids and look up into the
-/// map. Under the publication switch the rows are composed from the owned key families.
+/// map. The rows are composed from the owned key families.
 pub async fn load_name_current_by_logical_name_ids(
     pool: &PgPool,
     logical_name_ids: &[String],
@@ -299,77 +239,15 @@ pub async fn load_name_current_by_logical_name_ids(
     if logical_name_ids.is_empty() {
         return Ok(BTreeMap::new());
     }
-    if crate::publication_source::serve_from_families() {
-        return crate::families::name::load_family_names_by_logical_name_ids(
-            pool,
-            logical_name_ids,
-        )
-        .await;
-    }
 
-    let rows = sqlx::query(&format!(
-        r#"
-        SELECT
-            nc.logical_name_id,
-            nc.namespace,
-            nc.raw_name AS canonical_display_name,
-            nc.raw_name AS normalized_name,
-            nc.namehash,
-            nc.surface_binding_id,
-            nc.resource_id,
-            nc.serving_resource_id,
-            nc.token_lineage_id,
-            nc.binding_kind,
-            nc.declared_summary,
-            nc.provenance,
-            CASE WHEN nc.support_status = 'supported'
-                 THEN jsonb_build_object('status', 'projected', 'exhaustiveness', 'not_asserted')
-                 ELSE jsonb_build_object(
-                     'status', 'unsupported', 'exhaustiveness', 'not_asserted',
-                     'unsupported_reason', nc.unsupported_reason
-                 ) END AS coverage,
-            nc.chain_positions,
-            nc.canonicality_summary,
-            nc.manifest_version,
-            nc.last_recomputed_at
-        FROM bigname_phase.name_current nc
-        JOIN bigname_phase.name_surfaces surface
-          ON surface.logical_name_id = nc.logical_name_id
-        LEFT JOIN bigname_phase.resources resource
-          ON resource.resource_id = nc.resource_id
-        LEFT JOIN bigname_phase.surface_bindings binding
-          ON binding.surface_binding_id = nc.surface_binding_id
-        LEFT JOIN bigname_phase.token_lineages token_lineage
-          ON token_lineage.token_lineage_id = nc.token_lineage_id
-        {DEFAULT_NAME_CURRENT_LINEAGE_JOINS}
-        WHERE nc.logical_name_id = ANY($1::TEXT[])
-        {DEFAULT_NAME_CURRENT_READ_FILTER}
-        ORDER BY nc.logical_name_id
-        "#,
-    ))
-    .bind(logical_name_ids)
-    .fetch_all(pool)
-    .await
-    .with_context(|| {
-        format!(
-            "failed to load name_current rows for {} logical_name_id values",
-            logical_name_ids.len()
-        )
-    })?;
-
-    rows.into_iter()
-        .map(|row| {
-            let row = decode_name_current_row(row)?;
-            Ok((row.logical_name_id.clone(), row))
-        })
-        .collect()
+    crate::families::name::load_family_names_by_logical_name_ids(pool, logical_name_ids).await
 }
 
 /// Load the canonical representative current name for each resource (registration).
 ///
 /// `name_current.resource_id` is 1:many; this picks one representative per resource using the
 /// `canonical_display_name ASC` tie-break the rest of v2 uses and returns the picked exact-name
-/// row, including its declared wrapper summary. Under the publication switch the rows are
+/// row, including its declared wrapper summary. The rows are
 /// composed from the owned key families.
 pub async fn load_current_names_by_resource_ids(
     pool: &PgPool,
@@ -378,67 +256,6 @@ pub async fn load_current_names_by_resource_ids(
     if resource_ids.is_empty() {
         return Ok(BTreeMap::new());
     }
-    if crate::publication_source::serve_from_families() {
-        return crate::families::name::load_family_names_by_resource_ids(pool, resource_ids).await;
-    }
 
-    let rows = sqlx::query(&format!(
-        r#"
-        SELECT DISTINCT ON (nc.resource_id)
-            nc.logical_name_id,
-            nc.namespace,
-            nc.raw_name AS canonical_display_name,
-            nc.raw_name AS normalized_name,
-            nc.namehash,
-            nc.surface_binding_id,
-            nc.resource_id,
-            nc.serving_resource_id,
-            nc.token_lineage_id,
-            nc.binding_kind,
-            nc.declared_summary,
-            nc.provenance,
-            CASE WHEN nc.support_status = 'supported'
-                 THEN jsonb_build_object('status', 'projected', 'exhaustiveness', 'not_asserted')
-                 ELSE jsonb_build_object(
-                     'status', 'unsupported', 'exhaustiveness', 'not_asserted',
-                     'unsupported_reason', nc.unsupported_reason
-                 ) END AS coverage,
-            nc.chain_positions,
-            nc.canonicality_summary,
-            nc.manifest_version,
-            nc.last_recomputed_at
-        FROM bigname_phase.name_current nc
-        JOIN bigname_phase.name_surfaces surface
-          ON surface.logical_name_id = nc.logical_name_id
-        LEFT JOIN bigname_phase.resources resource
-          ON resource.resource_id = nc.resource_id
-        LEFT JOIN bigname_phase.surface_bindings binding
-          ON binding.surface_binding_id = nc.surface_binding_id
-        LEFT JOIN bigname_phase.token_lineages token_lineage
-          ON token_lineage.token_lineage_id = nc.token_lineage_id
-        {DEFAULT_NAME_CURRENT_LINEAGE_JOINS}
-        WHERE nc.resource_id = ANY($1::UUID[])
-        {DEFAULT_NAME_CURRENT_READ_FILTER}
-        ORDER BY nc.resource_id ASC, nc.raw_name ASC, nc.logical_name_id ASC
-        "#,
-    ))
-    .bind(resource_ids)
-    .fetch_all(pool)
-    .await
-    .with_context(|| {
-        format!(
-            "failed to load current representative names for {} resource_id values",
-            resource_ids.len()
-        )
-    })?;
-
-    rows.into_iter()
-        .map(|row| {
-            let row = decode_name_current_row(row)?;
-            let resource_id = row
-                .resource_id
-                .context("resource-filtered name_current row is missing resource_id")?;
-            Ok((resource_id, row))
-        })
-        .collect()
+    crate::families::name::load_family_names_by_resource_ids(pool, resource_ids).await
 }

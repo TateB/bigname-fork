@@ -1,5 +1,7 @@
 //! Readers the edge and topology step shares: the resolver link selection over F7, and the alias
 //! and wildcard views of the F5 resource pointer.
+use std::collections::{BTreeSet, HashMap};
+
 use anyhow::{Context, Result};
 use sqlx::{PgConnection, PgPool, Row, types::time::OffsetDateTime};
 use uuid::Uuid;
@@ -68,7 +70,7 @@ impl LinkSelection {
 /// The link selection of `resolver_address` for `namehash`: two probes of
 /// `project_resolver_link`, exact then default. `None` when the resolver has neither link. Each
 /// probe takes the row F7 kept, the newest link at that node whatever its storage model, as the
-/// resolver keeps one record id per node (PR 954, the newest-link ruling under Decisions).
+/// resolver keeps one record id per node.
 pub async fn load_family_link_selection(
     pool: &PgPool,
     chain_id: &str,
@@ -89,38 +91,87 @@ pub(crate) async fn load_family_link_selection_on(
     resolver_address: &str,
     namehash: &str,
 ) -> Result<Option<LinkSelection>> {
+    let request = (resolver_address.to_owned(), namehash.to_owned());
+    Ok(
+        load_family_link_selections_on(conn, chain_id, std::slice::from_ref(&request))
+            .await
+            .with_context(|| {
+                format!("failed to load the family links of resolver {resolver_address}")
+            })?
+            .remove(&link_key(resolver_address, namehash))
+            .flatten(),
+    )
+}
+
+/// The key of a link selection request: the lower-cased resolver address and node.
+pub(crate) fn link_key(resolver_address: &str, namehash: &str) -> (String, String) {
+    (
+        resolver_address.to_ascii_lowercase(),
+        namehash.to_ascii_lowercase(),
+    )
+}
+
+/// The link selections of many (resolver address, namehash) requests on `chain_id`, keyed by
+/// [`link_key`], read in one statement: each request's exact node and the default node of its
+/// resolver.
+pub(crate) async fn load_family_link_selections_on(
+    conn: &mut PgConnection,
+    chain_id: &str,
+    requests: &[(String, String)],
+) -> Result<HashMap<(String, String), Option<LinkSelection>>> {
+    let keys: BTreeSet<(String, String)> = requests
+        .iter()
+        .map(|(resolver, namehash)| link_key(resolver, namehash))
+        .collect();
+    if keys.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut probes: BTreeSet<(String, String)> = BTreeSet::new();
+    for (resolver, node) in &keys {
+        probes.insert((resolver.clone(), node.clone()));
+        probes.insert((resolver.clone(), DEFAULT_RECORD_NODE.to_owned()));
+    }
+    let resolvers: Vec<&str> = probes
+        .iter()
+        .map(|(resolver, _)| resolver.as_str())
+        .collect();
+    let nodes: Vec<&str> = probes.iter().map(|(_, node)| node.as_str()).collect();
     let rows = sqlx::query(
-        "SELECT node, record_id, block_number, transaction_index, log_index, event_identity,
-                normalized_event_id
+        "SELECT resolver_address, node, record_id, block_number, transaction_index, log_index,
+                event_identity, normalized_event_id
          FROM bigname_phase.project_resolver_link
-         WHERE chain_id = $1 AND resolver_address = $2 AND node = ANY($3::text[])",
+         WHERE chain_id = $1
+           AND (resolver_address, node) IN (
+               SELECT requested.resolver_address, requested.node
+               FROM unnest($2::text[], $3::text[]) requested (resolver_address, node))",
     )
     .bind(chain_id)
-    .bind(resolver_address.to_ascii_lowercase())
-    .bind([
-        namehash.to_ascii_lowercase(),
-        DEFAULT_RECORD_NODE.to_owned(),
-    ])
+    .bind(&resolvers)
+    .bind(&nodes)
     .fetch_all(&mut *conn)
     .await
-    .with_context(|| format!("failed to load the family links of resolver {resolver_address}"))?;
-    let mut exact = None;
-    let mut default = None;
+    .context("failed to load the family resolver links")?;
+    let mut links: HashMap<(String, String), FamilyLink> = HashMap::new();
     for row in rows {
+        let resolver: String = row.try_get("resolver_address")?;
         let link = FamilyLink {
             node: row.try_get("node")?,
             record_id: row.try_get("record_id")?,
             position: FamilyPosition::from_row(&row)?,
             normalized_event_id: row.try_get("normalized_event_id")?,
         };
-        if link.node == namehash.to_ascii_lowercase() {
-            exact = Some(link.clone());
-        }
-        if link.node == DEFAULT_RECORD_NODE {
-            default = Some(link);
-        }
+        links.insert((resolver, link.node.clone()), link);
     }
-    Ok(select(exact, default))
+    Ok(keys
+        .into_iter()
+        .map(|(resolver, node)| {
+            let exact = links.get(&(resolver.clone(), node.clone())).cloned();
+            let default = links
+                .get(&(resolver.clone(), DEFAULT_RECORD_NODE.to_owned()))
+                .cloned();
+            ((resolver, node), select(exact, default))
+        })
+        .collect())
 }
 
 fn select(exact: Option<FamilyLink>, default: Option<FamilyLink>) -> Option<LinkSelection> {
@@ -146,12 +197,9 @@ fn select(exact: Option<FamilyLink>, default: Option<FamilyLink>) -> Option<Link
 }
 
 /// The pointer the alias topology join reads: the resource's current pointer, and nothing when
-/// that pointer is a clear (name_topology.rs, the binding resource's latest `ResolverChanged`,
-/// then zero rejected). An older non-zero pointer is never exposed. Not the same key as that
-/// read: name_topology.rs:189 takes the latest pointer of the resource attributed to the surface
-/// being read (`event.logical_name_id = surface.logical_name_id`), while F5 keeps one pointer per
-/// resource. The two agree only when the resource's latest pointer is attributed to that surface;
-/// a later unnamed pointer, or one attributed to another name, answers here and not there.
+/// that pointer is a clear. An older non-zero pointer is never exposed. F5 keeps one pointer per
+/// resource, so a later unnamed pointer, or one attributed to another name, answers here even
+/// though it is not attributed to the surface being read.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FamilyAliasSourcePointer {
     pub resource_id: Uuid,
@@ -193,9 +241,9 @@ pub async fn load_family_alias_source_pointer(
 /// wildcard lateral): the latest non-zero pointer, zero filtered before the latest is taken, and
 /// the latest `RecordVersionChanged` or `ResolverChanged` with clears included as its boundary.
 /// A non-zero pointer followed by a clear keeps the non-zero resolver with the clear as boundary.
-/// As with [`FamilyAliasSourcePointer`], the served lateral (name_topology.rs:349) reads the
-/// events attributed to the ancestor surface and F5 keeps one row per resource, so the two agree
-/// only when the resource's latest pointer and boundary events are attributed to that surface.
+/// As with [`FamilyAliasSourcePointer`], F5 keeps one row per resource, so the pointer and
+/// boundary are the resource's latest whether or not they are attributed to the ancestor
+/// surface.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FamilyWildcardSource {
     pub resource_id: Uuid,

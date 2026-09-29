@@ -1,17 +1,15 @@
 //! `GET /v1/addresses/{address}/resolves_to` (both the single coin type and `coin_type=evm`) over
-//! the families under the publication switch (TYR-36 step 7b).
+//! the families at the family publication.
 //!
-//! The candidate resources come from the derived inverse address index (F14) alone,
-//! with mirror resolvers from the family classification alone (`candidates.rs`,
-//! `CandidateSource::Index`). The retained-value scan the harness adds stays a harness check:
-//! the switch requires `address_index_misses` 0 first. Each candidate's family record inventory
-//! is assembled (`inventory.rs`) and its entries that resolve to the address become
-//! `address_records_current`-shaped rows, one per name the resource serves records for. Those
-//! names are composed at read (`families::name`) and kept under the served builder's rule
-//! (address_records.rs: the record resource is the serving resource, else the bound resource of a
-//! bound, registered name). The rows are bound into the served page statements
-//! (`address_names::source`), so the coin-type match, the ENSIP-19 default-address fallback,
-//! dedupe, the authority filter, sorts, cursors and the EVM aggregation are the served SQL.
+//! The candidate resources come from the derived inverse address index (F14) alone, with mirror
+//! resolvers from the family classification alone (`candidates.rs`, `candidate_resources_from`).
+//! Each candidate's family record inventory is assembled (`inventory.rs`) and its entries that
+//! resolve to the address become `address_records_current`-shaped rows, one per name the resource
+//! serves records for. Those names are composed at read (`families::name`) and kept when the record
+//! resource is the name's serving resource, else the bound resource of a bound, registered name.
+//! The rows are bound into the served page statements (`address_names::source`), so the coin-type
+//! match, the ENSIP-19 default-address fallback, dedupe, the authority filter, sorts, cursors and
+//! the EVM aggregation are the served SQL.
 //!
 //! A page is read in one snapshot (`read_snapshot`).
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,8 +21,8 @@ use uuid::Uuid;
 
 use super::{
     address_names::{name_row, publication_stamps},
-    candidates::{CandidateSource, candidate_resources_from},
-    inventory::{FamilyAttribution, load_family_record_inventory_detail_on},
+    candidates::candidate_resources_from,
+    inventory::{FamilyAttribution, load_family_record_inventories_on},
     resolves_to::{RecordRow, may_fall_back, record_rows},
 };
 use crate::{
@@ -144,7 +142,7 @@ async fn compose_address_record_rows(
     let candidates = if coin_types.is_empty() {
         BTreeMap::new()
     } else {
-        candidate_resources_from(conn, &address, coin_types, CandidateSource::Index).await?
+        candidate_resources_from(conn, &address, coin_types).await?
     };
     if candidates.is_empty() {
         // The route's namespace publication fence also covers an empty candidate set.
@@ -163,17 +161,14 @@ async fn compose_address_record_rows(
         }
         let publication = servable_publication(conn, &chain_id).await?;
         let mut records: BTreeMap<Uuid, Vec<RecordRow>> = BTreeMap::new();
-        for resource_id in resources {
-            let Some(inventory) = load_family_record_inventory_detail_on(
-                conn,
-                &chain_id,
-                resource_id,
-                FamilyAttribution::Given(BTreeSet::new()),
-            )
-            .await?
-            else {
-                continue;
-            };
+        let inventories = load_family_record_inventories_on(
+            conn,
+            &chain_id,
+            &resources,
+            FamilyAttribution::Given(BTreeSet::new()),
+        )
+        .await?;
+        for (resource_id, inventory) in inventories {
             let found = record_rows(&chain_id, &inventory, &address);
             if !found.is_empty() {
                 records.insert(resource_id, found);
@@ -203,8 +198,8 @@ async fn compose_address_record_rows(
     Ok((Value::Array(rows), Value::Array(names)))
 }
 
-/// The resource a composed name serves records through, under the served builder's rule
-/// (address_records.rs, `names`).
+/// The resource a composed name serves records through: its serving resource, else the bound
+/// resource of a bound, registered name.
 fn serves_records_through(row: &NameCurrentRow) -> Option<Uuid> {
     let bound = row.surface_binding_id.is_some()
         && row.resource_id.is_some()
@@ -291,6 +286,7 @@ fn address_record_row(
         "logical_name_id": row.logical_name_id,
         "namespace": row.namespace,
         "raw_name": row.canonical_display_name,
+        "normalized_name": row.normalized_name,
         "namehash": row.namehash,
         "surface_binding_id": row.surface_binding_id,
         "resource_id": row.resource_id,

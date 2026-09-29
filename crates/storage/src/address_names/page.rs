@@ -90,8 +90,8 @@ pub async fn load_address_names_current_page_sorted_for_relations(
     .await
 }
 
-/// Under the publication switch the page is read from the owned key families instead
-/// (`families::records::load_family_address_names_page`, TYR-36 step 7b).
+/// The page is read from the owned key families
+/// (`families::records::load_family_address_names_page`).
 #[allow(clippy::too_many_arguments)]
 pub async fn load_address_names_current_page_filtered(
     pool: &PgPool,
@@ -107,30 +107,8 @@ pub async fn load_address_names_current_page_filtered(
     cursor: Option<&AddressNamesCurrentSortedCursor>,
     page_size: u64,
 ) -> Result<AddressNamesCurrentSortedPage> {
-    if crate::publication_source::serve_from_families() {
-        return crate::families::records::load_family_address_names_page(
-            pool,
-            address,
-            namespace,
-            relations,
-            dedupe_by,
-            q,
-            authority,
-            is_migrated,
-            sort,
-            order,
-            cursor,
-            page_size,
-        )
-        .await;
-    }
-    let mut conn = pool
-        .acquire()
-        .await
-        .context("failed to acquire a connection for an address-names page")?;
-    load_address_names_page_from(
-        &mut conn,
-        RowSource::Served,
+    crate::families::records::load_family_address_names_page(
+        pool,
         address,
         namespace,
         relations,

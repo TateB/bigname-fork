@@ -1,28 +1,24 @@
-//! The address relations of one composed name at its publication (F13): the served builder's
-//! rules (crates/project/src/builders/address_names.rs) applied to the name's controller
-//! candidates, its composed row and its NameWrapper row.
+//! The address relations of one composed name at its publication (F13), from the name's
+//! controller candidates, its composed row and its NameWrapper row.
 //!
 //! - The controller is the fold, in the canonical event order, of the candidates the served
-//!   admission keeps (name_authority/authority_events.sql:9-24 for the controller kinds: no
-//!   unsupported reason, and the selected resource, or no resource on the selected arm), plus the
-//!   registry-only predecessor window (address_names.rs:115-211): AuthorityTransferred events on
-//!   the resource of the binding a registry-only selected binding replaced, from that binding's
-//!   block up to the selected binding's position. An AuthorityTransferred or state-derived
-//!   SurfaceBound sets the controller; a PermissionChanged acts only on the name's resource, sets
-//!   it when its powers hold `resource_control` and the NameWrapper mask allows, and otherwise
-//!   revokes it from its subject only (address_names.rs:228-283).
+//!   admission keeps (for the controller kinds: no unsupported reason, and the selected resource,
+//!   or no resource on the selected arm), plus the registry-only predecessor window:
+//!   AuthorityTransferred events on the resource of the binding a registry-only selected binding
+//!   replaced, from that binding's block up to the selected binding's position. An
+//!   AuthorityTransferred or state-derived SurfaceBound sets the controller; a PermissionChanged
+//!   acts only on the name's resource, sets it when its powers hold `resource_control` and the
+//!   NameWrapper mask allows, and otherwise revokes it from its subject only.
 //! - The registrant is the composed `registration.registrant`, for a name with a token lineage.
-//! - The token holder is the registrant, where the NameWrapper mask allows (address_names.rs:
-//!   the token_holder relation). A transfer supplies the registrant's recipient before an owner
-//!   lapse. The lapse also removes wrapper_state, so both readers then withhold the token-holder
-//!   relation under the same modifier mask.
+//! - The token holder is the registrant, where the NameWrapper mask allows. A transfer supplies the
+//!   registrant's recipient before an owner lapse. The lapse also removes wrapper_state, so both
+//!   readers then withhold the token-holder relation under the same modifier mask.
 //! - The effective controller is the controller, else (with a token lineage) the token holder or
-//!   registrant, where the mask allows (address_names.rs:440-476).
+//!   registrant, where the mask allows.
 //!
 //! The mask reads the NameWrapper row of the name's resource: whether a PermissionScopeChanged
 //! ever set it (`scope_modifiers`), the composed `wrapper_state`, and the grace test at the
-//! publication clock, which is unknown (and so not false) when the fuses or expiry are
-//! (address_names.rs:62-91).
+//! publication clock, which is unknown (and so not false) when the fuses or expiry are.
 use std::collections::BTreeSet;
 
 use serde_json::Value;
@@ -89,7 +85,8 @@ pub(super) fn relations(input: &NameRelationsInput<'_>) -> Vec<(String, &'static
         .pointer("/registration/registrant")
         .and_then(Value::as_str)
         .map(str::to_ascii_lowercase);
-    let controller = controller(input, modifier.is_none() || wrapped_out_of_grace);
+    let controller =
+        controller(input, modifier.is_none() || wrapped_out_of_grace).map(|(address, _)| address);
 
     let mut out = Vec::new();
     if lineage {
@@ -139,7 +136,10 @@ fn arm_of(source_family: &str) -> Option<&'static str> {
 
 /// The folded controller. `permission_mask_open` is the served condition under which a
 /// `resource_control` PermissionChanged sets rather than revokes.
-fn controller(input: &NameRelationsInput<'_>, permission_mask_open: bool) -> Option<String> {
+fn controller(
+    input: &NameRelationsInput<'_>,
+    permission_mask_open: bool,
+) -> Option<(String, FamilyPosition)> {
     let selection = AuthoritySelection::from_provenance(&input.row.provenance);
     if selection.unsupported_reason.is_some() {
         // No controller event is admitted, and the predecessor window reads only names
@@ -177,7 +177,7 @@ fn controller(input: &NameRelationsInput<'_>, permission_mask_open: bool) -> Opt
     events.sort_by(|left, right| left.position.cmp(&right.position));
 
     let name_resource = input.row.resource_id.map(|resource| resource.to_string());
-    let mut controller: Option<String> = None;
+    let mut controller: Option<(String, FamilyPosition)> = None;
     for event in events {
         let set = match event.event_kind.as_str() {
             "AuthorityTransferred" | "SurfaceBound" => true,
@@ -190,8 +190,14 @@ fn controller(input: &NameRelationsInput<'_>, permission_mask_open: bool) -> Opt
             _ => continue,
         };
         if set {
-            controller = event.subject.clone();
-        } else if controller.is_some() && controller == event.subject {
+            controller = event
+                .subject
+                .clone()
+                .map(|subject| (subject, event.position.clone()));
+        } else if controller
+            .as_ref()
+            .is_some_and(|(address, _)| Some(address) == event.subject.as_ref())
+        {
             controller = None;
         }
     }
@@ -230,3 +236,28 @@ fn registry_only_window(
 #[cfg(test)]
 #[path = "address_relations_tests.rs"]
 mod tests;
+
+/// The actual event that supplied a current relation, for bounded history attribution.
+/// Reuses the controller fold and the registration fold's selected event; it does not infer
+/// an acquisition time from the publication time.
+pub(super) fn relation_position(
+    input: &NameRelationsInput<'_>,
+    relation: &str,
+) -> Option<FamilyPosition> {
+    if relation == EFFECTIVE_CONTROLLER {
+        let modifier = input.wrapper.filter(|wrapper| wrapper.has_modifier);
+        let wrapper_state = input
+            .row
+            .declared_summary
+            .get("wrapper_state")
+            .and_then(Value::as_str);
+        let in_grace = modifier.and_then(|wrapper| in_grace(wrapper, input.clock_seconds));
+        let open = modifier.is_none()
+            || (matches!(wrapper_state, Some("wrapped" | "emancipated"))
+                && in_grace == Some(false));
+        if let Some((_, position)) = controller(input, open) {
+            return Some(position);
+        }
+    }
+    FamilyPosition::from_json(input.row.provenance.get("registrant_position")?)
+}

@@ -158,8 +158,8 @@ earlier blocks cannot use a future boundary. The resulting activated
 transitions must remain identical. A resumed session and a cold restore apply
 the same retained proof. Redo and reorg rebuild it from surviving canonical
 events; replay without the activated boundary restores ordinary ENSv1 expiry
-behavior. Real later ENSv1 ownership observations are not suppressed, and the
-dual-current publication assertion is unchanged. This interpreter-content change
+behavior. Real later ENSv1 ownership observations are not suppressed. This
+interpreter-content change
 requires the normal Interpret and Project redos for previously derived rows.
 
 When an ENSv2 registration release, a move away from a registry path, or a
@@ -185,22 +185,22 @@ The append-numbered phase-schema upgrade adds
 ships before the planned production re-walk from block zero, so it does not
 guess arms for historical rows or perform a historical backfill. Fresh replay
 always supplies the value. The fresh phase baseline has the identical column,
-constraint, and comment. At the offline boundary, operators empty only
-`surface_bindings` and its `name_current`, `address_names_current`, and
-`address_records_current` (when installed) dependents before applying the
-schema-migration; raw facts, manifest identities,
+constraint, and comment. That historical schema-migration required an offline replacement of bindings
+and their then-existing serving dependents; the removal schema-migration
+`20260929160000_remove_served_projections.sql` later dropped those serving
+tables. Preserve the actual dependency order for an upgrade from that
+older schema; raw facts, manifest identities,
 normalized-event identities, and unrelated phase rows remain in place for the
 mandatory full Interpret and Project redos.
 
-Reverse address lookup under the [publication switch](glossary.md#publication-switch)
-uses `project_address_name_index` to admit candidate name surfaces, seeks those
+Reverse address lookup uses `project_address_name_index` to admit candidate name surfaces, seeks those
 keys in primary-first, role, and lexical order, and recomputes their current
 relations in batches of at most 64 names. The primary claims, relation masks,
 exact count, and page inventories share one read-only repeatable-read snapshot.
 The count visits every candidate but retains only a page and its overflow row.
 The candidate SQL can inspect or sort more index entries than it returns, and
 masked candidates can require additional seeks; production query plans and
-latency still require qualification before enabling the switch.
+latency still require production-scale qualification before activation.
 
 ## Table ownership
 
@@ -215,18 +215,27 @@ latency still require qualification before enabling the switch.
 | `ens_names` | operator rainbow load | Unverified rainbow-table candidates consumed by the import command. |
 | `normalized_events` | Interpret; manifest synchronization for `SourceManifestUpdated` only | Protocol events normalized transactionally with identity output, plus retained manifest-authority history. Manifest synchronization's rows must not be deleted or rebuilt as Interpret output: [discovery-rule widening checks](glossary.md#discovery-rule-widening-and-narrowing) reconstruct historical declaration floors from them. |
 | `discovery_watch_admissions` | Interpret | The last acknowledged [discovery-watch admission snapshot](glossary.md#discovery-watch-admission-snapshot) for each active manifest-authority fingerprint and lineage-orphaning epoch. This is replay coordination state, never fetched-fact evidence, redo authority, projection, or serving data. |
-| `project_redo_resolver_evidence` | Interpret, then Project consumption | Pre-delete resolver and permission-resource references preserved across Interpret retries for one redo range; redo coordination only, never serving data. |
-| `project_redo_expiry_roots` | Interpret, then Project consumption | Logical names or permission resources from state-derived ENSv2 path-expiry releases preserved before Interpret deletes a redo range; bounded projection-redo coordination only, never serving data. |
-| `project_redo_child_registration_history` | Interpret, then Project consumption | Child and registry identifiers from entry-creating events in an ENSv1→ENSv2 [migration `WrapperRegistry`](glossary.md#migration-registry-wrapperregistry), preserved before Interpret deletes a redo range; bounded child-scope coordination only, never serving data. |
 | `interpret_decode_skips` | Interpret | Append-only operator diagnostics for selected event logs from undeclared emitters skipped after malformed ABI decoding, and for logs that preceded their emitter's same-batch discovery admission; never identity, normalized-event, projection, or serving data. |
 | `migration_event_associations`, `migration_discovery_associations`, `migration_candidate_identity_effects`, `migration_candidate_discovery_effects` | Interpret | Correlation-versioned diagnostic associations and effects that slice 1 must not use to alter independently admitted normalized events, identity rows, or [discovery edges](glossary.md#discovery-graph--discovery-edge). The ordinary `registry_announcement` indexability edge remains a watch-plan input. |
-| `*_current` projection families | Project | Current serving state, rebuildable from canonical interpreted input. |
 | `child_registration_events` | Project | Historical membership of each name's [direct child registration](glossary.md#direct-child-registration) events, rebuildable from canonical interpreted input; name history selects rows through it and reads the events themselves from `normalized_events`. |
-| `project_family_marker`, `project_family_undo`, `project_repair_record` and the owned key family tables (`project_name_state` through `project_address_record_id_index`, `project_name_history`, a name's first event block and time, ENSv2 corpus flag and voted authority arms, and `project_name_summary`, plus `project_named_resource_pointer`, the latest named resolver pointer per chain, resource and name) | Project, after each batch's progress is recorded | [Owned key families](projections.md#owned-key-families): per-key current state, its block marker, its undo journal (kept back to the lowest of 256 blocks, the finalized and safe blocks and an active repair's floor) and the record of the latest family repair or rebuild. With the [publication switch](glossary.md#publication-switch) off, the default, they are shadows that no served path reads; with it on, the serving fence reads `project_family_marker`, the names group serves [composed name rows](glossary.md#composed-name-row) built from these tables at read (walking `project_lifecycle_event` and `project_wrapper_state` by expiry for the expiring listing, and `project_resource_pointer`, `project_named_resource_pointer` and `project_registry_pointer` by resolver for bound names, through `project_lifecycle_event_expiry_idx`, `project_lifecycle_event_inexact_expiry_idx`, `project_wrapper_state_expiry_idx`, `project_named_resource_pointer_resolver_idx` and `project_registry_pointer_resolver_idx`), the subnames page, child counts and registry labels read the child families with `project_name_summary` (the [name summary](glossary.md#name-summary), the one stored per-name row: a name's selected arm, serving flag, registration status, expiry and registration times and zero-owner flag, which the family step composes again for every name a block touches or whose `recompose_at` the block's time reaches, found through `project_name_summary_recompose_idx` and the resource indexes `project_binding_candidate_predecessor_idx`, `project_binding_candidate_lease_idx`, `project_lifecycle_association_target_idx` and `project_registry_owner_event_resource_idx`, with the zero-owner attribution reading `project_registry_owner_event_name_idx`), the records and address group reads its own rows from them too (the records route's inventory, address-name relations recomputed at read from `project_address_name_index`, `resolves_to` pages from both `project_address_record_node_index` and `project_address_record_id_index`, record counts, and the indexed primary-name claim), `GET /v1/permissions` and the resolver routes serve their own rows from the grants, approvals, registry bindings and resolver classification (through `project_grant_subject_idx`, `project_grant_scope_idx`, `project_account_approval_subject_idx`, `project_registry_binding_observation_resource_idx` and `project_registry_binding_observation_owner_idx`), and every other route that joins name rows (name and address history and events; the list is in [the API contract](api-v1.md#tier-2-product-reads)) takes those name rows from composed rows too while its own pages stay on the `*_current` tables until the later step 7b slices move them. Each composed read and each child read runs in one read-only repeatable-read transaction, so it sees one family block, and a marker the publication fence would refuse (not `live`, another build's hash, or on a block a reorg orphaned) serves no composed row and no child (the read fails, and the API answers `409 stale`). The step 3 [shadow harness](glossary.md#shadow-read) reads the family tables in tests only. Rebuildable from canonical interpreted input; with the switch off, the family tables are never serving data. |
-
+| `project_family_marker`, `project_family_undo`, `project_repair_record` and [owned key family tables](glossary.md#per-block-publication) | Project | Permanent current serving state, publication generation, undo journal and repair progress. Readers compose names, records, control, permissions, resolver collections, reverse claims and address relations from one family snapshot. Child lists and counts use `project_child_edge_candidate`, `project_parent_subregistry` and `project_name_summary`. An unavailable marker or overlapping redo refuses composed reads. Family data is rebuildable from canonical interpreted input; hash-pinned hydration overlays follow the documented replay policy. |
 | `chain_phase_state`, redo/invalidation state, `service_heartbeats` | phase runner; manifest synchronization may stamp or widen required Ingest redo work recorded by the [manifest-authority marker](glossary.md#manifest-authority-marker), and Interpret may stamp discovery-owned required Ingest work in the transaction that finalizes a completed pass | Phase progress, repair work, and runtime liveness. Both coordination writers use the shared required-Ingest installer under the existing synchronization and runner phase-exclusion rules. They preserve lifecycle backup fields, clear resumable evidence for genuinely new demand, and never execute the redo. The phase runner remains the sole executor and redo authority. |
-| `project_generation_failures` | phase runner after Project rollback | Append-only audit evidence for a [projection generation failure](glossary.md#projection-generation-failure); never a product projection. |
 | `resolution_divergences` | guarded lookup functions; Project publication may only clear outdated direct observations | Active live/indexed resolver disagreements and retained observations retired after the exact resolver becomes null; diagnostic only. |
+
+Family indexes serve these concrete readers:
+
+- Expiring names use `project_lifecycle_event_expiry_idx`,
+  `project_lifecycle_event_inexact_expiry_idx` and `project_wrapper_state_expiry_idx`;
+  resolver-bound names use `project_named_resource_pointer_resolver_idx` and
+  `project_registry_pointer_resolver_idx`.
+- Name-summary recomposition uses `project_name_summary_recompose_idx`,
+  `project_binding_candidate_predecessor_idx`, `project_binding_candidate_lease_idx`,
+  `project_lifecycle_association_target_idx` and `project_registry_owner_event_resource_idx`;
+  zero-owner attribution uses `project_registry_owner_event_name_idx`.
+- Permission pages use `project_grant_subject_idx`, `project_grant_scope_idx`,
+  `project_account_approval_subject_idx`, `project_registry_binding_observation_resource_idx`
+  and `project_registry_binding_observation_owner_idx`.
+
 
 Interpret writes `discovery_edges` and `contract_instance_addresses`. A phase
 that reads them may add read-only indexes through its own schema-migration, never
@@ -304,7 +313,7 @@ anchors into registration history.
 
 Address history (`GET /v1/addresses/{address}/history`) runs three statements in
 `crates/storage/src/history/`. The anchor lookup (`address_matches.rs`) finds the names and
-resources the address holds now in `address_names_current` and held in the past from three kinds
+resources the address holds now, through the family address-name reader, and held in the past from three kinds
 of activated, canonical events. A current relation row counts only when the event Project cites
 for it (`provenance.chain_id` and `chain_positions.block_number`) lies at or below the read's
 published block of that chain, so a relation acquired after that block cannot admit the
@@ -349,6 +358,14 @@ that drops either condition cannot use them and falls back to a broad scan, such
 storage functions `load_address_history_for_relations` and
 `load_address_history_page_for_relations`, which the public route always calls with `true`), and
 `GET /v1/diagnostics/events` with an address filter, which also reads candidate rows.
+That unbounded raw diagnostic path derives its anchors entirely from retained
+normalized events, so clearing family rows during Project rebuild does not remove
+the audit. It additionally accepts resource-scoped `PermissionChanged` evidence
+whose before or after state assigns `resource_control` to the address and
+state-derived registry-only `SurfaceBound` owner evidence. This intentionally
+includes former-controller audit history after revocation or replacement; it does
+not assert current ownership. The bounded product path keeps the current-relation
+and publication checks above. No parallel current-state cache is introduced.
 `GET /v1/names/{name}/history` with `scope=both` uses the same filter. The registration-scoped
 read keeps a correlated `IN` because its attribution check refers to the row. These are access
 paths only: no stored row, response, or [interpreter content
@@ -358,9 +375,9 @@ them concurrently on a large database with
 [`ops/address-history-indexes/install.sql`](../ops/address-history-indexes/README.md) first.
 
 Node-keyed resolver record writes carry neither a name nor a resource, so history reaches them
-through the registration's resolver pointers (`attribution.rs`). The reader evaluates the same
-evidence Project uses to publish `record_inventory_current.provenance.attributed_event_ids`, but
-only the evidence at or below the read's published block of each chain: the resource's
+through the registration's resolver pointers (`attribution.rs`). The reader evaluates the
+evidence that ties a node-keyed write to a resource, but only the evidence at or below the read's
+published block of each chain: the resource's
 `ResolverChanged` pointers (each paired with its name's `name_surfaces.namehash`), the
 node-keyed `RecordChanged` and `RecordVersionChanged` writes on each pointer's resolver before
 the next pointer (through `normalized_events_ens_v1_record_node_resolver_idx` and
@@ -369,22 +386,18 @@ split a pointer's window on a record-ID resolver, and, for a latest pointer at a
 mirror resolver, the ENSv1 resolver the mirror would call as the ENSv1 registry stood at that
 block. The reader follows that resolver only when the walk selects it at the name's own node
 (`ancestor_depth = 0`), and it reads each registry pointer by the node the event addresses
-(`child_node`, then `namehash`, then `node`), matching Project's mirror builder. A nearest
+(`child_node`, then `namehash`, then `node`), matching the family mirror reader. A nearest
 resolver on an ancestor attributes nothing, and the reader does not look past it for a farther
 one. A pointer or link above the published block neither attributes an older write nor closes
 an earlier pointer's window, so a resolver selected after the block cannot pull an older write
 into a read bound to it. Superseded pointers keep their windows and a clear closes the previous
-window without opening one, exactly as the producer attributes them, so the reader does not need
-the history-only row Project publishes for a cleared name. It also reproduces the empty
-attribution Project publishes for a resource whose latest pointer is a mirror resolver that
-Project cannot follow to an ENSv1 resolver. One input is
-read from a current projection row because the producer reads it there: whether a resolver is a
-supported, manifest-declared ENSv1, `public_resolver_v2`, or mirror resolver comes from
-`resolver_current.declared_summary.classification`. The ids the reader returns at the current
-publication equal the published `attributed_event_ids`; a guard wired into the Project suites
-that run the record inventory builder checks this after each of their Project runs, so a change to
-the producer's attribution those fixtures exercise fails that guard instead of drifting from
-history. Reads without publication bounds (the unbounded storage loaders and diagnostics reads
+window without opening one. A resource whose latest pointer is a mirror resolver that cannot be
+followed to an ENSv1 resolver attributes nothing. One input is current state: whether a
+resolver is a supported, manifest-declared ENSv1, `public_resolver_v2`, or mirror resolver comes
+from its `project_resolver_classification` row, and the read refuses when a chain the pointer
+walk reaches has no servable [family publication](glossary.md#family-marker). The record
+inventory's `provenance.attributed_event_ids` is this same reader evaluated at the current
+publication, so the two cannot drift. Reads without publication bounds (the unbounded storage loaders and diagnostics reads
 that pass none) evaluate every readable pointer and write. The ENSv1 and Basenames node-keyed arms
 use the node and resolver expression indexes on `normalized_events`. Two paths have no
 supporting index and read through the broad `normalized_events_projection_idx` or a block-range
@@ -679,22 +692,22 @@ whose block is no longer readable, so a losing-fork row has no normalized-event
 parent and still reads `canonical`. Any reader that reaches these rows without
 that join, or treats one as current, must anchor the row's own
 `(chain_id, block_number, block_hash)` on `chain_lineage` with a readable-state
-predicate. The readers that treat these rows as current — the children builder,
-the Interpret admission loader, and Project scoping — all anchor on `chain_lineage` today; two scope-widening reads —
-`include_topology_dependents` in `crates/project/src/scope/authority.rs` and
-`capture_child_registration_history` in `crates/interpret/src/write/redo.rs` —
-do not, which can only enlarge a rebuild's scope, never publish a row.
+predicate. The readers that treat these rows as current — the family child
+reader (`crates/storage/src/families/topology/children.rs`) and the Interpret
+admission loader (`crates/interpret/src/load/migration.rs`) — both anchor on
+`chain_lineage`.
 
 In today's one publishing reader the association-lineage predicate cannot be
-the reason a row is withheld, so no test isolates it. The children builder
-(`crates/project/src/builders/children.rs`) reaches a correlation row only
+the reason a row is withheld, so no test isolates it. The family child reader
+reaches a correlation row only
 through rows that sit at or after its block, and that ordering is bigname's own
 invariant rather than a claim about ENSv2. A migration boundary's `evidence`
 array is built from the raw-log observations the interpreter had already decoded
 when it derived the boundary
 (`crates/adapters/src/schema_v2/migration/support.rs`, `observation_evidence`),
-and the children builder matches a correlation row only when that array contains
-the row's `evidence_refs` (`crates/project/src/builders/children.rs`). A matched
+and the child reader matches a correlation row only when the parent's retained
+migration evidence (`project_name_state.migration_evidence`) contains the row's
+`evidence_refs`. A matched
 row therefore sits at or before the boundary that reads it, and the child
 registration follows the boundary. A reorg that orphans the association's block
 orphans every later block with it, so those rows fail their own lineage checks
@@ -702,17 +715,14 @@ in the same pass, and no reorg can orphan the row while leaving the rows that
 read it readable. Both readers also require the `registry_announcement` edge,
 joined on the association's own
 `(block_number, block_hash)`, and an edge pinned to that block is orphaned by
-the same Interpret redo. Deleting the lineage anchor from the children builder
-therefore leaves the reorg test below green, both after the redo cascade and in
-the window head publication opens before Interpret runs. Nor can a
-runner-driven run see the checks disagree: head publication orphans the lineage
-and stamps the required Interpret redo in one transaction, and Project cannot
-start until Interpret has completed. What
-`reorg_retains_a_migration_association_that_still_reads_canonical_and_publishes_nothing_from_it`
-in `apps/phase-runner/tests/production_project.rs` pins is that runner-level
-outcome, not the predicate: after a real head publication and redo cascade the
+the same Interpret redo. Deleting the lineage anchor from the child reader
+therefore changes no outcome, both after the redo cascade and in the window
+head publication opens before Interpret runs. Nor can a runner-driven run see
+the checks disagree: head publication orphans the lineage and stamps the
+required Interpret redo in one transaction, and Project cannot start until
+Interpret has completed. After a real head publication and redo cascade the
 retained row still reads `canonical` on an orphaned anchor, the edge is
-orphaned, and no child is published from it. The anchor rule above still governs
+orphaned, and no child is served from it. The anchor rule above still governs
 any reader that reaches these rows without an edge join, which is where it is
 the only guard.
 
@@ -1621,7 +1631,7 @@ resource still has a pointer to the emitting resolver, the newly attributed even
 change that resource's rebuildable inventory row even though the event remains
 resource-less. This does not restore a current binding. Registry-only ENSv1 and
 Basenames names are different when a current nonzero resolver pointer remains
-event-linked: `name_current.resource_id` stays null while the
+event-linked: the composed name's `resource_id` stays null while the
 [`serving_resource_id`](glossary.md#serving-resource) joins resolver and
 inventory reads without creating control. An ENSv2 TLD whose root-registry
 token has a current [root-registry resolver
@@ -1634,18 +1644,17 @@ references the released resource, but its `serving_resource_id` is null; the
 tombstone's summary nulls resolver state, so inventory attributed to that
 resource stays out of current serving. A [released v1
 authority](glossary.md#released-v1-authority) keeps the same shape on its
-lapsed lease binding. Project selects the binding referenced by each published
-name, address-name and address-record row. Serving reads retain that selection
-until Project replaces or removes the row; a later Interpret `active_to` update
-must not hide it under the unchanged publication. Identity and projection
-canonicality checks still reject orphaned rows. Project omits current ownership
+lapsed lease binding. Family readers select the binding for composed names and address relations in
+one publication snapshot. An overlapping Interpret or Project redo makes the
+publication unavailable until the changed identity is reflected in the families.
+Canonicality checks reject orphaned identity and family publications. Project omits current ownership
 and address-record memberships when its selected name has
 `control.status` set to `unregistered`; the retained name identity remains readable. Ownership uses the
-same registrant and supporting event selected by `name_current`, rather than
+same registrant and supporting event selected by name composition, rather than
 ranking other tokens' registrations again. Released tombstones therefore
 remain readable on their closed bindings without a separate binding-liveness
 exception in the read filter. A state-derived ENSv2 expiry release
-removes the `name_current` row when ENSv2 is the selected authority, or when no
+removes the composed name when ENSv2 is the selected authority, or when no
 authority is selected and the row reports `current_authority_not_projected`;
 for a resource-backed binding, the release's `resource_id` must also match the
 binding's resource.
@@ -1765,117 +1774,35 @@ fails the build rather than silently narrowing the fingerprint.
 
 ## Projection publication
 
-Project is the only projection writer. It derives the affected scope from
-canonical interpreted input, stages rows in connection-local tables, and
-publishes the affected projection set transactionally. It has no legacy claim
-queue, general-purpose durable replay stage tables, apply cursors, dead-letter
-queue, database session version stamp, or worker heartbeat. The three narrow replay
-handoffs contain pre-delete input rather than staged projection rows:
-`project_redo_resolver_evidence` retains resolver and permission-resource
-references, and `project_redo_expiry_roots` retains the available logical-name
-or permission-resource identifiers whose deleted path-expiry releases must seed
-a bounded rebuild. `project_redo_child_registration_history` retains affected
-child and registry identifiers for entry-creating events in a correlated
-migration `WrapperRegistry`, so removing history can re-evaluate a hidden child.
-Project consumes a row when a publication covers its recorded block. The normal
-Interpret-to-Project pipeline does so immediately; if an operator runs an
-Interpret redo whose requested Project endpoint is below the already recorded
-Project head, rows above that endpoint remain until a covering Project redo or
-full rebuild.
+Project is the only projection writer. A normal follow block atomically commits
+its affected [owned key families](glossary.md#owned-key-family), undo entries and
+[family marker](glossary.md#family-marker). Rebuilds use bounded ranges and keep
+the marker unavailable until publication completes. There is no obsolete serving
+batch, claim queue, dead-letter queue or separate serving-table refresh.
 
-Consumer slice 2E adds one diagnostic exception to durable staging, not to
-projection ownership. A post-reconciliation dual-current invariant makes the
-Project transaction return a structured failure before `publish::swap`; that
-transaction rolls back completely. The phase runner then appends one
-[projection generation failure](glossary.md#projection-generation-failure) row
-to `project_generation_failures` in a separate transaction. The row is
-keyed by chain, target block number/hash, interpreter content hash, failure
-kind, and a deterministic fingerprint of the conflict, and stores both
-sides' identities (binding/resource for an exact name, parent/child relation
-evidence for a child), the identity and block position of the event that proves
-the surviving ENSv2 authority — an activated migration boundary or a positive
-ENSv2 child registration — every relevant block/transaction/log position, and
-the canonicality observed at failure for the proof, both sides, and the target
-block. The fingerprint is part of the key so that a retry of the
-same semantic failure records nothing, while a different conflict surfacing at
-the same target still appends its own evidence rather than being swallowed. One
-failed [projection generation](glossary.md#projection-generation) writes one
-row, for the first failing invariant in the fixed assertion order — exact-name
-authority before child authority — and within that invariant its own
-deterministic witness ordering selects the recorded conflict. Any further
-conflict surfaces on a later attempt. It marks the target
-projection generation not ready. A later reorg or successful projection
-generation never deletes the audit row: its recorded block hashes
-remain resolvable through lineage as canonical or orphaned, and a later success
-is a separate projection generation. Operator diagnostics may read this table;
-product routes may not.
+Replay needs no Interpret-to-Project handoff: Project undoes its journalled
+family publications to a trusted base and replays retained canonical input, so
+a redo range's deleted normalized rows are not copied anywhere first.
 
-Projection rows carry:
+Each family has its own typed keys and state; there is no generic set of old
+`*_current` columns. The table list and reducer ownership are in
+[per-block publication](glossary.md#per-block-publication). The marker gives the
+publication for the whole chain, including unchanged keys. Composition cannot
+recover an older name snapshot from the last block that happened to touch a key.
+Child registration history remains in `child_registration_events`, derived by
+Project from retained canonical events. Historical upgrade migrations remain
+append-only; `20260929160000_remove_served_projections.sql` drops the obsolete
+serving tables, the old generation-failure audit and the redo handoff tables
+from initialized databases, and the current baseline no longer creates them.
 
-- stable identity keys;
-- manifest and source-family evidence;
-- support status and an explicit unsupported reason when applicable;
-- canonical chain-position or target-publication evidence; and
-- the [Project-owned maintenance fields](glossary.md#projection) defined for
-  that family. `primary_names_current` carries rolling hydration-selection
-  fields rather than a last-recomputation time.
-
-`primary_names_current` is the exception and does not follow this shape. It has
-no `manifest_version`, no `canonicality_summary`, no `support_status`, and no
-last-recomputation column; `reverse_hydration_attempted_block_*` records a
-hydration attempt, not a publication target. Its publication target lives inside
-the untyped `claim_provenance` object, and the serving predicate joins lineage on
-`claim_provenance ->> 'chain_id'` and `claim_provenance ->> 'target_block_hash'`
-while the only constraint on that column is
-`CHECK (jsonb_typeof(claim_provenance) = 'object')`. Nothing requires either key
-to be present.
-
-Two consequences worth knowing before writing against this table. A builder that
-omits one of those keys produces a row that silently drops out of reads rather
-than failing — the lineage join yields no match, and the row is simply not
-served. And a reader cannot filter or group these rows by manifest version,
-support, or canonicality the way it can for the projection families that carry
-those columns; compare `name_current`, which carries all five as typed columns.
-That set is not every family: `support_status` and `unsupported_reason` exist on
-`name_current`, `address_names_current`, `record_inventory_current`,
-`resolver_current`, and `permissions_current_resource_summary`;
-`primary_names_current` carries `claim_status` instead; and `children_current`,
-`permissions_current`, and `account_permission_state_current` carry no status
-column at all, so a filter written against one family is not portable to
-another. Constraining
-the two required keys is the obvious hardening, but it is a schema change to a
-populated table and needs its own change.
-
-An unchanged row may retain an earlier publication target when a later Project
-run does not affect its scope. Serving admission therefore accepts targets at
-or before the selected head rather than requiring every row to equal the latest
-Project block.
-
-Published projection families include:
-
-- `name_current` and identity companions;
-- `address_names_current`;
-- `address_records_current` (the reverse index over current `addr:<coin_type>`
-  records, derived from `record_inventory_current`);
-  Its authority binding, resource and binding kind are nullable; the record-serving
-  resource is required. The optional-authority schema migration preserves existing
-  rows. Upgrading an indexed database also requires replaying Project for retained
-  history to populate previously omitted names without authority.
-- `children_current`;
-- `permissions_current`, `account_permission_state_current`, and the
-  per-resource permission summary;
-- `resolver_current`;
-- `record_inventory_current`; and
-- `primary_names_current`.
-
-`name_current.declared_summary` carries the current ENSv1 NameWrapper lifecycle
+The composed name's `declared_summary` carries the current ENSv1 NameWrapper lifecycle
 label and [expiry-effective](glossary.md#expiry-effective-namewrapper-fuse-word)
 fuse summary together. The underlying normalized
 `PermissionScopeChanged` event keeps its expiry-unadjusted interpreted fuse word
 unchanged; Project
 clears only the rebuildable current summary when the served projection timestamp
-passes wrapper expiry. Permission reads join this current summary by
-`resource_id` rather than persisting a second copy in `permissions_current`.
+passes wrapper expiry. Permission reads derive restrictions from the same family state by
+`resource_id`; they do not persist a second per-resource permission fan-out.
 Registry-wide approvals use the same rule: Project owns the replayable
 [account permission state](glossary.md#account-permission-state) and the
 [registry-owner binding](glossary.md#registry-owner-binding). Revoked account
@@ -1912,14 +1839,14 @@ ens_v2@a971bd64)
 Coverage wording is not an exhaustiveness claim. `support_status` and
 `unsupported_reason` carry admission separately from projection completeness.
 `operator_approval_surfaces_not_ingested` maps to partial, best-effort
-permission coverage. The stored projection retains that broad reason for every
+permission coverage. Family permission composition uses that broad reason for every
 non-wrapper authority class. The serving layer maps each stored reason to the
 documented list of unlisted permission surfaces and reports the union for
 account-wide or mixed reads.
 `wrapper_parent_and_resolver_delegation_not_projected` marks NameWrapper
 resources partial: holders, operators, and per-token delegates are projected,
 while parent control of a wrapped subname and resolver delegation are not; the
-summary's `resource_restrictions` column carries the
+summary's `resource_restrictions` field carries the
 [resource restrictions](glossary.md#resource-restrictions) block the API
 serves. Readers reject inconsistent typed combinations and
 map an unrecognized persisted unsupported reason to unknown partial product
@@ -2020,51 +1947,36 @@ outcome, or persisted request-validation state. Each admitted provider lookup
 runs for the current request at the selected block identity. See
 [`execution.md`](execution.md).
 
-For guarded direct resolver comparisons, fixed-`search_path`,
-security-definer functions revalidate the selected state and then create,
-refresh, or clear one active divergence observation. The API role receives
-`EXECUTE` on those functions but no direct write access to
-`resolution_divergences`. The guard captures and locks the served Project publication's block number,
-block hash, interpreter content hash, and `xmin`, allowing `completed` or `running`
-within the shared one-block publication lag. Its lineage, captured execution head,
-manifest declarations, and compared rows must remain unchanged. An intervening
-phase-row update, including a same-height republish, still refuses the lookup.
-Schema-migration `20260914120000_lookup_publication_revalidation.sql` replaces
-only this function, preserving data and existing grants; fresh schemas receive
-the identical guard from the baseline. Older callers without a captured
-publication object retain the exact-head check.
-With the publication switch on, the lookup instead composes the name topology
-and inventory in one repeatable-read family snapshot. It passes that request's
-indexed entries, read rules, coverage, and resolver path to the writer, bound to
-the captured marker sequence. The guard locks the live family marker and checks
-the sequence, block identity, interpreter hash, canonical execution positions,
-and real manifest row versions in the same transaction as the ledger mutation.
-It does not load stale served rows. The writer evaluates the supplied indexed
-entries with the same exact-or-ENSIP-19 rules before comparing the provider
-result. This input is internal application state, never client-supplied request
-data and never persisted as a reusable execution outcome.
-`20260929130000_lookup_family_inputs.sql` replaces only the guard and writer
-functions in place; the baseline contains identical definitions. The switch-off
-path retains its served-row locks and refusal results.
+For guarded direct resolver comparisons, fixed-`search_path`, security-definer
+functions revalidate the captured state and create, refresh or clear an active
+divergence. The API role receives `EXECUTE` on these functions and cannot write
+`resolution_divergences` directly.
 
-Ledger rows are durable operational observations;
-they are not projection input or a response cache.
-When projection publishes an ENS Mainnet exact resolver as null, a projection
-lifecycle trigger retires active observations for the former direct resolver as
-stale evidence. [Universal Resolver ancestor
-discovery](glossary.md#universal-resolver-ancestor-discovery) only revalidates
-the exact projected name, Ethereum head, Project publication, canonical
-positions, and Universal Resolver manifest authority. It does not compare,
-persist, or clear by agreement with the request-scoped ancestor-served result.
-The guard derives the same exact-or-ENSIP-19 indexed comparison from the locked
-inventory `entries` and `provenance.read_rules` before mutation. This baseline
-comparison normalizes the legacy indexed status alias `failed` to
-`execution_failed`, matching the Rust evaluator. The null-resolver retirement
-trigger adds no table, column, or reusable provider state. Fresh databases
-receive it from the baseline; schema-migration
-`20260831120000_retire_direct_divergences_for_null_resolver.sql` installs it on
-initialized databases, retains every ledger row, and retires already-stale
-active rows without replacing the phase namespace.
+Lookup composes name topology and inventory in one repeatable-read family
+snapshot. The guarded writer receives the captured indexed entries, read rules,
+coverage and resolver path. It locks the live family marker and checks its
+sequence, block identity and interpreter hash, the execution heads and canonical
+positions, and the actual manifest row versions. It also locks Interpret and
+Project phase rows through the ledger commit and refuses any redo range that
+overlaps the publication. An unrelated phase-row update alone does not invalidate
+a captured family generation. A same-height family republish does.
+
+The writer evaluates the captured exact-or-ENSIP-19 indexed answer before
+comparing the provider response. The internal snapshot is never client-supplied
+request data or a reusable persisted lookup outcome. The current baseline and
+the removal schema-migration keep the guarded functions' signatures and grants
+while removing their former serving-table inputs.
+
+Ledger rows are durable operational observations, not projection input or a
+response cache. When a family publication changes an ENS Mainnet exact resolver
+to null, Project retires active direct observations for that name in the same
+transaction.
+[Universal Resolver ancestor discovery](glossary.md#universal-resolver-ancestor-discovery)
+revalidates the exact composed name, Ethereum head, family publication, canonical
+positions and Universal Resolver manifest authority. It does not write, compare
+or clear by agreement with a request-scoped ancestor-served result. The writer
+normalizes the legacy indexed status alias `failed` to `execution_failed`,
+matching the Rust evaluator. Retired ledger rows remain available for audit.
 
 ## Inspection
 

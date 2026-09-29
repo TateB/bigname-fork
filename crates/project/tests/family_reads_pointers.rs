@@ -1,14 +1,17 @@
-//! The family readers step 5 shares and the classification switch, over hand-written family rows
-//! (TYR-36 step 4): the resolver classification per resolver with its fallback, the link
+//! Family reader contracts over explicit family rows: resolver classification and manifest
+//! admission bounded by its publication, the link
 //! selection's exact-then-default rule, the alias source's latest-then-reject pointer and the
-//! wildcard source's historical resolver.
+//! wildcard source's historical resolver. The batch inventory read over a shared link is
+//! published through the family publisher.
 #[path = "families_support/mod.rs"]
 mod families_support;
 
 use anyhow::{Context, Result};
 use bigname_storage::families::records::{
-    DEFAULT_RECORD_NODE, load_family_alias_source_pointer, load_family_link_selection,
-    load_family_resolver_classification, load_family_wildcard_source,
+    DEFAULT_RECORD_NODE, FamilyAttribution, load_family_alias_source_pointer,
+    load_family_link_selection, load_family_record_inventories_on,
+    load_family_record_inventory_detail, load_family_resolver_classification,
+    load_family_wildcard_source,
 };
 use families_support::{CHAIN, Fixture, hash, uuid};
 use serde_json::{Value, json};
@@ -24,29 +27,6 @@ const NODE: &str = "0x1000000000000000000000000000000000000000000000000000000000
 fn position(block: i64, identity: &str) -> Value {
     json!({"block_number": block, "transaction_index": 0, "log_index": 0,
            "event_identity": identity})
-}
-
-async fn resolver_current(
-    pool: &PgPool,
-    resolver: &str,
-    support: (&str, Option<&str>),
-    manifest_id: i64,
-) -> Result<()> {
-    sqlx::query(
-        "INSERT INTO resolver_current (chain_id, resolver_address, declared_summary,
-             support_status, unsupported_reason, provenance, manifest_version)
-         VALUES ($1, $2, $3, $4, $5, $6, 1)",
-    )
-    .bind(CHAIN)
-    .bind(resolver)
-    .bind(json!({"classification": {"role": "public_resolver_v2",
-        "source_family": "ens_v2_resolver_l1", "basis": "manifest_declared_address"}}))
-    .bind(support.0)
-    .bind(support.1)
-    .bind(json!({"manifest_id": manifest_id}))
-    .execute(pool)
-    .await?;
-    Ok(())
 }
 
 /// A manifest version row in `namespace`; returns its id.
@@ -91,14 +71,13 @@ async fn manifest(
     Ok(())
 }
 
-// The classification switch is per resolver. R1 has an F3 row, which wins over its conflicting
-// fallback; its declaration namespace is its manifest's, not F3's `admission_namespace` (the
-// resolver edge's admission). R5's only F3 row is `resolver_manifest_not_active`, which the served
-// build leaves out, so R5 is unclassified. R2 and R3 have none and read the fallback at the family marker (block 6): R2's latest
-// manifest there is inactive, so it has no declaration even though an older one was active; R3's
-// latest there is active, and a later inactive one past the marker is not read. R4 has neither.
+// The resolver's classification and declaration namespace have different sources: the latter
+// comes from its manifest at the family marker, not the edge's admission namespace. R2's latest
+// manifest there is inactive, so its classification has no active declaration. R3's later
+// inactive declaration is beyond the marker and must not replace the active one. An absent F3
+// row and a resolver_manifest_not_active row both remain unclassified.
 #[tokio::test]
-async fn the_classification_switch_is_per_resolver_and_bounded_by_the_marker() -> Result<()> {
+async fn resolver_classification_admission_is_bounded_by_the_family_marker() -> Result<()> {
     let fixture = Fixture::new("family_reads_classification", 10).await?;
     let pool = &fixture.pool;
     sqlx::query(
@@ -110,17 +89,16 @@ async fn the_classification_switch_is_per_resolver_and_bounded_by_the_marker() -
     .bind(hash(6))
     .execute(pool)
     .await?;
-    let (m0, m1, m2, m3) = (
+    let (m0, m2, m3) = (
         manifest_version(pool, "ens", "r1-f3").await?,
-        manifest_version(pool, "basenames", "r1").await?,
         manifest_version(pool, "ens", "r2").await?,
         manifest_version(pool, "ens", "r3").await?,
     );
-    resolver_current(pool, R1, ("unsupported", Some("fallback_reason")), m1).await?;
-    manifest(pool, m1, 3, "basenames", "active").await?;
     manifest(pool, m0, 2, "ens", "active").await?;
     for (resolver, identity, status, reason, manifest_id) in [
         (R1, "f3:r1", "supported", None, Some(m0)),
+        (R2, "f3:r2", "supported", None, Some(m2)),
+        (R3, "f3:r3", "supported", None, Some(m3)),
         (
             R5,
             "f3:r5",
@@ -129,6 +107,9 @@ async fn the_classification_switch_is_per_resolver_and_bounded_by_the_marker() -
             None,
         ),
     ] {
+        // Intentional exception to publishing through the family publisher: the rows are
+        // written directly so each classification sits at a chosen position against manifest
+        // versions before and after the marker, which is the reader bound under test.
         sqlx::query(
             "INSERT INTO project_resolver_classification (chain_id, resolver_address,
                  block_number, transaction_index, log_index, event_identity, classification,
@@ -148,10 +129,8 @@ async fn the_classification_switch_is_per_resolver_and_bounded_by_the_marker() -
         .execute(pool)
         .await?;
     }
-    resolver_current(pool, R2, ("supported", None), m2).await?;
     manifest(pool, m2, 3, "ens", "active").await?;
     manifest(pool, m2, 5, "ens", "deprecated").await?;
-    resolver_current(pool, R3, ("supported", None), m3).await?;
     manifest(pool, m3, 3, "ens", "active").await?;
     manifest(pool, m3, 9, "ens", "deprecated").await?;
 
@@ -172,8 +151,8 @@ async fn the_classification_switch_is_per_resolver_and_bounded_by_the_marker() -
         .context("R3 is classified")?;
     assert_eq!(r3.manifest_id, Some(m3));
     assert_eq!(r3.declaration_namespace.as_deref(), Some("ens"));
-    // A checksummed or otherwise mixed-case address reads the same classification, from either
-    // source.
+    // A checksummed or otherwise mixed-case address reads the same classification from the family
+    // publication.
     for (resolver, manifest_id) in [(R1, m0), (R2, m2)] {
         let mixed = format!("0x{}", resolver[2..].to_ascii_uppercase());
         let classification = load_family_resolver_classification(pool, CHAIN, &mixed)
@@ -326,5 +305,79 @@ async fn alias_rejects_a_later_clear_and_wildcard_keeps_the_historical_resolver(
         .await?
         .context("a live alias source")?;
     assert_eq!(alias.resolver_address, R3);
+    fixture.cleanup().await
+}
+
+// Two resources of one name can point at the same resolver, for example its ENSv1 and ENSv2
+// resources, so they share one (resolver, node) link selection. A batch read gives each of them
+// the selection and matches the single-resource read of each.
+#[tokio::test]
+async fn a_batch_gives_every_resource_at_a_shared_resolver_node_its_link() -> Result<()> {
+    let fixture = Fixture::new("family_reads_shared_link", 4).await?;
+    let name = format!("ens:{NODE}");
+    let resources = [uuid(1), uuid(2)];
+    for (log, resource) in (1..).zip(&resources) {
+        fixture
+            .write(
+                1,
+                log,
+                "ResolverChanged",
+                "ens_v1_registry_l1",
+                Some(&name),
+                Some(resource),
+                json!({"node": NODE, "resolver": R1}),
+                "0x00000000000000000000000000000000000000e1",
+            )
+            .await?;
+    }
+    fixture
+        .write(
+            2,
+            1,
+            "ResolverRecordLinked",
+            "ens_v2_resolver_l1",
+            None,
+            None,
+            json!({"node": NODE, "resolver": R1, "resolver_record_id": "7",
+                   "storage_model": "resolver_record_id", "source_event": "Linked"}),
+            R1,
+        )
+        .await?;
+    fixture
+        .write(
+            3,
+            1,
+            "RecordChanged",
+            "ens_v2_resolver_l1",
+            None,
+            None,
+            json!({"resolver": R1, "resolver_record_id": "7", "storage_model": "resolver_record_id",
+                   "record_key": "text:avatar", "record_family": "text", "selector_key": "avatar",
+                   "value": "a", "source_event": "TextUpdated"}),
+            R1,
+        )
+        .await?;
+    fixture
+        .apply(3, bigname_project::families::FamilyMode::Normal)
+        .await?;
+    let ids = resources
+        .iter()
+        .map(|resource| resource.parse())
+        .collect::<Result<Vec<uuid::Uuid>, _>>()?;
+    let attribution = || FamilyAttribution::Given(Default::default());
+    let mut conn = fixture.pool.acquire().await?;
+    let batch = load_family_record_inventories_on(&mut conn, CHAIN, &ids, attribution()).await?;
+    drop(conn);
+    for id in &ids {
+        let single = load_family_record_inventory_detail(&fixture.pool, CHAIN, *id, attribution())
+            .await?
+            .context("a single read")?;
+        let batched = batch.get(id).context("a batch read")?;
+        assert_eq!(batched.row, single.row, "{id}");
+        assert_eq!(
+            batched.record_version_boundary_key,
+            single.record_version_boundary_key
+        );
+    }
     fixture.cleanup().await
 }

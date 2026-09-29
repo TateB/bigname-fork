@@ -1,20 +1,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use axum::http::StatusCode;
 use bigname_storage::{
     ChainPosition, ChainPositions, NameCurrentRow, PrimaryNameClaimStatus,
     RecordInventoryCurrentRow, SelectedSnapshot, SnapshotConsistency, SnapshotPositionRequirement,
     SnapshotProjectionRead, SnapshotSelectionError, SnapshotSelectionErrorKind,
     SnapshotSelectionScope, SnapshotSelectorInput, load_name_current_for_snapshot,
-    load_record_inventory_current_for_snapshot, parse_rfc3339_utc_timestamp,
-    resolve_exact_name_snapshot_selection, snapshot_chain_has_head,
+    parse_rfc3339_utc_timestamp, resolve_exact_name_snapshot_selection, snapshot_chain_has_head,
 };
 use serde_json::json;
-use sqlx::{
-    PgPool, Row,
-    types::{JsonValue, Uuid},
-};
+use sqlx::{PgPool, types::JsonValue};
 use tracing::{error, warn};
 
 use crate::{
@@ -56,8 +52,6 @@ pub(crate) use record_keys::*;
 pub(crate) use records::*;
 pub(crate) use resolution_lookup::*;
 pub(crate) use resolution_verified::*;
-#[cfg(test)]
-pub(crate) use reverse_identity::primary_coherence_test_hooks as identity_facade_primary_coherence_test_hooks;
 #[cfg(test)]
 pub(crate) use reverse_identity::relation_page_test_hooks as identity_facade_relation_page_test_hooks;
 #[cfg(test)]

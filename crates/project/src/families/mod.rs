@@ -1,17 +1,11 @@
-//! Owned key families (docs/projections.md, "Owned key families"): per-key current-state tables
-//! that step 2 of TYR-36 fills block by block beside the served tables. Nothing reads them yet.
-//!
-//! The loop runs after a Project batch has committed and its progress is recorded, never inside
-//! the served transaction: each family block is its own transaction, so a family failure or a
-//! slow block can never roll back a served publication. The families follow the served marker
-//! from their own shadow marker, catching up from wherever it stands. A block that fails,
-//! including one refused by a fence, stops the run with an error: the families stay at the last
-//! complete block and the caller retries.
-// The reducers land in the commits that follow and use the helpers
-// that are unused until then.
+//! Owned current-state families, applied and published atomically for each canonical block.
+//! Rebuild and replay use the same reducers and undo journal as live follow. A failed block
+//! leaves the marker and every family at the preceding complete publication.
 mod addresses;
 mod block;
+mod child_registrations;
 mod classification;
+pub use child_registrations::EXCLUDED_CHILD_REGISTRATION_PARENTS;
 mod decode;
 mod derived;
 mod driver;
@@ -58,8 +52,8 @@ pub const MAX_BLOCKS_PER_RUN: u64 = 256;
 
 /// A rebuild applies the work blocks at or below this many blocks under the chain's safe block
 /// in [ranges](RebuildRanges); the blocks above it and the target go one to a transaction, so a
-/// reorg near the head undoes single blocks. The switch follows the safe block, not the
-/// finalized one, by the product owner's ruling: a safe block is not final, and a reorg whose
+/// reorg near the head undoes single blocks. The switch point follows the safe block, not the
+/// finalized one: a safe block is not final, and a reorg whose
 /// fork point lies inside a range undoes that whole range and replays from its predecessor.
 pub const RANGE_SAFE_MARGIN: i64 = 5;
 
@@ -177,14 +171,14 @@ pub async fn undo_to(pool: &PgPool, chain_id: &str, number: i64) -> crate::Resul
     Ok(undone)
 }
 
-/// How the loop runs for one served batch.
+/// How the family loop reaches its requested Project target.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FamilyMode {
-    /// Follow the served marker from the family marker.
+    /// Advance from the family marker toward the requested target.
     Normal,
-    /// The served tables were rebuilt from scratch: rebuild the families too.
+    /// Reset and rebuild the families from retained inputs.
     Rebuild,
-    /// The served batch redid blocks `from..=to`: undo the families to `from - 1` and replay.
+    /// Undo to `from - 1` and replay the required range `from..=to`.
     Redo { from: i64, to: i64 },
 }
 

@@ -1,13 +1,11 @@
 use bigname_storage::{
     NameCurrentRow, RecordInventoryCurrentRow, SelectedSnapshot, SnapshotSelectionError,
-    SnapshotSelectionErrorKind,
 };
 use sqlx::PgPool;
 
 use super::Source;
 use crate::v2::support::{
     load_indexed_record_inventory_current_for_snapshot,
-    load_record_inventory_current_matching_selected_snapshot,
     load_supported_record_inventory_current_for_snapshot,
 };
 
@@ -15,7 +13,7 @@ pub(super) async fn load_name_record_inventory(
     pool: &PgPool,
     row: &NameCurrentRow,
     selected_snapshot: &SelectedSnapshot,
-    allow_selected_superset: bool,
+    _allow_selected_superset: bool,
     source: Source,
 ) -> Result<Option<RecordInventoryCurrentRow>, SnapshotSelectionError> {
     let inventory = if source == Source::Indexed {
@@ -25,36 +23,6 @@ pub(super) async fn load_name_record_inventory(
     };
     // A family inventory describes the family publication, which is the only position a composed
     // name row serves, so there is no older served row to widen the match to.
-    if bigname_storage::publication_source::serve_from_families() {
-        return inventory;
-    }
-    match inventory {
-        Ok(Some(record_inventory)) => Ok(Some(record_inventory)),
-        Ok(None) if allow_selected_superset => {
-            load_record_inventory_current_matching_selected_snapshot(
-                pool,
-                row,
-                selected_snapshot,
-                true,
-            )
-            .await
-        }
-        Ok(None) => Ok(None),
-        Err(error)
-            if allow_selected_superset && error.kind() == SnapshotSelectionErrorKind::Stale =>
-        {
-            match load_record_inventory_current_matching_selected_snapshot(
-                pool,
-                row,
-                selected_snapshot,
-                true,
-            )
-            .await?
-            {
-                Some(record_inventory) => Ok(Some(record_inventory)),
-                None => Err(error),
-            }
-        }
-        Err(error) => Err(error),
-    }
+
+    inventory
 }

@@ -1,10 +1,8 @@
 //! The resolver overview row from the F3 classification (`project_resolver_classification`),
-//! in the shape of the served `resolver_current` row the resolver routes read (TYR-36 step 7b
-//! slice 4, packet E5). The classification, support and declaring manifest are the F3 row's; the
-//! section support the routes gate on (`bindings`, `aliases`, `links`, `permissions`,
-//! `role_holders`) is derived from it by the served build's rule (builders/resolver/build.sql,
-//! `summarized`, and section_summaries.rs), without the counts and samples the routes no longer
-//! read:
+//! in the `resolver_current` row shape the resolver routes read. The classification, support and
+//! declaring manifest are the F3 row's; the section support the routes gate on (`bindings`,
+//! `aliases`, `links`, `permissions`, `role_holders`) is derived from it, without counts or
+//! samples:
 //!
 //! - enumeration is supported for a supported resolver that is neither an ENSv1 resolver nor a
 //!   `public_resolver_v2`; such a supported resolver reports
@@ -87,15 +85,10 @@ pub(crate) const FAMILY_RESOLVER_SUMMARY: &str = r#"(
 pub(crate) const FAMILY_RESOLVER_SERVED_ROWS: &str =
     "classification_row.unsupported_reason IS DISTINCT FROM 'resolver_manifest_not_active'";
 
-/// The relation a statement joins as `resolver_current` for a resolver's classification: the
-/// served table with the publication switch off; with it on, the F3 rows the served build would
-/// write, with the served table's `chain_id`, `resolver_address`, `support_status`,
-/// `declared_summary -> 'classification'` and `provenance ->> 'manifest_id'`. Only those columns
-/// may be read through it.
+/// F3 classification exposed under the internal `resolver_current` SQL alias. Readers may use
+/// only chain_id, resolver_address, support_status, declared_summary.classification and
+/// provenance.manifest_id from this relation.
 pub(crate) fn resolver_classification_relation() -> String {
-    if !crate::publication_source::serve_from_families() {
-        return "bigname_phase.resolver_current".to_owned();
-    }
     format!(
         "(SELECT classification_row.chain_id, classification_row.resolver_address,
                  classification_row.support_status,

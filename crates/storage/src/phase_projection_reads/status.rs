@@ -22,26 +22,9 @@ pub async fn load_phase_expected_status_chain_ids(pool: &PgPool) -> Result<Vec<S
     .context("failed to load expected schema-v2 indexing status chains")
 }
 
-/// Whether the served publication belongs to this build's interpreter generation and sits at or
-/// just behind the stored head (at the head only on the head's own hash): the Project row's
-/// position, with the [publication switch](crate::publication_source) off.
-const PROJECT_ROW_GENERATION_CURRENT: &str = r#"            COALESCE(
-                project.input_content_hash = $1
-                AND project.current_block_number <= head.latest_block_number
-                AND (
-                    project.current_block_number < head.latest_block_number
-                    OR project.current_block_hash = head.latest_block_hash
-                ),
-                false
-            ) AS project_generation_current,
-"#;
-
-/// With the switch on, the serving fence's own rule for the family marker
-/// (`load_served_project_generation`): `live`, this build's interpreter hash, its block and hash
-/// on the readable lineage, and between zero and
-/// [`PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS`](crate::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS)
-/// blocks behind the stored head, and at the head only on the head's own hash, as the verified
-/// lookup's admission also requires.
+/// The serving fence requires a live family marker from this build on readable lineage,
+/// within [`PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS`](crate::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS)
+/// of the stored head. At the head, its hash must match the head's hash.
 fn family_marker_generation_current() -> String {
     let lag_tolerance = crate::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS;
     format!(
@@ -71,22 +54,10 @@ const FAMILY_MARKER_JOIN: &str = r#"
         LEFT JOIN bigname_phase.project_family_marker marker
           ON marker.chain_id = known_chains.chain_id"#;
 
-/// `/v1/status` readiness. With the [publication switch](crate::publication_source) on, the
-/// indexed block and its timestamp are the family marker's (the publication the
-/// fences serve), and the generation check is the marker's rule; with it off both are the Project
-/// row's. The Project phase status and Project redo flag come from the Project row either way,
-/// and the Interpret redo flag from the Interpret row.
+/// `/v1/status` readiness: indexed block, timestamp and generation come from the family marker.
+/// Lifecycle state and redo flags continue to come from the corresponding phase rows.
 pub async fn load_phase_indexing_status(pool: &PgPool) -> Result<IndexingStatusRead> {
-    let (project_generation_current, family_marker_join, projected) =
-        if crate::publication_source::serve_from_families() {
-            (
-                family_marker_generation_current(),
-                FAMILY_MARKER_JOIN,
-                "marker",
-            )
-        } else {
-            (PROJECT_ROW_GENERATION_CURRENT.to_owned(), "", "project")
-        };
+    let project_generation_current = family_marker_generation_current();
     let rows = sqlx::query(&format!(
         r#"
         WITH known_chains AS ({PHASE_EXPECTED_CHAIN_IDS_SELECT})
@@ -96,7 +67,7 @@ pub async fn load_phase_indexing_status(pool: &PgPool) -> Result<IndexingStatusR
             head.safe_block_number,
             head.finalized_block_number,
             latest_lineage.block_timestamp AS latest_timestamp,
-            {projected}.current_block_number AS latest_projected_block,
+            marker.current_block_number AS latest_projected_block,
             projected_lineage.block_timestamp AS latest_projected_timestamp,
             ingest.phase_status AS ingest_phase_status,
             project.phase_status AS project_phase_status,
@@ -115,7 +86,7 @@ pub async fn load_phase_indexing_status(pool: &PgPool) -> Result<IndexingStatusR
           ON head.chain_id = known_chains.chain_id
         LEFT JOIN chain_phase_state project
           ON project.chain_id = known_chains.chain_id
-         AND project.phase_name = 'project'{family_marker_join}
+         AND project.phase_name = 'project'{FAMILY_MARKER_JOIN}
         LEFT JOIN chain_phase_state interpret
           ON interpret.chain_id = known_chains.chain_id
          AND interpret.phase_name = 'interpret'
@@ -139,9 +110,9 @@ pub async fn load_phase_indexing_status(pool: &PgPool) -> Result<IndexingStatusR
              'canonical', 'safe', 'finalized'
          )
         LEFT JOIN bigname_phase.chain_lineage projected_lineage
-          ON projected_lineage.chain_id = {projected}.chain_id
-         AND projected_lineage.block_number = {projected}.current_block_number
-         AND projected_lineage.block_hash = {projected}.current_block_hash
+          ON projected_lineage.chain_id = marker.chain_id
+         AND projected_lineage.block_number = marker.current_block_number
+         AND projected_lineage.block_hash = marker.current_block_hash
          AND projected_lineage.canonicality_state IN (
              'canonical', 'safe', 'finalized'
         )

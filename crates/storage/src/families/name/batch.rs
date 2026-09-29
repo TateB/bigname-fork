@@ -249,9 +249,7 @@ pub(crate) async fn load(
     shape: CoverageShape,
 ) -> Result<BTreeMap<String, NameCurrentRow>> {
     let mut rows = load_base(conn, logical_name_ids, shape).await?;
-    for row in rows.values_mut() {
-        super::topology::enrich(conn, row).await?;
-    }
+    super::topology::enrich_all(conn, &mut rows).await?;
     Ok(rows)
 }
 
@@ -377,19 +375,11 @@ pub(super) async fn load_chain(
     let mut contested: BTreeSet<(String, String)> = BTreeSet::new();
     for facts in &facts {
         let name = &facts.input.logical_name_id;
-        // The binding candidates' and events' resources, and the registry node's (where an
-        // ownerless name's retained pointer sits).
-        let node_resources = facts
-            .registry_node
-            .iter()
-            .flat_map(|node| node.owner_events.iter())
-            .filter_map(|e| e.resource_id.as_deref());
         let resources = facts
             .candidates
             .iter()
             .map(|c| c.resource_id.as_str())
-            .chain(facts.events.iter().filter_map(|e| e.resource_id.as_deref()))
-            .chain(node_resources);
+            .chain(facts.events.iter().filter_map(|e| e.resource_id.as_deref()));
         for resource in resources {
             if pointers
                 .get(resource)
@@ -455,7 +445,7 @@ pub(super) async fn load_chain(
                 let resource = transfer.resource_id.as_deref()?;
                 ownerless_serving(
                     name,
-                    own_pointer(resource, name),
+                    pointers.get(resource),
                     readable
                         .get(resource)
                         .is_some_and(|(token, _)| token.is_some()),

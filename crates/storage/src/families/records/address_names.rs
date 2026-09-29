@@ -1,4 +1,4 @@
-//! `GET /v1/addresses/{address}/names` over the families (TYR-36 step 7b, F13): the names the
+//! `GET /v1/addresses/{address}/names` over the families (F13): the names the
 //! address index (`project_address_name_index`) lists for the address, composed at read
 //! (`families::name`), with each name's relations recomputed at its publication
 //! (`address_relations.rs`). The index holds every address a relation can take under some
@@ -8,8 +8,8 @@
 //!
 //! The rows carry what a route reads: identity, relations, the publication's position. They do
 //! not carry the served event attribution (`provenance.normalized_event_id`, the relation's own
-//! block in `chain_positions`, `manifest_version`) or the effective-controller support status the
-//! served row takes from `permissions_current_resource_summary`; no route reads them.
+//! block in `chain_positions`, `manifest_version`) or the effective-controller support status
+//! from the permission resource summary; no route reads them.
 //!
 //! A page is read in one snapshot (`read_snapshot`).
 use std::collections::{BTreeMap, BTreeSet};
@@ -53,7 +53,7 @@ pub async fn load_family_address_names_page(
     page_size: u64,
 ) -> Result<AddressNamesCurrentSortedPage> {
     let mut snapshot = crate::families::read_snapshot(pool).await?;
-    let (rows, names) = compose_address_name_rows(&mut snapshot, address, namespace).await?;
+    let (rows, names) = compose_address_name_rows(&mut snapshot, address, namespace, false).await?;
     let page = load_address_names_page_from(
         &mut snapshot,
         RowSource::Composed {
@@ -79,10 +79,11 @@ pub async fn load_family_address_names_page(
 
 /// The composed `address_names_current` rows of `address` and the composed name rows they read,
 /// as JSON record sets.
-pub(super) async fn compose_address_name_rows(
+pub(crate) async fn compose_address_name_rows(
     conn: &mut PgConnection,
     address: &str,
     namespace: Option<&str>,
+    with_history_evidence: bool,
 ) -> Result<(Value, Value)> {
     let indexed: Vec<(String, String)> = sqlx::query_as(
         "/* storage:families.records.address_name_index */
@@ -113,7 +114,7 @@ pub(super) async fn compose_address_name_rows(
     for (chain_id, ids) in by_chain {
         let publication = servable_publication(conn, &chain_id).await?;
         let composed = load_composed(conn, &ids, CoverageShape::Plain).await?;
-        let inputs = ChainInputs::load(conn, &chain_id, &composed).await?;
+        let inputs = ChainInputs::load(conn, &chain_id, composed.values()).await?;
         for row in composed.values() {
             let candidates = inputs.candidates_of(&row.logical_name_id);
             let input = NameRelationsInput {
@@ -128,7 +129,17 @@ pub(super) async fn compose_address_name_rows(
             let mut listed = false;
             for (related, relation) in relations(&input) {
                 if related == wanted {
-                    rows.push(address_name_row(&related, relation, row, &publication));
+                    let mut relation_row = address_name_row(&related, relation, row, &publication);
+                    if with_history_evidence
+                        && let Some(position) =
+                            super::address_relations::relation_position(&input, relation)
+                    {
+                        relation_row["provenance"]["event_identity"] =
+                            json!(position.event_identity);
+                        relation_row["chain_positions"]["block_number"] =
+                            json!(position.block_number);
+                    }
+                    rows.push(relation_row);
                     listed = true;
                 }
             }
@@ -182,6 +193,7 @@ fn address_name_row(
         "relation": relation,
         "namespace": row.namespace,
         "raw_name": row.canonical_display_name,
+        "normalized_name": row.normalized_name,
         "namehash": row.namehash,
         "surface_binding_id": row.surface_binding_id,
         "resource_id": row.resource_id,
@@ -205,12 +217,16 @@ struct ChainInputs {
 }
 
 impl ChainInputs {
-    async fn load(
+    async fn load<'a>(
         conn: &mut PgConnection,
         chain_id: &str,
-        composed: &BTreeMap<String, NameCurrentRow>,
+        composed: impl IntoIterator<Item = &'a NameCurrentRow>,
     ) -> Result<Self> {
-        let ids: Vec<String> = composed.keys().cloned().collect();
+        let composed: Vec<&NameCurrentRow> = composed.into_iter().collect();
+        let ids: Vec<String> = composed
+            .iter()
+            .map(|row| row.logical_name_id.clone())
+            .collect();
         let rows = sqlx::query(
             "/* storage:families.records.address_controller_candidates */
              SELECT logical_name_id, block_number, transaction_index, log_index, event_identity,
@@ -240,7 +256,7 @@ impl ChainInputs {
                 .push(candidate);
         }
         let selected: Vec<_> = composed
-            .values()
+            .iter()
             .filter_map(|row| row.surface_binding_id)
             .collect();
         let bindings: Vec<Value> = sqlx::query_scalar(
@@ -259,7 +275,7 @@ impl ChainInputs {
             .map(|binding| (binding.surface_binding_id.clone(), binding))
             .collect();
         let resources: Vec<String> = composed
-            .values()
+            .iter()
             .filter_map(|row| row.resource_id.map(|id| id.to_string()))
             .collect::<BTreeSet<_>>()
             .into_iter()
@@ -296,21 +312,18 @@ pub(crate) async fn name_relations_on(
     conn: &mut PgConnection,
     composed: &BTreeMap<String, NameCurrentRow>,
 ) -> Result<BTreeMap<String, Vec<crate::IdentityAddressRelationRow>>> {
-    let mut chains: BTreeMap<String, BTreeMap<String, NameCurrentRow>> = BTreeMap::new();
-    for (id, row) in composed {
+    let mut chains: BTreeMap<String, Vec<&NameCurrentRow>> = BTreeMap::new();
+    for row in composed.values() {
         let chain = row.provenance["chain_id"]
             .as_str()
             .context("composed name has no chain")?;
-        chains
-            .entry(chain.to_owned())
-            .or_default()
-            .insert(id.clone(), row.clone());
+        chains.entry(chain.to_owned()).or_default().push(row);
     }
     let mut out = BTreeMap::new();
     for (chain, names) in chains {
         let publication = servable_publication(conn, &chain).await?;
-        let inputs = ChainInputs::load(conn, &chain, &names).await?;
-        for row in names.values() {
+        let inputs = ChainInputs::load(conn, &chain, names.iter().copied()).await?;
+        for row in names {
             let candidates = inputs.candidates_of(&row.logical_name_id);
             let input = NameRelationsInput {
                 row,

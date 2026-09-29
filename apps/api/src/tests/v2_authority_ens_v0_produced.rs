@@ -14,7 +14,6 @@ use bigname_adapters::schema_v2::{
     AdapterSession, AddressAdmissionInput, BatchInput, BatchOutput, ManifestInput, RawBlockInput,
     RawLogInput, StateCacheCapacity, prepare_schema_v2_batch_incremental,
 };
-use bigname_project::{BatchRequest, Engine, Marker, RunMode};
 
 const CHAIN: &str = "ethereum-mainnet";
 const REGISTRY: &str = "0x00000000000c2e074ec69a0dfb2997ba6c7d2e1e";
@@ -161,30 +160,30 @@ fn interpret(block: i64, session: Option<AdapterSession>) -> Result<(BatchOutput
     Ok((output, session))
 }
 
-async fn project(pool: &PgPool, target: i64, resume: Option<i64>) -> Result<()> {
-    Engine::new(pool.clone())
-        .run_batch(BatchRequest {
-            chain_id: CHAIN.into(),
-            target_block: target,
-            affected_from_block: resume.map_or(0, |previous| previous + 1),
-            affected_to_block: target,
-            resume_current: resume.map(|number| Marker {
-                number,
-                hash: format!("0xhistory{number}"),
-            }),
-            mode: RunMode::Normal,
-        })
-        .await?;
+async fn project(pool: &PgPool, target: i64, _resume: Option<i64>) -> Result<()> {
+    publish_test_families_on(pool, CHAIN, target).await?;
     Ok(())
 }
 
-async fn authority_selections(pool: &PgPool) -> Result<Vec<(String, Value)>> {
-    Ok(sqlx::query_as(
-        "SELECT raw_name, provenance -> 'authority_selection'
-         FROM bigname_phase.name_current WHERE namespace = 'ens' ORDER BY raw_name",
+/// The published authority selection of a name, read through the family name reader.
+async fn authority_selection(pool: &PgPool, name: &str) -> Result<Option<Value>> {
+    Ok(bigname_storage::load_name_current(
+        pool,
+        &bigname_storage::logical_name_id_for_name("ens", name),
     )
-    .fetch_all(pool)
-    .await?)
+    .await?
+    .map(|row| row.provenance["authority_selection"].clone()))
+}
+
+/// The published authority selections of the fixture's two names, in name order.
+async fn authority_selections(pool: &PgPool) -> Result<Vec<(String, Value)>> {
+    let mut selections = Vec::new();
+    for name in ["hidden.eth", NAME] {
+        if let Some(selection) = authority_selection(pool, name).await? {
+            selections.push((name.to_owned(), selection));
+        }
+    }
+    Ok(selections)
 }
 
 /// The product responses for `pointer.eth` that carry `authority`.
@@ -233,37 +232,6 @@ async fn handoff_diagnostic(database: &TestDatabase) -> Result<Option<Value>> {
     Ok(payload["data"].get("registry_handoff").cloned())
 }
 
-/// Reads `pointer.eth` with its registry generation removed, as a row projected before the
-/// generation existed would read, then puts the generation back.
-async fn reads_without_generation(database: &TestDatabase) -> Result<Vec<Value>> {
-    let saved: Value = sqlx::query_scalar(
-        "SELECT provenance -> 'authority_selection' FROM bigname_phase.name_current
-         WHERE raw_name = $1",
-    )
-    .bind(NAME)
-    .fetch_one(&database.pool)
-    .await?;
-    sqlx::query(
-        "UPDATE bigname_phase.name_current
-         SET provenance = provenance #- '{authority_selection,registry_generation}'
-         WHERE raw_name = $1",
-    )
-    .bind(NAME)
-    .execute(&database.pool)
-    .await?;
-    let reads = product_reads(database).await?;
-    sqlx::query(
-        "UPDATE bigname_phase.name_current
-         SET provenance = jsonb_set(provenance, '{authority_selection}', $2)
-         WHERE raw_name = $1",
-    )
-    .bind(NAME)
-    .bind(saved)
-    .execute(&database.pool)
-    .await?;
-    Ok(reads)
-}
-
 #[tokio::test]
 async fn produced_registry_only_name_serves_ens_v0_until_the_current_registry_records_it()
 -> Result<()> {
@@ -278,6 +246,7 @@ async fn produced_registry_only_name_serves_ens_v0_until_the_current_registry_re
             "timestamp": "2024-01-01T00:00:00Z",
         }}))
         .await?;
+    republish_fixture_chain(&database, "base-mainnet").await?;
     let mut session = None;
     for block in OLD_RECORD..=CLEARED {
         // The served head advances with each projected block.
@@ -309,14 +278,21 @@ async fn produced_registry_only_name_serves_ens_v0_until_the_current_registry_re
             authority_selections(&fresh.pool).await?,
             "block {block}"
         );
-        // A bare 2017-registry record creates no public name.
-        let hidden: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM bigname_phase.name_current WHERE lower(namehash) = $1",
-        )
-        .bind(format!("{:#x}", namehash("hidden.eth")))
-        .fetch_one(&database.pool)
-        .await?;
-        assert_eq!(hidden, 0, "block {block}");
+        // A bare 2017-registry record creates no public name, under its name or its node.
+        assert_eq!(
+            authority_selection(&database.pool, "hidden.eth").await?,
+            None,
+            "block {block}"
+        );
+        assert!(
+            bigname_storage::load_name_current(
+                &database.pool,
+                &format!("ens:{:#x}", namehash("hidden.eth")),
+            )
+            .await?
+            .is_none(),
+            "block {block}"
+        );
         if block == OLD_RECORD {
             assert!(selections.is_empty(), "{selections:?}");
             continue;
@@ -348,14 +324,6 @@ async fn produced_registry_only_name_serves_ens_v0_until_the_current_registry_re
                     "{reads:?}"
                 );
                 assert_eq!(handoff_diagnostic(&database).await?, None);
-                // `ens_v0` changes no other field of the registry-only row.
-                let legacy = reads_without_generation(&database).await?;
-                assert_eq!(legacy.len(), reads.len());
-                for (read, legacy) in reads.iter().zip(&legacy) {
-                    let mut read = read.clone();
-                    read["authority"] = json!("ens_v1");
-                    assert_eq!(&read, legacy);
-                }
                 assert_eq!(
                     address_names(&database, OWNER, "authority=ens_v0").await?,
                     [NAME]
@@ -656,13 +624,9 @@ async fn same_transaction_registration_reads_as_the_current_registry_record() ->
     assert_keeps_current_registry_write(&whole, 121);
 
     let selection_of = |pool: PgPool| async move {
-        sqlx::query_scalar::<_, Value>(
-            "SELECT provenance -> 'authority_selection' FROM bigname_phase.name_current
-             WHERE raw_name = $1",
-        )
-        .bind(marked::NAME)
-        .fetch_one(&pool)
-        .await
+        authority_selection(&pool, marked::NAME)
+            .await?
+            .context("the published marked name")
     };
     let database = TestDatabase::new_migrated().await?;
     seed_v2_history_blocks(&database, 120..=121).await?;
