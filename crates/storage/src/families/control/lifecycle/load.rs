@@ -12,6 +12,7 @@ use sqlx::{PgConnection, PgPool};
 
 use super::{NameFacts, NameInput, TripleFacts, admission::REGISTRAR};
 use crate::families::control::{
+    cutover::load_cut_over_on,
     position::Position,
     registry::load_registry_nodes_on,
     rows::{BindingCandidate, LifecycleEvent, Maxima, text},
@@ -308,6 +309,7 @@ pub async fn load_name_facts_on(
         })
         .collect();
     let nodes = load_registry_nodes_on(&mut *conn, chain_id, &node_keys).await?;
+    let resolution_cutover = load_cut_over_on(&mut *conn, chain_id).await?;
 
     let wrappers: BTreeMap<String, _> = wrappers
         .into_iter()
@@ -457,6 +459,7 @@ pub async fn load_name_facts_on(
                     input.namehash.to_ascii_lowercase(),
                 ))
                 .cloned(),
+            resolution_cutover,
         });
     }
     Ok(out)

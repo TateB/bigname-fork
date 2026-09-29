@@ -65,6 +65,7 @@ fn unsupported_name_record(row: &NameCurrentRow) -> V2Result<Option<NameRecord>>
         created_at: None,
         subregistry: None,
         expires_at: None,
+        grace_ends_at: None,
         registration_status: None,
         wrapper_state: None,
         wrapper_fuses: None,
@@ -76,6 +77,7 @@ fn unsupported_name_record(row: &NameCurrentRow) -> V2Result<Option<NameRecord>>
         namespace: row.namespace.clone(),
         namehash: row.namehash.clone(),
         resolver: None,
+        unresolvable_reason: None,
         records: None,
         primary_name: None,
         primary_address: None,
@@ -137,7 +139,8 @@ async fn build_verified_name_record(
     record.primary_address = (!primary_address_unserved)
         .then(|| groups.addresses.get("60").cloned().flatten())
         .flatten();
-    record.records = has_current_registration.then_some(groups);
+    record.records =
+        (has_current_registration && row.unresolvable_reason().is_none()).then_some(groups);
     record.status = status;
     record.unsupported_reason = verified_profile_unsupported_reason(answers, status);
     record.failure_reason = verified_profile_failure_reason(answers, status);
