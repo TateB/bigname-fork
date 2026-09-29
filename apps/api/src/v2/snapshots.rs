@@ -52,13 +52,7 @@ pub(crate) fn as_of_meta(selected: &SelectedSnapshot) -> V2Result<BTreeMap<Strin
                 position.chain_id
             ))
         })?;
-        let position_value = position.to_value();
-        let timestamp = position_value["timestamp"]
-            .as_str()
-            .ok_or_else(|| {
-                V2Error::internal_error("resolved snapshot position did not format a timestamp")
-            })?
-            .to_owned();
+        let timestamp = super::format_timestamp(position.timestamp);
 
         as_of.insert(
             numeric.to_string(),
@@ -395,7 +389,7 @@ mod tests {
             Some(&AsOf {
                 block_number: 100,
                 block_hash: "0xabc123".to_owned(),
-                timestamp: "2026-06-10T00:00:00Z".to_owned(),
+                timestamp: "1781049600".to_owned(),
             })
         );
     }

@@ -91,7 +91,7 @@ async fn assert_matches_served(fixture: &Fixture, logical_name_id: &str) -> Resu
         .await?
         .expect("composed name");
     let expiry: Option<i64> = sqlx::query_scalar(
-        "SELECT extract(epoch FROM expires_at)::bigint FROM project_name_summary
+        "SELECT expires_at::bigint FROM project_name_summary
          WHERE chain_id = $1 AND logical_name_id = $2",
     )
     .bind(CHAIN)
@@ -118,7 +118,9 @@ async fn assert_matches_served(fixture: &Fixture, logical_name_id: &str) -> Resu
         served.declared_summary
     );
     ensure!(
-        expiry.map(Value::from).unwrap_or(Value::Null)
+        expiry
+            .map(|value| Value::String(value.to_string()))
+            .unwrap_or(Value::Null)
             == served.declared_summary["registration"]["expiry"],
         "{logical_name_id}: expiry {expiry:?} against {}",
         served.declared_summary

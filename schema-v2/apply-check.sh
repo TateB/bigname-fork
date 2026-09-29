@@ -531,7 +531,7 @@ intentional_phase_migration_skips=()
 refusal_assertions_passed=0
 expected_refusal_assertions=263
 predecessor_shape_proof_count=0
-expected_predecessor_shape_proof_count=51
+expected_predecessor_shape_proof_count=52
 refusal_probe_seconds=0
 timing_started=$SECONDS
 
@@ -603,6 +603,10 @@ check_served_projection_removal() {
                 emit_phase_migration "$ROOT/migrations/20260929200000_project_universal_resolver_proxy.sql" preceding-shape
             fi
             emit_phase_migration "$ROOT/migrations/20260929200000_project_universal_resolver_proxy.sql" baseline-first
+            if [ "$suffix" = removal ]; then
+                emit_phase_migration "$ROOT/migrations/20260930210000_exact_expiry_seconds.sql" preceding-shape
+            fi
+            emit_phase_migration "$ROOT/migrations/20260930210000_exact_expiry_seconds.sql" baseline-first
         done
         printf "SET bigname.removal_schema = '%s_removal'; SET bigname.fresh_schema = '%s_fresh';\n" "$original_schema" "$original_schema"
         cat "$ROOT/schema-v2/fixtures/removal-parity.sql"
@@ -718,7 +722,8 @@ for migration_file in \
     "$ROOT/migrations/20260929170000_project_name_summary_owner.sql" \
     "$ROOT/migrations/20260929180000_project_resource_pointer_root_node_index.sql" \
     "$ROOT/migrations/20260929190000_project_family_name_lookup_indexes.sql" \
-    "$ROOT/migrations/20260929200000_project_universal_resolver_proxy.sql"
+    "$ROOT/migrations/20260929200000_project_universal_resolver_proxy.sql" \
+    "$ROOT/migrations/20260930210000_exact_expiry_seconds.sql"
 do
     emit_phase_migration "$migration_file" empty-schema | run_psql
 done
@@ -1050,7 +1055,9 @@ for migration_file in \
     "$ROOT/migrations/20260929190000_project_family_name_lookup_indexes.sql" \
     "$ROOT/migrations/20260929190000_project_family_name_lookup_indexes.sql" \
     "$ROOT/migrations/20260929200000_project_universal_resolver_proxy.sql" \
-    "$ROOT/migrations/20260929200000_project_universal_resolver_proxy.sql"
+    "$ROOT/migrations/20260929200000_project_universal_resolver_proxy.sql" \
+    "$ROOT/migrations/20260930210000_exact_expiry_seconds.sql" \
+    "$ROOT/migrations/20260930210000_exact_expiry_seconds.sql"
 do
     emit_phase_migration "$migration_file" baseline-first | run_psql
 done

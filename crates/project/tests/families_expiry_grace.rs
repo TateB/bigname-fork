@@ -235,7 +235,7 @@ async fn served(fixture: &Fixture, logical_name_id: &str) -> Result<Value> {
 
 async fn summary_expiry(fixture: &Fixture, logical_name_id: &str) -> Result<Option<i64>> {
     Ok(sqlx::query_scalar(
-        "SELECT extract(epoch FROM expires_at)::bigint FROM project_name_summary
+        "SELECT expires_at::bigint FROM project_name_summary
          WHERE chain_id = $1 AND logical_name_id = $2",
     )
     .bind(CHAIN)
@@ -247,8 +247,8 @@ async fn summary_expiry(fixture: &Fixture, logical_name_id: &str) -> Result<Opti
 fn expect(expiry: u64, grace_days: u64, resolver: Option<&str>, reason: Option<&str>) -> Value {
     json!({
         "arm": "ens_v1",
-        "expiry": expiry,
-        "grace_ends_at": expiry + grace_days * DAY,
+        "expiry": expiry.to_string(),
+        "grace_ends_at": (expiry + grace_days * DAY).to_string(),
         "resolver": resolver,
         "unresolvable_reason": reason,
     })
@@ -414,8 +414,8 @@ async fn an_ens_v2_registration_serves_its_expiry_and_the_ens_v2_grace_before_an
     let row = served(&fixture, &carol).await?;
     ensure!(
         row["arm"] == json!("ens_v2")
-            && row["expiry"] == json!(RESERVED_EXPIRY)
-            && row["grace_ends_at"] == json!(RESERVED_EXPIRY + 28 * DAY),
+            && row["expiry"] == json!(RESERVED_EXPIRY.to_string())
+            && row["grace_ends_at"] == json!((RESERVED_EXPIRY + 28 * DAY).to_string()),
         "{row}"
     );
     fixture.cleanup().await
@@ -438,7 +438,7 @@ async fn rotating_the_declared_proxy_reclassifies_retained_upgrades_at_publicati
     )
     .await?;
     fixture.apply(6, FamilyMode::Normal).await?;
-    ensure!(served(&fixture, &alice).await?["expiry"] == json!(RESERVED_EXPIRY));
+    ensure!(served(&fixture, &alice).await?["expiry"] == json!(RESERVED_EXPIRY.to_string()));
     ensure!(summary_expiry(&fixture, &alice).await? == Some(RESERVED_EXPIRY as i64));
 
     execution_manifest(&fixture, Some(manifest), 7, SUCCESSOR, 7).await?;
@@ -453,10 +453,10 @@ async fn rotating_the_declared_proxy_reclassifies_retained_upgrades_at_publicati
     )
     .await?;
     // Sync cannot change the previously published result before Project consumes its input.
-    ensure!(served(&fixture, &alice).await?["expiry"] == json!(RESERVED_EXPIRY));
+    ensure!(served(&fixture, &alice).await?["expiry"] == json!(RESERVED_EXPIRY.to_string()));
     fixture.apply(7, FamilyMode::Normal).await?;
     ensure!(
-        served(&fixture, &alice).await?["expiry"] == json!(LEASE_EXPIRY),
+        served(&fixture, &alice).await?["expiry"] == json!(LEASE_EXPIRY.to_string()),
         "a retired proxy still determines the expiry after declaration rotation"
     );
     ensure!(summary_expiry(&fixture, &alice).await? == Some(LEASE_EXPIRY as i64));
@@ -467,9 +467,9 @@ async fn rotating_the_declared_proxy_reclassifies_retained_upgrades_at_publicati
     // once that declaration starts. The start block itself must publish the changed expiry.
     execution_manifest(&fixture, Some(manifest), 8, TOP_PROXY, 9).await?;
     fixture.apply(8, FamilyMode::Normal).await?;
-    ensure!(served(&fixture, &alice).await?["expiry"] == json!(LEASE_EXPIRY));
+    ensure!(served(&fixture, &alice).await?["expiry"] == json!(LEASE_EXPIRY.to_string()));
     fixture.apply(9, FamilyMode::Normal).await?;
-    ensure!(served(&fixture, &alice).await?["expiry"] == json!(RESERVED_EXPIRY));
+    ensure!(served(&fixture, &alice).await?["expiry"] == json!(RESERVED_EXPIRY.to_string()));
     ensure!(summary_expiry(&fixture, &alice).await? == Some(RESERVED_EXPIRY as i64));
     fixture.assert_undo_restores(9).await?;
     fixture.assert_rebuild_equal(9).await?;

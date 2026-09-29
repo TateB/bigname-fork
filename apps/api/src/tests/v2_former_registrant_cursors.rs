@@ -156,9 +156,9 @@ async fn v2_former_registrant_cursor_walks_explicit_unregisters_and_mixed_expiri
                     assert!(row["expires_at"].is_null());
                     assert_eq!(row["lapsed_registration"]["release_kind"], "unregistered");
                     let released_at = if row["name"] == "unregistered-a.eth" {
-                        "2026-01-01T00:00:03Z"
+                        "1767225603"
                     } else {
-                        "2026-01-01T00:00:04Z"
+                        "1767225604"
                     };
                     assert_eq!(row["lapsed_registration"]["released_at"], released_at);
                 }

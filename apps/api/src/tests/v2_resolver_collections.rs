@@ -363,7 +363,7 @@ async fn v2_resolver_collection_links_pages_latest_link_per_node_in_record_order
         named["link_event"],
         json!({
             "block_number": 150,
-            "timestamp": "2023-11-14T22:15:50Z",
+            "timestamp": "1700000150",
             "transaction_hash": "0xlinktx150",
             "log_index": 4
         })
@@ -599,7 +599,7 @@ async fn seed_permissioned_collection_inputs(database: &TestDatabase) -> Result<
     database
         .seed_snapshot_selector_chain_positions(&json!({"ethereum":{
         "chain_id":"ethereum-mainnet", "block_number":block, "block_hash":hash,
-        "timestamp":crate::v2::format_timestamp(at)}}))
+        "timestamp":bigname_storage::UnixSeconds::from(at).internal_string()}}))
         .await?;
     let implementation = "0x0000000000000000000000000000000000000fed";
     let payload = json!({"contracts":[],

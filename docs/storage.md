@@ -461,8 +461,11 @@ rule, so an out-of-range value does not fail interpretation and lose the label; 
 decoding stays strict.
 (upstream: .refs/ens_v1/contracts/ethregistrar/ETHRegistrarController.sol:L116-L124 @ ens_v1@91c966f)
 (upstream: .refs/ens_v1/contracts/ethregistrar/ETHRegistrarController.sol:L133-L139 @ ens_v1@91c966f)
-Settlement treats an expiry whose grace addition overflows that range as live; public timestamp
-rendering keeps the existing `null` representation for unrepresentable dates. Co-admitted
+Settlement treats an expiry whose grace addition overflows that range as live.
+Public rendering uses decimal Unix-second strings for finite retained expiry;
+calendar range alone never makes it null. Null and an expiry reason describe
+only a contract-specific absent expiry in a registration context (see
+[the timestamp contract](api-v1.md#timestamp-format-and-absent-expiry)). Co-admitted
 ENSv1→ENSv2 migration evidence retains over-`u64` expiry as decimal text and does not use it for
 wrapper-expiry correlation. Exact Graveyard cleanup still requires its owner and expiry predicate.
 The block-local unwrapped reconciliation and exact predecessor cleanup rules below are unchanged.
@@ -1737,8 +1740,11 @@ test fails when SQL under `crates/project/src` is loaded only by test code.
 The storage families code (`crates/storage/src/families`) is covered as well:
 Project's family step stores the [name summaries](glossary.md#name-summary) that
 code composes, so a change there rotates the hash and forces a rebuild like a
-project change does. So is `crates/storage/src/address_names/query.rs`, whose
-expiry and registration timestamp reads the summaries store. The rest of the
+project change does. So are `crates/storage/src/address_names/query.rs` and its
+`query/timestamps.rs` helper, whose expiry and registration timestamp reads the
+summaries store, plus `crates/storage/src/unix_seconds.rs` and `expiry.rs`, which
+decode exact expiry and classify the contract-specific absent-expiry values.
+The rest of the
 storage crate serves reads and stays outside.
 Interpret's persistence stage is covered on the
 same rule: which interpreted row wins a conflict, how a redo range reopens and
@@ -1917,8 +1923,10 @@ PostgreSQL JSON may spell UTC as `+00:00`; request selectors or retained rows
 may carry other numeric UTC offsets and one to nine fractional-second digits.
 Snapshot selection normalizes these values to UTC before comparing the
 timestamp component of a chain-position identity. Storage reserializes the
-normalized instant with `Z` and preserves non-zero fractional seconds. Invalid
-timestamp syntax remains unusable projection state; a valid alternate offset
+normalized instant with `Z` and preserves non-zero fractional seconds. Public
+API metadata projects these instants to whole Unix-second strings; opaque
+snapshot tokens and cursor positions retain the precision needed for identity
+and comparison. Invalid timestamp syntax remains unusable projection state; a valid alternate offset
 spelling is not stale state. This is a serving-boundary compatibility rule and
 does not change which stored projection rows are authoritative or when they are
 rebuilt.

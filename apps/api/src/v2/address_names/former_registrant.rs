@@ -10,11 +10,11 @@
 use std::collections::BTreeMap;
 
 use axum::Json;
+use bigname_storage::UnixSeconds;
 use bigname_storage::{
     NameCurrentListCursor, NameCurrentListCursorValue, NameCurrentListOrder, NameCurrentRow,
     families::records::{FormerRegistrantFilter, load_family_former_registrant_page},
 };
-use sqlx::types::time::OffsetDateTime;
 
 use crate::AppState;
 use crate::v2::{
@@ -22,11 +22,9 @@ use crate::v2::{
     V2Error, V2Result,
     collection_snapshot::CollectionSnapshot,
     cursor::invalid_cursor_error,
-    format_timestamp,
     list_cursor::{ListCursor, ListPosition},
     name_record::{lapsed_registration, load_migrated_at},
     name_rows_error,
-    params::format_timestamp_bound,
     vocab::Authority,
 };
 
@@ -205,6 +203,7 @@ fn former_row(
         registered_at: registration.registered_at,
         created_at: registration.created_at,
         expires_at: registration.expires_at,
+        expires_at_reason: registration.expires_at_reason,
         grace_ends_at: registration.grace_ends_at,
         authority: Authority::from_provenance(&row.provenance),
         migrated_at,
@@ -220,13 +219,13 @@ fn former_row(
     }
 }
 
-fn timestamp_filter(value: Option<OffsetDateTime>) -> String {
-    value.map_or_else(String::new, format_timestamp_bound)
+fn timestamp_filter(value: Option<UnixSeconds>) -> String {
+    value.map_or_else(String::new, |value| value.to_string())
 }
 
 fn position(cursor: &NameCurrentListCursor) -> ListPosition {
     let expires_at = match cursor.sort_value {
-        NameCurrentListCursorValue::Timestamp(Some(at)) => format_timestamp(at),
+        NameCurrentListCursorValue::Timestamp(Some(at)) => at.internal_string(),
         _ => NO_EXPIRY_CURSOR_VALUE.to_owned(),
     };
     ListPosition::new([
@@ -241,7 +240,8 @@ fn storage_cursor(position: &ListPosition) -> V2Result<NameCurrentListCursor> {
     let expires_at = match position.get(EXPIRES_AT_CURSOR_KEY)? {
         NO_EXPIRY_CURSOR_VALUE => None,
         value => Some(
-            bigname_storage::parse_rfc3339_utc_timestamp(value)
+            value
+                .parse::<UnixSeconds>()
                 .map_err(|_| invalid_cursor_error())?,
         ),
     };

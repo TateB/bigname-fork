@@ -144,12 +144,53 @@ pub(super) fn choose(
 }
 
 /// When the renewal grace of `expiry` ends: the expiry plus the grace period, in seconds. Null
-/// when the expiry is not an integral second or the sum passes the largest signed 64-bit second.
+/// when the expiry has no finite value. The exact sum includes every uint64 expiry and its grace.
 pub(super) fn grace_ends_at(expiry: Option<&Value>, grace: Grace) -> Value {
     expiry
-        .and_then(|expiry| expiry.as_i64().or_else(|| expiry.as_str()?.parse().ok()))
-        .and_then(|expiry| expiry.checked_add(grace.seconds()))
+        .and_then(crate::UnixSeconds::from_json)
+        .and_then(|expiry| expiry.checked_add_seconds(grace.seconds()))
         .map_or(Value::Null, |seconds| json!(seconds))
+}
+
+/// Apply Bigname's public no-expiry classification only to a contract context that defines it.
+/// A user-registry word remains a finite expiry, including values above the calendar range.
+/// Root eth/reverse registrations use MAX_EXPIRY in the pinned deployment:
+/// (upstream: .refs/ens_v2_sepolia_20260916/contracts/deploy/01_ETHRegistry.ts:L36 @ ens_v2_sepolia_20260916@366de741)
+/// (upstream: .refs/ens_v2_sepolia_20260916/contracts/deploy/01_ReverseMirror.ts:L25 @ ens_v2_sepolia_20260916@366de741)
+/// Wrapper expiry is parent-capped, with maximum root/eth expiry:
+/// (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L68 @ ens_v1@91c966f)
+/// (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L978 @ ens_v1@91c966f)
+pub(super) fn classify_expiry(
+    registration: &mut Map<String, Value>,
+    wrapper: bool,
+    root: bool,
+    namehash: &str,
+) -> Result<()> {
+    let Some(raw) = registration.get("expiry").filter(|value| !value.is_null()) else {
+        return Ok(());
+    };
+    let expiry = crate::UnixSeconds::from_json(raw)
+        .ok_or_else(|| anyhow::anyhow!("registration expiry is not an exact Unix-seconds value"))?;
+    let source = if wrapper {
+        "ens_v1_wrapper_l1"
+    } else if root {
+        "ens_v2_root_l1"
+    } else {
+        ""
+    };
+    let reason = crate::contract_expiry_reason(expiry, source, Some(namehash));
+    registration.insert(
+        "expiry".into(),
+        if reason.is_some() {
+            Value::Null
+        } else {
+            json!(expiry)
+        },
+    );
+    if let Some(reason) = reason {
+        registration.insert("expires_at_reason".into(), json!(reason));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -157,16 +198,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn grace_accepts_the_same_quoted_seconds_as_the_served_expiry() {
+    fn grace_accepts_quoted_seconds_and_exceeds_the_signed_range_exactly() {
         for expiry in [json!(2_000_000_000_i64), json!("2000000000")] {
             assert_eq!(
                 grace_ends_at(Some(&expiry), Grace::EnsV2),
-                json!(2_002_419_200_i64)
+                json!("2002419200")
             );
         }
         assert_eq!(
             grace_ends_at(Some(&json!(i64::MAX)), Grace::EnsV2),
-            Value::Null
+            json!((i128::from(i64::MAX) + i128::from(ENS_V2_GRACE_PERIOD_SECONDS)).to_string())
         );
     }
 }

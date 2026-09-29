@@ -188,7 +188,7 @@ async fn v2_former_registrant_real_unregister_uses_canonical_release_time() -> R
         profile["data"]["lapsed_registration"],
         json!({
             "registrant": HOLDER, "held_through": "registry", "release_kind": "unregistered",
-            "released_at": "2023-11-14T22:15:22Z"
+            "released_at": "1700000122"
         })
     );
     let (status, former) = read_family_response(
@@ -240,10 +240,7 @@ async fn v2_former_registrant_preserves_name_detail_migration_timestamp() -> Res
         profile["data"]["registration_status"], "released",
         "{profile}"
     );
-    assert_eq!(
-        profile["data"]["migrated_at"], "2023-11-14T22:15:21Z",
-        "{profile}"
-    );
+    assert_eq!(profile["data"]["migrated_at"], "1700000121", "{profile}");
     let (status, former) = read_family_response(
         &database,
         &format!("/v1/addresses/{HOLDER}/names?relation=former_registrant&namespace=ens"),

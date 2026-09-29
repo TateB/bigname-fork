@@ -83,7 +83,7 @@ async fn v2_get_history_returns_lean_product_rows_newest_first() -> Result<()> {
     );
     assert_eq!(data[0]["name"], json!("history.eth"));
     assert_eq!(data[0]["namespace"], json!("ens"));
-    assert_eq!(data[0]["timestamp"], json!("2023-11-14T22:15:10Z"));
+    assert_eq!(data[0]["timestamp"], json!("1700000110"));
     assert_eq!(data[0]["transaction_hash"], json!("0xtx110"));
     assert_eq!(data[0]["log_index"], json!(0));
     assert_eq!(
@@ -1913,7 +1913,7 @@ async fn seed_v2_history_blocks(
     if !blocks.is_empty() && current.is_none_or(|head| head < end) {
         let timestamp = sqlx::types::time::OffsetDateTime::from_unix_timestamp(1_700_000_000 + end)?;
         seed_schema_v2_ens_lookup_head(&database.pool, end, &format!("0xhistory{end}"),
-            &crate::v2::format_timestamp(timestamp)).await?;
+            &bigname_storage::UnixSeconds::from(timestamp).internal_string()).await?;
     }
     Ok(())
 }
@@ -2175,6 +2175,10 @@ async fn v2_history_timestamp_window_resolves_blocks_through_lineage() -> Result
     .await?;
     assert_eq!(history_blocks(&payload), vec![107, 106, 105, 104]);
     assert_eq!(payload["page"]["total_count"], json!(4));
+    let unix = v2_history_payload_for_database(&database,
+        "/v1/names/history.eth/history?from_timestamp=1700000104&to_timestamp=1700000107&page_size=20").await?;
+    assert_eq!(unix["data"], payload["data"]);
+    assert_eq!(unix["page"], payload["page"]);
 
     // A bound between two blocks snaps inward: 22:15:04.5 -> block 105, 22:15:06.5 -> block 106.
     let payload = v2_history_payload_for_database(
@@ -2220,7 +2224,7 @@ async fn v2_history_timestamp_window_resolves_blocks_through_lineage() -> Result
     let continued = v2_history_payload_for_database(
         &database,
         &format!(
-            "/v1/names/history.eth/history?from_timestamp=2023-11-14T22:15:04Z&page_size=2&cursor={cursor}"
+            "/v1/names/history.eth/history?from_timestamp=1700000104&page_size=2&cursor={cursor}"
         ),
     )
     .await?;
@@ -2229,7 +2233,7 @@ async fn v2_history_timestamp_window_resolves_blocks_through_lineage() -> Result
     for route in [
         "/v1/names/history.eth/history?from_timestamp=yesterday",
         "/v1/names/history.eth/history?from_timestamp=2023-11-14T22:15:07Z&to_timestamp=2023-11-14T22:15:04Z",
-        "/v1/events?name=history.eth&to_timestamp=1700000000",
+        "/v1/events?name=history.eth&to_timestamp=1700000000ms",
     ] {
         let response = v2_history_response_for_database(&database, route).await?;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{route}");
@@ -2338,16 +2342,16 @@ async fn v2_history_include_data_adds_friendly_payloads_and_keeps_lean_rows_othe
         registration["data"],
         json!({
             "registrant": "0x00000000000000000000000000000000000000aa",
-            "expires_at": "2030-03-17T17:46:40Z",
+            "expires_at": "1900000000",
         })
     );
     assert_eq!(
         row_at(110)["data"],
-        json!({ "expires_at": "2031-10-17T10:40:00Z" })
+        json!({ "expires_at": "1950000000" })
     );
     assert_eq!(
         row_at(109)["data"],
-        json!({ "expires_at": "2031-10-17T10:40:00Z" })
+        json!({ "expires_at": "1950000000" })
     );
     assert_eq!(row_at(108)["data"], json!({}));
     assert_eq!(
