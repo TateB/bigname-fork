@@ -224,7 +224,7 @@ latency still require production-scale qualification before activation.
 | `project_family_marker`, `project_family_undo`, `project_repair_record` and [owned key family tables](glossary.md#per-block-publication) | Project | Permanent current serving state, publication generation, undo journal and repair progress. Readers compose names, records, control, permissions, resolver collections, reverse claims and address relations from one family snapshot. Child lists and counts use `project_child_edge_candidate`, `project_parent_subregistry` and `project_name_summary`. An unavailable marker or overlapping redo refuses composed reads. Family data is rebuildable from canonical interpreted input; hash-pinned hydration overlays follow the documented replay policy. |
 | `project_text_hydration_work`, `project_reverse_hydration_work` | Project | Derived indexes of pending text hydration and continuously refreshed reverse tuples. Keyed like their source rows, with indexed attempt order. Publication and undo refresh affected keys transactionally; reset clears them and rebuild repopulates them. No provider payloads or separate history. |
 | `chain_phase_state`, redo/invalidation state, `service_heartbeats` | phase runner; manifest synchronization may stamp or widen required Ingest redo work recorded by the [manifest-authority marker](glossary.md#manifest-authority-marker), and Interpret may stamp discovery-owned required Ingest work in the transaction that finalizes a completed pass | Phase progress, repair work, and runtime liveness. Both coordination writers use the shared required-Ingest installer under the existing synchronization and runner phase-exclusion rules. They preserve lifecycle backup fields, clear resumable evidence for genuinely new demand, and never execute the redo. The phase runner remains the sole executor and redo authority. |
-| `resolution_divergences` | guarded lookup functions; Project publication may only clear outdated direct observations | Active live/indexed resolver disagreements and retained observations retired after the exact resolver becomes null; diagnostic only. |
+| `resolution_divergences` | guarded non-API lookup functions; Project publication may only clear outdated direct observations | Active live/indexed resolver disagreements and retained observations retired after the exact resolver becomes null; diagnostic only. |
 
 `project:families.hydrate.text.select` reads changed selector keys and the ordered share from
 `project_text_hydration_work_order_idx`. The reverse selector uses
@@ -492,8 +492,9 @@ The block-local unwrapped reconciliation and exact predecessor cleanup rules bel
 (upstream: .refs/ens_v1/contracts/ethregistrar/BaseRegistrarImplementation.sol:L130-L168 @ ens_v1@91c966f)
 
 Adapters provide interpretation behavior. They do not write projections. API
-code reads projections and lookup output only, except for the guarded
-[resolution divergence ledger](glossary.md#resolution-divergence-ledger) write.
+code reads projections and request-scoped lookup output without writing database
+state. The guarded [resolution divergence ledger](glossary.md#resolution-divergence-ledger)
+writer remains available to non-API lookup callers.
 
 Interpret finalizes the discovery-watch admission snapshot in the same database
 transaction as the completed pass's discovery/address writes and any required
@@ -2018,10 +2019,21 @@ outcome, or persisted request-validation state. Each admitted provider lookup
 runs for the current request at the selected block identity. See
 [`execution.md`](execution.md).
 
-For guarded direct resolver comparisons, fixed-`search_path`, security-definer
-functions revalidate the captured state and create, refresh or clear an active
-divergence. The API role receives `EXECUTE` on these functions and cannot write
-`resolution_divergences` directly.
+API verification starts a fresh `REPEATABLE READ, READ ONLY` transaction after
+provider calls and revalidates the captured state without advisory or row locks.
+Its fixed-`search_path`, security-definer guard checks the same predicates as the
+retained locking ledger writer. The API role needs `EXECUTE` only on
+`revalidate_resolution_lookup_state_read_only`, which fixes locking to false.
+The shared boolean core remains private to the schema owner; clients cannot
+choose its locking mode. The API role needs no access to the ledger or its
+writer. API requests never create, refresh or clear a
+divergence, on either primary databases or physical streaming standbys.
+Existing ledger rows remain diagnostic observations and can still be retired
+by Project publication and reorg handling. No serving path consumes them.
+
+For non-API direct resolver comparisons, the original eight-argument guard
+invokes the shared body with locks enabled; the writer retains its transaction
+and mutation behavior.
 
 Lookup composes name topology and inventory in one repeatable-read family
 snapshot. The guarded writer receives the captured indexed entries, read rules,
