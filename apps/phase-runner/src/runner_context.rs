@@ -338,6 +338,23 @@ impl PhaseRunner {
     ) -> RunnerResult<PhaseContext> {
         self.before_phase_context(phase).await;
         let available_heads = match mode.range() {
+            Some(range) if phase == PhaseName::Project => {
+                let end = redo_attempt.map_or(range.to, |attempt| attempt.execution_range.to);
+                match load_available_heads(self.store.pool(), &chain.chain_id).await? {
+                    Some(heads) => load_marker(
+                        self.store.pool(),
+                        &chain.chain_id,
+                        end.min(heads.latest.number),
+                    )
+                    .await?
+                    .map(|latest| HeadMarkers {
+                        latest,
+                        safe: None,
+                        finalized: None,
+                    }),
+                    None => None,
+                }
+            }
             Some(_) if phase == PhaseName::Interpret && matches!(mode, RunMode::Redo(_)) => {
                 interpret_redo_heads(self.store.pool(), &chain.chain_id).await?
             }
