@@ -46,6 +46,28 @@ checked-in SQLx schema-migration history remains append-only, but the deleted
 worker schema-migration command is no longer a runtime entrypoint; deployment
 automation applies reviewed versioned schema-migrations at the planned boundary.
 
+## CI after a merge
+
+Pull requests and merge groups run the complete CI suite. The repository's
+active `main` ruleset requires the merge queue and has no bypass actors. It also
+requires `static`, `artifacts-and-smoke`, `test`, and the named test-suite
+aggregates to pass. The `test` aggregate covers core, API, schema, phase-runner,
+e2e (including shutdown), and site checks; static and smoke checks are required
+separately. These requirements ensure the full validation gate passes before a
+commit lands. Native event conditions keep the subsequent push from running the
+same tests and static checks again.
+
+The main-branch follow-up still uploads the site and refreshes the shared Cargo
+and shutdown-image caches. A cache miss can compile dependencies or build an
+image, but does not execute the tests again. These caches must be saved on
+`main` so later pull requests can restore them. Docker publication continues
+after that successful push workflow. Revisit this event split if mandatory queue
+use or any required validation gate is removed.
+
+`scripts/test-container-shutdown --build-only` builds the image and exports its
+cache without running the shutdown scenario. CI uses this only to refresh a
+missing main-branch cache after the required queue validation.
+
 ## Database-backed tests
 
 Run DB-backed Rust tests through the isolated database harness:
