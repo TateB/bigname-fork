@@ -1806,7 +1806,8 @@ included, since the encoding runs over the whole byte string. A
 normalization-failing label takes the placeholder rather than the escape form:
 its decoded text is a valid string but not a name for the proven node, and
 escaping it would serve the same misleading text. The placeholder label is
-reserved syntax: ENSIP-15 disallows `[` and `]`, so a real label spelled that way
+reserved syntax: bigname's normalizer rejects `[` and `]`
+([name inputs](api-v1.md#name-inputs)), so a real label spelled that way
 is itself served as its own labelhash's placeholder, and a caller can recognize
 the placeholder from the text. The escape form is not reserved, since a label
 really spelled like escape output produces the same string. `namehash` and

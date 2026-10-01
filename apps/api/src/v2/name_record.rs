@@ -170,7 +170,7 @@ pub(crate) async fn get_name_record(
         SnapshotReadResource::Name,
     )
     .await?;
-    let normalized = super::route_name::route_name(&state.pool, &namespace, normalized).await?;
+    let normalized = super::route_name::route_name(&state, &namespace, normalized).await?;
     let row = load_name_current_for_selected_snapshot(
         &state.pool,
         &namespace,

@@ -1679,8 +1679,9 @@ to the product and record-diagnostic routes; a family outside it is rejected as
   as a backslash and three octal digits, a backslash doubled, and every other
   byte verbatim. The rule runs over the whole string, so a non-ASCII parent
   portion is octal-escaped along with the label. The placeholder label
-  `[<64 hex digits>]` is reserved syntax. A real label spelled that way fails
-  ENSIP-15 normalization, so it is itself served as the placeholder of its own
+  `[<64 hex digits>]` is reserved syntax. bigname's normalizer rejects `[` and
+  `]` ([name inputs](api-v1.md#name-inputs)), so a real label spelled that way is
+  itself served as the placeholder of its own
   labelhash and never as its text. Clients can therefore recognize the
   placeholder from the served text. The escape form is not reserved: a label
   really spelled like escape output, such as `\377bad`, produces the same

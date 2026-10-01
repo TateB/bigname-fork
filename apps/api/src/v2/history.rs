@@ -98,9 +98,12 @@ pub(crate) async fn get_history(
         .clone()
         .unwrap_or_else(|| normalized.namespace.to_owned());
 
-    let normalized = super::route_name::route_name(&state.pool, &namespace, normalized).await?;
-    let logical_name_id =
-        bigname_storage::logical_name_id_for_name(&namespace, &normalized.normalized_name);
+    let normalized = if params.cursor.is_some() {
+        super::route_name::continuation_route_name(&state, &namespace, normalized).await?
+    } else {
+        super::route_name::route_name(&state, &namespace, normalized).await?
+    };
+    let logical_name_id = normalized.logical_name_id(&namespace);
     children::refuse_registrar_root(child_registrations, &namespace, &logical_name_id)?;
     let cursor_binding = HistoryCursorBinding {
         namespace: &namespace,

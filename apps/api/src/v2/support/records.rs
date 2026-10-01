@@ -66,7 +66,7 @@ pub(crate) fn normalize_inferred_route_name(
     })
 }
 
-/// The hex digits of a label spelled `[<64 hex digits>]`, either case. ENSIP-15 disallows `[`
+/// The hex digits of a label spelled `[<64 hex digits>]`, either case. The normalizer rejects `[`
 /// and `]`, so no normalized label takes this form.
 fn bracketed_label(label: &str) -> Option<&str> {
     label
@@ -76,12 +76,13 @@ fn bracketed_label(label: &str) -> Option<&str> {
 }
 
 /// A name with at least one bracketed labelhash: the other labels are normalized one by one and
-/// the node is hashed from the given labelhashes, as ensjs encodes an unknown label.
+/// the node is hashed from the given labelhashes.
 fn normalize_bracketed_route_name(
     name: &str,
 ) -> Result<NormalizedRouteNameInput, RouteNameNormalizationError> {
     let mut labels = Vec::new();
     let mut labelhashes = Vec::new();
+    let mut has_hashed_label = false;
     for label in name.split('.') {
         if let Some(hex) = bracketed_label(label) {
             if hex.bytes().any(|byte| byte.is_ascii_uppercase()) {
@@ -92,8 +93,13 @@ fn normalize_bracketed_route_name(
             let mut labelhash = [0u8; 32];
             alloy_primitives::hex::decode_to_slice(hex, &mut labelhash)
                 .expect("64 hex digits decode to 32 bytes");
-            labels.push(label.to_owned());
+            // Namespace inference reads `eth` and `base` as text, so they are spelled out.
+            let known = ["eth", "base"]
+                .into_iter()
+                .find(|text| alloy_primitives::keccak256(text.as_bytes()).0 == labelhash);
+            labels.push(known.map_or_else(|| label.to_owned(), str::to_owned));
             labelhashes.push(labelhash);
+            has_hashed_label |= known.is_none();
             continue;
         }
         let normalized = bigname_domain::normalization::normalize_label_under_suffix(label, &[])
@@ -111,7 +117,7 @@ fn normalize_bracketed_route_name(
         namespace: infer_resolution_namespace(&normalized_name),
         corrected_input_normalization: name != normalized_name,
         normalized_name,
-        node: Some(format!("0x{}", alloy_primitives::hex::encode(node))),
+        node: has_hashed_label.then(|| format!("0x{}", alloy_primitives::hex::encode(node))),
     })
 }
 
@@ -123,3 +129,53 @@ pub(crate) const PROFILE_FALLBACK_RECORD_KEYS: &[&str] = &[
     "text:url",
     "text:email",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bracketed(label: &str) -> String {
+        format!(
+            "[{}]",
+            alloy_primitives::hex::encode(alloy_primitives::keccak256(label.as_bytes()))
+        )
+    }
+
+    #[test]
+    fn a_bracketed_label_addresses_its_node() {
+        let input = normalize_inferred_route_name(&format!("{}.Alpha.eth", bracketed("x")))
+            .expect("bracketed name parses");
+        assert_eq!(input.namespace, bigname_storage::ENS_NAMESPACE);
+        assert_eq!(
+            input.normalized_name,
+            format!("{}.alpha.eth", bracketed("x"))
+        );
+        assert!(input.corrected_input_normalization);
+        assert_eq!(
+            input.logical_name_id("ens"),
+            bigname_storage::logical_name_id_for_name("ens", "x.alpha.eth")
+        );
+    }
+
+    #[test]
+    fn a_bracketed_suffix_label_is_read_as_its_text() {
+        let input = normalize_inferred_route_name(&format!(
+            "alice.{}.{}",
+            bracketed("base"),
+            bracketed("eth")
+        ))
+        .expect("bracketed name parses");
+        assert_eq!(input.namespace, BASENAMES_NAMESPACE);
+        assert_eq!(input.normalized_name, "alice.base.eth");
+        assert_eq!(input.node, None);
+
+        let input =
+            normalize_inferred_route_name(&format!("{}.{}.eth", bracketed("x"), bracketed("base")))
+                .expect("bracketed name parses");
+        assert_eq!(input.namespace, BASENAMES_NAMESPACE);
+        assert_eq!(
+            input.logical_name_id("basenames"),
+            bigname_storage::logical_name_id_for_name("basenames", "x.base.eth")
+        );
+    }
+}

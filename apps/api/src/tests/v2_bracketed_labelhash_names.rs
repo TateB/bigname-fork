@@ -45,12 +45,13 @@ async fn v2_bracketed_labelhash_addresses_a_named_node_on_name_routes() -> Resul
         let (status, body) = read_family_response(&database, &uri).await?;
         assert_eq!(status, StatusCode::OK, "{uri}: {body:#}");
         let (_, plain) = read_family_response(&database, &format!("{route}alpha.eth")).await?;
-        assert_eq!(body["data"], plain["data"], "{uri}");
-        assert!(
-            !body["data"].as_array().expect("rows").is_empty(),
-            "{uri}: {body:#}"
-        );
+        assert_eq!(body, plain, "{uri}");
     }
+    let (_, events) = read_family_response(&database, "/v1/events?name=alpha.eth").await?;
+    assert!(
+        !events["data"].as_array().expect("rows").is_empty(),
+        "{events:#}"
+    );
 
     // The parent addressed by its labelhash lists the same children.
     let uri = format!("/v1/names/{}.eth/subnames?page_size=10", bracketed("alpha"));
@@ -152,3 +153,51 @@ async fn v2_bracketed_labelhash_lookup_reads_the_node() -> Result<()> {
 
     database.cleanup().await
 }
+
+#[tokio::test]
+async fn v2_bracketed_labelhash_with_no_row_is_stale_while_the_publication_is_not_servable(
+) -> Result<()> {
+    let database = TestDatabase::new_migrated().await?;
+    seed_registry_children_fixture(&database).await?;
+    sqlx::query("UPDATE bigname_phase.project_family_marker SET state = 'bootstrap_pending'")
+        .execute(&database.pool)
+        .await?;
+
+    for suffix in ["", "/records", "/history", "/subnames"] {
+        for name in [
+            format!("{}.alpha.eth", bracketed("unknown")),
+            "unknown.alpha.eth".to_owned(),
+        ] {
+            let uri = format!("/v1/names/{name}{suffix}");
+            let (status, body) = read_family_response(&database, &uri).await?;
+            assert_eq!(status, StatusCode::CONFLICT, "{uri}: {body:#}");
+            assert_eq!(body["error"]["code"], json!("stale"), "{uri}: {body:#}");
+        }
+    }
+
+    database.cleanup().await
+}
+
+#[tokio::test]
+async fn v2_bracketed_labelhash_history_continues_across_pages() -> Result<()> {
+    let database = TestDatabase::new_migrated().await?;
+    seed_v2_history_fixture(&database).await?;
+
+    let rows = |pages: &[Value]| {
+        pages
+            .iter()
+            .flat_map(|page| page["data"].as_array().cloned().unwrap_or_default())
+            .collect::<Vec<_>>()
+    };
+    let plain = read_family_pages(&database, "/v1/names/history.eth/history?page_size=1").await?;
+    let bracketed_pages = read_family_pages(
+        &database,
+        &format!("/v1/names/{}.eth/history?page_size=1", bracketed("history")),
+    )
+    .await?;
+    assert!(plain.len() > 1, "{plain:#?}");
+    assert_eq!(rows(&bracketed_pages), rows(&plain));
+
+    database.cleanup().await
+}
+
