@@ -106,7 +106,8 @@ pub(super) fn collect(
             // The admitted V1 dispatcher only uses these for V2 migration correlation;
             // active migration manifests are rejected by the caller before interpretation.
             "ControllerAdded" | "ControllerRemoved" => {}
-            // The Basenames upgradeable controller's proxy upgrade reads no name state.
+            // A registrar proxy upgrade (the Basenames upgradeable controller declares one)
+            // reads no name state.
             "Upgraded" => {}
             _ => unsupported(out, selected),
         },

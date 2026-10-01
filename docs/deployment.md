@@ -396,9 +396,11 @@ rollout status of its manifest, that required the full-state loader.
 `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true`
 (`--interpret-force-full-state-loader`) is the one operator override: it makes
 every chain use the full-state loader. It defaults to false. The lookahead
-loader depends on the two `normalized_events_v1_*_probe_idx` indexes on
-Ethereum mainnet and the two `normalized_events_basenames_*_probe_idx` indexes
-on Base; build all four on an initialized database as described in
+loader depends on all four: the two `normalized_events_v1_*_probe_idx` and the
+two `normalized_events_basenames_*_probe_idx` indexes. Both chains run the same
+probe queries, each with an ENSv1 arm and a Basenames arm, so a missing pair
+slows every lookahead chain, not only the chain whose events it holds. Build
+all four on an initialized database as described in
 [`ops/v1-lookahead-indexes/README.md`](../ops/v1-lookahead-indexes/README.md)
 before starting a release that contains the loader. If interpretation reads a
 name the loader did not restore, the batch stops before publication; it never
@@ -1814,8 +1816,10 @@ Schema-migration
 rerun [`ops/v1-lookahead-indexes/install.sql`](../ops/v1-lookahead-indexes/README.md)
 before applying the schema-migrations and starting the release: it accepts the
 existing ENSv1 pair and builds the Basenames pair concurrently. Then run
-`ANALYZE bigname_phase.normalized_events`. Without the indexes every Base batch
-scans `normalized_events`; `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true`
+`ANALYZE bigname_phase.normalized_events`. The Basenames pair is needed on a
+database that holds only Ethereum mainnet too: the Ethereum batches run the same
+queries, whose Basenames arms would otherwise scan `normalized_events` once per
+requested name. `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true`
 keeps the full-state loader on every chain while they build. Before the release
 is recorded, confirm the runner logged `interpret chose its prior-state loader`
 with `lookahead` for `base-mainnet`.

@@ -37,8 +37,9 @@ on `normalized_events` serve its reads, two per family group:
   Basenames Base registrar has the same 90-day grace period
   (upstream: .refs/basenames/src/util/Constants.sol:L15 @ basenames@1809bbc)
   (upstream: .refs/basenames/src/L2/BaseRegistrar.sol:L296 @ basenames@1809bbc).
-  On Ethereum these two are empty, and on Base the ENSv1 two are; an operator
-  whose database holds both chains builds all four.
+  On Ethereum these two hold no rows, and on Base the ENSv1 two hold none, but
+  every lookahead chain runs both arms of each query, so every database that
+  runs the lookahead loader needs all four.
 
 These change access paths only: no normalized event, canonicality state, raw
 intake or [interpreter content hash](../../docs/glossary.md#interpreter-content-hash)

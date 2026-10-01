@@ -19,6 +19,7 @@ const CHAIN: &str = "base-mainnet";
 const REGISTRY: &str = "0xb94704422c2a1e396835a571837aa5ae53285a95";
 const REGISTRAR: &str = "0x03c4738ee98ae44591e1a4a4f3cab6641d95dd9a";
 const CONTROLLER: &str = "0x4ccb0bb02fcaba27e82a56646e81d8c5bc4119a5";
+const UPGRADEABLE_CONTROLLER: &str = "0xa7d2607c6bd39ae9521e514026cbb078405ab322";
 const RESOLVER: &str = "0xc6d566a56a1aff6508b41f6c90ff131615583bcd";
 const REVERSE_REGISTRAR: &str = "0x0000000000d8e504002cc26e3ec46d81971c1664";
 
@@ -32,6 +33,8 @@ mod registry {
 mod registrar {
     alloy_sol_types::sol! {
         event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
+        event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
+        event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
     }
 }
 
@@ -39,12 +42,14 @@ mod controller {
     alloy_sol_types::sol! {
         event NameRegistered(string name, bytes32 indexed label, address indexed owner, uint256 expires);
         event NameRenewed(string name, bytes32 indexed label, uint256 expires);
+        event Upgraded(address indexed implementation);
     }
 }
 
 mod resolver {
     alloy_sol_types::sol! {
         event AddrChanged(bytes32 indexed node, address a);
+        event NameChanged(bytes32 indexed node, string name);
         event TextChanged(bytes32 indexed node, string indexed indexedKey, string key, string value);
         event NameForAddrChanged(address indexed addr, string name);
     }
@@ -53,9 +58,10 @@ mod resolver {
 /// Seconds after `START` at which each block is mined. Expiry plus grace falls strictly
 /// between two blocks for alice and exactly on one for carol.
 const OFFSETS: [i64; 10] = [
-    0,                   // 0: alice, bob and carol registered
-    10,                  // 1: bob renewed far ahead; carol's token transferred
-    500,                 // 2: alice gets a subname, a resolver, an address and a primary name
+    0,   // 0: alice, bob and carol registered
+    10,  // 1: bob renewed far ahead; carol's token transferred and approved
+    500, // 2: alice gets a subname, a resolver, an address and primary names;
+    //                      the upgradeable controller is upgraded
     1_000 + GRACE - 5,   // 3: quiet; nothing has lapsed
     1_000 + GRACE + 1,   // 4: quiet; alice (expiry 1000) lapses
     1_500 + GRACE,       // 5: quiet; carol (expiry 1500) is still live at exact equality
@@ -140,6 +146,18 @@ async fn seed_history(pool: &PgPool, lineage: &[i64]) -> TestResult {
     };
     seed.log(REGISTRAR, carol_transfer.encode_log_data())
         .await?;
+    let approval = registrar::Approval {
+        owner: second_owner,
+        approved: owner,
+        tokenId: token("carol"),
+    };
+    seed.log(REGISTRAR, approval.encode_log_data()).await?;
+    let operator = registrar::ApprovalForAll {
+        owner: second_owner,
+        operator: owner,
+        approved: true,
+    };
+    seed.log(REGISTRAR, operator.encode_log_data()).await?;
 
     seed.block(FIRST_BLOCK + 2).await?;
     let subname = registry::NewOwner {
@@ -163,6 +181,20 @@ async fn seed_history(pool: &PgPool, lineage: &[i64]) -> TestResult {
         name: "alice.base.eth".to_owned(),
     };
     seed.log(REVERSE_REGISTRAR, primary.encode_log_data())
+        .await?;
+    let reverse = child(
+        child(child(B256::ZERO, "reverse"), "80002105"),
+        &alloy_primitives::hex::encode(owner),
+    );
+    let reverse_name = resolver::NameChanged {
+        node: reverse,
+        name: "alice.base.eth".to_owned(),
+    };
+    seed.log(RESOLVER, reverse_name.encode_log_data()).await?;
+    let upgraded = controller::Upgraded {
+        implementation: SECOND_OWNER.parse()?,
+    };
+    seed.log(UPGRADEABLE_CONTROLLER, upgraded.encode_log_data())
         .await?;
 
     seed.block(FIRST_BLOCK + 7).await?;
@@ -245,6 +277,7 @@ async fn basenames_lookahead_matches_full_state_for_every_batch() -> TestResult 
         "ResolverChanged",
         "RecordChanged",
         "ReverseChanged",
+        "Upgraded",
     ] {
         assert!(has(kind), "the history must exercise {kind}");
     }
