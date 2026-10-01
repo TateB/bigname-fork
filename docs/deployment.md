@@ -2009,7 +2009,11 @@ needs no redo and no historical ingest fetch. Schema-migration
 `verified_chain_id` and `verified_genesis_hash` columns to `ingest_cursors` on
 an existing phase schema, and `init-schema` installs them on a fresh one. An
 existing deployment applies the schema-migration, then starts the new runner,
-which fills both columns on every cursor whose endpoint passes. Before
+which fills both columns on every cursor whose endpoint passes; the runner
+refuses to start until it is applied. Applying it also applies any earlier
+pending schema-migration, including `20261001120100`: on a large initialized
+database, finish the [lookahead loader index steps](#lookahead-loader-on-base)
+first. Before
 upgrading, confirm each configured RPC endpoint answers `eth_chainId` and
 returns block 0: a provider that cannot serve block 0 refuses the start in the
 default `full` mode. The API gains `BIGNAME_API_RPC_CHAIN_CHECK` with the same
