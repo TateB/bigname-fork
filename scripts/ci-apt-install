@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  scripts/ci-apt-install package...
+
+Installs Debian packages on a GitHub-hosted runner, skipping any already
+installed. The runner image's apt mirror list puts azure.archive.ubuntu.com
+first; on 2026-10-01 that mirror trickled a 29 MB package for minutes while
+archive.ubuntu.com served it in a second, and later the same day
+archive.ubuntu.com trickled it once too. The Azure mirror is dropped from the
+list whenever another mirror remains, and the index update and package
+download each run under a timeout far above their usual few seconds. Two
+short attempts are followed by a longer third, about 13 minutes in all at
+worst; a fresh connection usually gets full speed.
+USAGE
+}
+
+if [ "$#" -eq 0 ]; then
+  usage >&2
+  exit 2
+fi
+
+missing=()
+for package in "$@"; do
+  if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -qx 'install ok installed'; then
+    missing+=("$package")
+  fi
+done
+if [ "${#missing[@]}" -eq 0 ]; then
+  echo "already installed: $*"
+  exit 0
+fi
+
+mirrors=/etc/apt/apt-mirrors.txt
+if [ -f "$mirrors" ] && grep -q 'azure\.archive\.ubuntu\.com' "$mirrors" &&
+  grep -v 'azure\.archive\.ubuntu\.com' "$mirrors" | grep -q '[^[:space:]]'; then
+  echo "dropping azure.archive.ubuntu.com from $mirrors" >&2
+  sudo sed -i '/azure\.archive\.ubuntu\.com/d' "$mirrors"
+fi
+apt=(apt-get -o Acquire::Languages=none -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
+
+for attempt in 1 2 3; do
+  # The last attempt waits out a slow mirror for longer rather than failing.
+  update_limit=60 download_limit=45
+  [ "$attempt" -lt 3 ] || update_limit=180 download_limit=300
+  if sudo timeout -k 10 "$update_limit" "${apt[@]}" update &&
+    sudo timeout -k 10 "$download_limit" "${apt[@]}" install -y --no-install-recommends --download-only "${missing[@]}"; then
+    # Packages are already downloaded, so unpacking needs no network and is not
+    # interrupted by a timeout.
+    sudo "${apt[@]}" install -y --no-install-recommends --no-download "${missing[@]}"
+    exit 0
+  fi
+  echo "apt attempt $attempt failed for: ${missing[*]}" >&2
+  sleep $((attempt * 5))
+done
+exit 1
