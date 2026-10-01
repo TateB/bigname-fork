@@ -529,7 +529,7 @@ migration_application_log="$(
 # Future entries must use basename|one-line reason.
 intentional_phase_migration_skips=()
 refusal_assertions_passed=0
-expected_refusal_assertions=297
+expected_refusal_assertions=333
 predecessor_shape_proof_count=0
 expected_predecessor_shape_proof_count=58
 refusal_probe_seconds=0
@@ -641,9 +641,9 @@ check_served_projection_removal() {
                 emit_phase_migration "$ROOT/migrations/20261001120000_normalized_events_basenames_lookahead_indexes.sql" baseline-first
             fi
             if [ "$suffix" = removal ]; then
-                emit_phase_migration "$ROOT/migrations/20261001130000_normalized_events_v2_lookahead_probe_idx.sql" preceding-shape
+                emit_phase_migration "$ROOT/migrations/20261001130000_normalized_events_v2_lookahead_indexes.sql" preceding-shape
             else
-                emit_phase_migration "$ROOT/migrations/20261001130000_normalized_events_v2_lookahead_probe_idx.sql" baseline-first
+                emit_phase_migration "$ROOT/migrations/20261001130000_normalized_events_v2_lookahead_indexes.sql" baseline-first
             fi
         done
         printf "SET bigname.removal_schema = '%s_removal'; SET bigname.fresh_schema = '%s_fresh';\n" "$original_schema" "$original_schema"
@@ -769,7 +769,7 @@ for migration_file in \
     "$ROOT/migrations/20261001110000_project_child_registration_registry_index.sql" \
     "$ROOT/migrations/20261001110100_project_child_edge_candidate_child_index.sql" \
     "$ROOT/migrations/20261001120000_normalized_events_basenames_lookahead_indexes.sql" \
-    "$ROOT/migrations/20261001130000_normalized_events_v2_lookahead_probe_idx.sql"
+    "$ROOT/migrations/20261001130000_normalized_events_v2_lookahead_indexes.sql"
 do
     emit_phase_migration "$migration_file" empty-schema | run_psql
 done
@@ -2010,19 +2010,22 @@ $project_history_found_definition;
 SQL
 done
 # Recreate the lookahead loader indexes of each schema-migration (the ENSv1
-# pair, the Basenames Base pair, then the ENSv2 index) from its preceding schema shape. Compare each resulting catalog definition to
+# pair, the Basenames Base pair, then the ENSv2 four) from its preceding schema shape. Compare each resulting catalog definition to
 # the fresh baseline, then prove a rerun leaves them unchanged.
 v1_lookahead_install="$ROOT/ops/v1-lookahead-indexes/install.sql"
 v1_lookahead_readme=ops/v1-lookahead-indexes/README.md
 v1_lookahead_migration="$ROOT/migrations/20260917150000_normalized_events_v1_lookahead_indexes.sql"
 basenames_lookahead_migration="$ROOT/migrations/20261001120000_normalized_events_basenames_lookahead_indexes.sql"
-v2_lookahead_migration="$ROOT/migrations/20261001130000_normalized_events_v2_lookahead_probe_idx.sql"
+v2_lookahead_migration="$ROOT/migrations/20261001130000_normalized_events_v2_lookahead_indexes.sql"
 v1_lookahead_index_names=(
     normalized_events_v1_due_probe_idx
     normalized_events_v1_direct_node_probe_idx
     normalized_events_basenames_due_probe_idx
     normalized_events_basenames_direct_node_probe_idx
     normalized_events_v2_lookahead_probe_idx
+    normalized_events_v2_direct_node_probe_idx
+    normalized_events_v2_key_probe_idx
+    normalized_events_v2_due_probe_idx
 )
 declare -A lookahead_index_migration=(
     [normalized_events_v1_due_probe_idx]="$v1_lookahead_migration"
@@ -2030,8 +2033,11 @@ declare -A lookahead_index_migration=(
     [normalized_events_basenames_due_probe_idx]="$basenames_lookahead_migration"
     [normalized_events_basenames_direct_node_probe_idx]="$basenames_lookahead_migration"
     [normalized_events_v2_lookahead_probe_idx]="$v2_lookahead_migration"
+    [normalized_events_v2_direct_node_probe_idx]="$v2_lookahead_migration"
+    [normalized_events_v2_key_probe_idx]="$v2_lookahead_migration"
+    [normalized_events_v2_due_probe_idx]="$v2_lookahead_migration"
 )
-# The ENSv2 index keys only columns, so it has no JSON key literal to alter.
+# The ENSv2 block probe keys only columns, so it has no JSON key literal to alter.
 declare -A lookahead_index_json_key_literals=(
     [normalized_events_v2_lookahead_probe_idx]=no-json-key-literal
 )
@@ -2123,8 +2129,9 @@ check_lookahead_index_migration "$v1_lookahead_migration" in-fixture 1 3 \
 check_lookahead_index_migration "$basenames_lookahead_migration" absent-from-fixture 2 3 \
     normalized_events_basenames_due_probe_idx normalized_events_basenames_direct_node_probe_idx
 check_lookahead_index_migration "$v2_lookahead_migration" absent-from-fixture 2 3 \
-    normalized_events_v2_lookahead_probe_idx
-# The live prebuild in ops/v1-lookahead-indexes/install.sql builds all five
+    normalized_events_v2_lookahead_probe_idx normalized_events_v2_direct_node_probe_idx \
+    normalized_events_v2_key_probe_idx normalized_events_v2_due_probe_idx
+# The live prebuild in ops/v1-lookahead-indexes/install.sql builds all eight
 # indexes in one file. For each in turn it must build the baseline definition, refuse
 # an invalid index, a valid index with other keys, a valid index whose JSON
 # key literals start with the schema name, and a table under the name, and

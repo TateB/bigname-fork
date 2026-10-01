@@ -1671,8 +1671,13 @@ session is discarded after the batch. Two partial expression indexes on
 `normalized_events_v1_due_probe_idx` (registrar expiry ranges); two more with the
 same expressions, `normalized_events_basenames_direct_node_probe_idx` and
 `normalized_events_basenames_due_probe_idx`, serve them for the Basenames Base
-families, and `normalized_events_v2_lookahead_probe_idx`, keyed by chain and
-block, serves the read of every ENSv2 event. The loader is an access path, not a semantic: it must produce the same
+families. For ENSv2, `normalized_events_v2_direct_node_probe_idx` has the
+same name expression, `normalized_events_v2_key_probe_idx` is an inverted
+(GIN) index over the [ENSv2 state keys](glossary.md#ensv2-state-key) each event
+is filed under, `normalized_events_v2_due_probe_idx` finds registry tokens whose
+expiry falls in a batch, and `normalized_events_v2_lookahead_probe_idx`, keyed
+by chain and block, finds the latest ENSv2 registry event before it. An ENSv2
+read of an unloaded state key is retried like an unloaded name. The loader is an access path, not a semantic: it must produce the same
 normalized events, identity rows and discovery edges as the full-state loader,
 and it is covered by the same interpreter content hash. The loader choice
 therefore looks past the manifests the batch interprets: the full-state loader

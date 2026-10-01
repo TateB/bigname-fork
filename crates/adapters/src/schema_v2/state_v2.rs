@@ -547,10 +547,10 @@ impl State {
             return;
         }
         if let Some(previous) = previous {
-            self.v2_expiries.remove(&(previous, token_key.to_owned()));
+            self.v2_expiries.remove(previous, token_key);
         }
         if let Some(current) = current {
-            self.v2_expiries.insert((current, token_key.to_owned()));
+            self.v2_expiries.insert(current, token_key.to_owned());
         }
     }
 

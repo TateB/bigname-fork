@@ -8,8 +8,8 @@ prior adapter state for one batch by reading only the history of the names and
 resources that batch can touch. It is chosen automatically for a chain whose
 `active` and `deprecated` manifests all belong to source families it covers and
 whose retained history holds no other family (see
-[`docs/deployment.md`](../../docs/deployment.md)). Five partial indexes on
-`normalized_events` serve its reads, two per name-scoped family group and one
+[`docs/deployment.md`](../../docs/deployment.md)). Eight partial indexes on
+`normalized_events` serve its reads: two per ENSv1-model family group, and four
 for ENSv2:
 
 - `normalized_events_v1_direct_node_probe_idx` selects every readable ENSv1 event
@@ -41,11 +41,27 @@ for ENSv2:
   On Ethereum these two hold no rows, and on Base the ENSv1 two hold none, but
   every lookahead chain runs both arms of each query, so every database that
   runs the lookahead loader needs all four of these name probes.
-- `normalized_events_v2_lookahead_probe_idx` selects every readable ENSv2 event
-  of a chain before a block, keyed by chain then block, over the `ens_v2_*`
-  families. The loader restores ENSv2 state whole, so it reads no ENSv2 event
-  by name. Only a chain with an ENSv2 manifest runs that read; the predicate
-  must stay identical to `crates/interpret/src/load/lookahead/events.sql`.
+- `normalized_events_v2_direct_node_probe_idx` has the same name expression
+  over the `ens_v2_*` families: it finds an ENSv2 name's events, such as the
+  registrations, transfers and ENSv1→ENSv2 migrations that name it.
+- `normalized_events_v2_key_probe_idx` is an inverted (GIN) index over the
+  [ENSv2 state keys](../../docs/glossary.md#ensv2-state-key) each ENSv2 event is
+  filed under: its registry or resolver with the token, resource and label it
+  names, and the whole registry. The array must stay identical to
+  `crates/interpret/src/load/lookahead/v2_keys.sql`.
+- `normalized_events_v2_due_probe_idx` selects ENSv2 registry and root registry
+  events by chain and parsed expiry, with the same expiry expression as the
+  due-name probes, so Interpret can load the tokens whose expiry falls inside a
+  batch. It must stay identical to
+  `crates/interpret/src/load/lookahead/v2_due_keys.sql`.
+- `normalized_events_v2_lookahead_probe_idx` reads the latest ENSv2 registry
+  event of a chain before a block, keyed by chain then block, for the
+  timestamp a full restore would reach
+  (`crates/interpret/src/load/lookahead/v2_latest_topology.sql`).
+
+Only a chain with an ENSv2 manifest runs the ENSv2 key, due and latest-event
+reads, but every lookahead chain runs the ENSv2 name arm, so every database
+that runs the lookahead loader needs all eight indexes.
 
 These change access paths only: no normalized event, canonicality state, raw
 intake or [interpreter content hash](../../docs/glossary.md#interpreter-content-hash)
@@ -107,7 +123,7 @@ not finish in several minutes, and took under four seconds after `ANALYZE`.
 The matching versioned schema-migrations
 `20260917150000_normalized_events_v1_lookahead_indexes.sql` (ENSv1),
 `20261001120000_normalized_events_basenames_lookahead_indexes.sql` (Basenames
-Base) and `20261001130000_normalized_events_v2_lookahead_probe_idx.sql` (ENSv2)
+Base) and `20261001130000_normalized_events_v2_lookahead_indexes.sql` (ENSv2)
 each install the same definitions of their indexes on initialized databases
 and are no-ops before the phase schema exists; after a live prebuild, their
 `IF NOT EXISTS` is a no-op that adopts the indexes by name alone. Each therefore
@@ -120,7 +136,7 @@ again. `scripts/check-schema` proves each refusal for the script and for
 each schema-migration, and that the fresh baseline, the schema-migrations, and
 the script build the same definitions. Apply them through the usual SQLx
 release process when adopting this source revision. The fresh baseline also
-includes all five indexes.
+includes all eight indexes.
 
 An index with any of these names built from an earlier experimental script is kept only
 if `pg_get_indexdef` matches the definition here; otherwise drop and rebuild it

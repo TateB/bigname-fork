@@ -377,13 +377,15 @@ manifest has moved to `draft` or `shadow`, Interpret uses the lookahead loader:
 it reads the names and resources the batch's logs mention plus the
 registrations falling due in the batch, restores only their history, and keeps
 no [interpreter session](glossary.md#interpreter-session) between batches. On a
-chain with an ENSv2 manifest it also restores every retained ENSv2 event, so
-ENSv2 registry, resolver and permission state is complete in every batch, and
-then the ENSv1 history of every name those events mention. ENSv2 interpretation
-can reach a name no log or ENSv2 event mentions, such as the ENSv1 predecessor
-of a name being migrated; when it does, Interpret adds that name, reads its
-history and interprets the batch again inside the same read snapshot, until an
-attempt reads only loaded names. Only that attempt's output is published.
+chain with an ENSv2 manifest it also restores the ENSv2 events filed under the
+[ENSv2 state keys](glossary.md#ensv2-state-key) those logs and events link to,
+such as the registry, token and resolver a log names and the registries above
+it, plus the ENSv2 tokens whose expiry falls in the batch, and then the ENSv1
+history of every name those events mention. Interpretation can reach a name or
+key no log or event mentions, such as the ENSv1 predecessor of a name being
+migrated; when it does, Interpret adds it, reads its history and interprets the
+batch again inside the same read snapshot, until an attempt reads only loaded
+names and keys. Only that attempt's output is published.
 Otherwise it uses the full-state loader, which restores all retained history
 once and then carries the session. Ethereum mainnet, Ethereum Sepolia and Base
 all use the lookahead loader. On a lookahead chain a reorg costs one redo batch read for
@@ -410,12 +412,13 @@ next normal batch, unless the lineage is orphaned again before that batch.
 `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true`
 (`--interpret-force-full-state-loader`) is the one operator override: it makes
 every chain use the full-state loader. It defaults to false. The lookahead
-loader depends on all five: the two `normalized_events_v1_*_probe_idx`, the
-two `normalized_events_basenames_*_probe_idx` indexes and
-`normalized_events_v2_lookahead_probe_idx`. Every chain runs the same name
-probe queries, each with an ENSv1 arm and a Basenames arm, so a missing pair
-slows every lookahead chain, not only the chain whose events it holds; only a
-chain with an ENSv2 manifest reads the ENSv2 index. Build all five on an
+loader depends on all eight: the two `normalized_events_v1_*_probe_idx`, the
+two `normalized_events_basenames_*_probe_idx` and the four
+`normalized_events_v2_*_probe_idx` indexes. Every chain runs the same name
+probe queries, each with an ENSv1, a Basenames and an ENSv2 arm, so a missing
+name index slows every lookahead chain, not only the chain whose events it
+holds; only a chain with an ENSv2 manifest reads the other three ENSv2 indexes.
+Build all eight on an
 initialized database as described in
 [`ops/v1-lookahead-indexes/README.md`](../ops/v1-lookahead-indexes/README.md)
 before starting a release that contains the loader. If interpretation reads a
@@ -1847,10 +1850,10 @@ The build that extends the [lookahead loader](glossary.md#lookahead-loader) to
 the five ENSv2 families makes `ethereum-sepolia` choose it: Interpret no longer
 restores Sepolia's retained history when the runner starts or after a reorg,
 and keeps no Sepolia [interpreter session](glossary.md#interpreter-session) in
-memory. Each Sepolia batch instead reads every retained ENSv2 event of the
-chain, then the ENSv1 history of the names the batch and those events touch, so
-its per-batch read grows with Sepolia's ENSv2 history rather than with the
-whole chain. Both loaders produce identical stored output, so no interpreted or
+memory. Each Sepolia batch instead reads the ENSv2 history of the names and
+[ENSv2 state keys](glossary.md#ensv2-state-key) it touches, then the ENSv1
+history of the names those events mention, so its per-batch read grows with
+what the batch touches rather than with the chain's history. Both loaders produce identical stored output, so no interpreted or
 projected row changes. The build changes `crates/adapters/src`, so it rotates
 the [interpreter content hash](glossary.md#interpreter-content-hash) for every
 chain: finish the full-history Interpret redo and the Project redo it installs
@@ -1858,16 +1861,16 @@ before the matching API serves, as for any rotation, or ship it in a release
 whose redos already run. It needs no manifest change and no historical ingest
 fetch.
 
-Schema-migration `20261001130000_normalized_events_v2_lookahead_probe_idx.sql`
-adds `normalized_events_v2_lookahead_probe_idx`. On a large initialized
-database, rerun
+Schema-migration `20261001130000_normalized_events_v2_lookahead_indexes.sql`
+adds the four `normalized_events_v2_*_probe_idx` indexes. On a large
+initialized database, rerun
 [`ops/v1-lookahead-indexes/install.sql`](../ops/v1-lookahead-indexes/README.md)
 before applying the schema-migrations and starting the release: it accepts the
-existing four indexes and builds the ENSv2 one concurrently. Then run
-`ANALYZE bigname_phase.normalized_events`. Ethereum mainnet and Base have no
-ENSv2 manifest, so they never read the index, but the schema-migration still
-builds it without `CONCURRENTLY` by scanning `normalized_events`, so prebuild it
-on every large database. `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true` keeps the full-state loader on
+existing four indexes and builds the ENSv2 ones concurrently. Then run
+`ANALYZE bigname_phase.normalized_events`. Ethereum mainnet and Base read only
+the ENSv2 name index, but the schema-migration builds all four without
+`CONCURRENTLY` by scanning `normalized_events`, so prebuild them on every large
+database. `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true` keeps the full-state loader on
 every chain while it builds. Before the release is recorded, confirm the runner
 logged `interpret chose its prior-state loader` with `lookahead` for
 `ethereum-sepolia`.

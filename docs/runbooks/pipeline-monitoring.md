@@ -338,17 +338,15 @@ minutes into every startup.
 A restart no longer costs Interpret a restore of a chain's whole retained
 history: Ethereum mainnet, Ethereum Sepolia and Base all use the
 [lookahead loader](../glossary.md#lookahead-loader), which reads only the
-history each batch touches, plus, on Sepolia, every retained ENSv2 event. A
+history each batch touches. A
 runner that is OOM-killed or slow right after every start on such a chain is
-paying for batch work, not restart cost. That work has three parts: the
-batch's own block range, which `BIGNAME_INTERPRET_BLOCKS_PER_BATCH` bounds; the
-whole retained history of each name and resource that range touches, which a
-smaller batch reduces only by touching fewer names; and, on Sepolia only,
-every retained ENSv2 event and the ENSv1 history of the names they mention,
-which every batch reads whatever its size. Lower the batch size first. If the
-cost stays high at one block per batch, it is the history of the names that
-block touches or Sepolia's ENSv2 read; tell them apart before choosing an
-override. `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true` pays the restore
+paying for batch work, not restart cost. That work has two parts: the
+batch's own block range, which `BIGNAME_INTERPRET_BLOCKS_PER_BATCH` bounds; and
+the whole retained history of each name, resource and
+[ENSv2 state key](../glossary.md#ensv2-state-key) that range touches, which a
+smaller batch reduces only by touching fewer of them. Lower the batch size
+first. If the cost stays high at one block per batch, it is the history that
+block touches, such as a name or ENSv2 registry with a very long history. `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true` pays the restore
 once per start instead of once per batch, for every chain that runner serves.
 A chain that logs `interpret chose its prior-state loader` with a full-state
 reason, or a runner started with `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true`,

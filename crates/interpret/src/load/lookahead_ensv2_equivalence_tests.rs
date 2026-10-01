@@ -336,6 +336,9 @@ async fn ensv2_lookahead_matches_full_state_for_every_batch() -> TestResult {
             force_full_state,
         )
         .await?;
+        if blocks_per_batch == 500 {
+            assert_sql_files_v2_events_like_the_adapter(database.pool()).await?;
+        }
         database.cleanup().await?;
         // The walk runs the lookahead loader beside the engine's choice. This history reads
         // names no log or stored event mentions, so it must exercise the retry.
@@ -382,6 +385,47 @@ async fn ensv2_lookahead_matches_full_state_for_every_batch() -> TestResult {
             stored, full_state,
             "stored events differ for {blocks_per_batch} blocks per batch"
         );
+    }
+    Ok(())
+}
+
+/// The loader finds ENSv2 events by the keys `v2_keys.sql` files them under, while the adapter's
+/// loaded-keys check and its scoped-restore tests use `v2_event_keys`: both must file every
+/// stored event under the same keys.
+async fn assert_sql_files_v2_events_like_the_adapter(pool: &PgPool) -> TestResult {
+    use bigname_adapters::schema_v2::{PriorEventInput, seam::STATE_SCOPE_KEY, v2_event_keys};
+    let keys = super::super::lookahead_query::V2_KEYS
+        .trim_end()
+        .replace("{state_scope}", STATE_SCOPE_KEY);
+    let rows: Vec<(String, Option<String>, serde_json::Value, Vec<String>)> =
+        sqlx::query_as(&format!(
+            "SELECT event.source_family, event.raw_fact_ref ->> '{STATE_SCOPE_KEY}',
+                    event.after_state, {keys}
+             FROM normalized_events event WHERE event.source_family LIKE 'ens\\_v2\\_%'"
+        ))
+        .fetch_all(pool)
+        .await?;
+    assert!(rows.len() > 10, "only {} ENSv2 events stored", rows.len());
+    for (source_family, state_scope, after_state, filed) in rows {
+        let input = PriorEventInput {
+            retained_state_key: String::new(),
+            chain_id: CHAIN.to_owned(),
+            namespace: "ens".to_owned(),
+            logical_name_id: None,
+            resource_id: None,
+            event_kind: String::new(),
+            source_family,
+            manifest_version: 1,
+            source_manifest_id: None,
+            emitting_address: None,
+            state_scope,
+            block_timestamp: None,
+            write_position: None,
+            after_state,
+        };
+        let filed = filed.into_iter().collect::<BTreeSet<_>>();
+        let expected = v2_event_keys(&input).into_iter().collect::<BTreeSet<_>>();
+        assert_eq!(filed, expected, "{input:?}");
     }
     Ok(())
 }

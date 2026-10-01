@@ -1,6 +1,10 @@
-use imbl::{ordmap::OrdMap, ordset::OrdSet};
+use imbl::ordset::OrdSet;
 
-use super::{State, V2TokenState, v2_pointers::resolver_observation_id};
+use super::{
+    State, V2TokenState,
+    maps::{AddressId, Cover, Covered, Name, TokenName},
+    v2_pointers::resolver_observation_id,
+};
 
 #[cfg(test)]
 std::thread_local! {
@@ -40,7 +44,7 @@ impl State {
         self.v2_subregistry_tokens_by_observation.clear();
         let tokens = self
             .v2_tokens
-            .iter()
+            .loaded()
             .map(|(key, token)| (key.clone(), token.clone()))
             .collect::<Vec<_>>();
         for (key, token) in tokens {
@@ -136,7 +140,7 @@ impl State {
 }
 
 fn replace_subregistry_index(
-    index: &mut OrdMap<(String, String), OrdSet<String>>,
+    index: &mut Covered<AddressId, (String, String), OrdSet<String>>,
     token_key: &str,
     token: &V2TokenState,
     active: bool,
@@ -159,9 +163,9 @@ fn replace_subregistry_index(
 }
 
 fn insert_token_indexes(
-    upstream_index: &mut OrdMap<(String, String), OrdSet<String>>,
-    name_index: &mut OrdMap<(String, String), OrdSet<String>>,
-    current_name_index: &mut OrdMap<String, OrdSet<String>>,
+    upstream_index: &mut Covered<AddressId, (String, String), OrdSet<String>>,
+    name_index: &mut Covered<TokenName, (String, String), OrdSet<String>>,
+    current_name_index: &mut Covered<Name, String, OrdSet<String>>,
     token_key: &str,
     token: &V2TokenState,
 ) {
@@ -189,9 +193,9 @@ fn insert_token_indexes(
 }
 
 fn remove_token_indexes(
-    upstream_index: &mut OrdMap<(String, String), OrdSet<String>>,
-    name_index: &mut OrdMap<(String, String), OrdSet<String>>,
-    current_name_index: &mut OrdMap<String, OrdSet<String>>,
+    upstream_index: &mut Covered<AddressId, (String, String), OrdSet<String>>,
+    name_index: &mut Covered<TokenName, (String, String), OrdSet<String>>,
+    current_name_index: &mut Covered<Name, String, OrdSet<String>>,
     token_key: &str,
     token: &V2TokenState,
 ) {
@@ -232,8 +236,8 @@ pub(super) fn token_name_ids(token: &V2TokenState) -> OrdSet<String> {
         .collect()
 }
 
-fn remove_index_key<K: Ord + Clone>(
-    index: &mut OrdMap<K, OrdSet<String>>,
+fn remove_index_key<C: Cover<K>, K: Ord + Clone>(
+    index: &mut Covered<C, K, OrdSet<String>>,
     identity: &K,
     token_key: &str,
 ) {
