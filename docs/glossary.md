@@ -183,7 +183,8 @@ the phase runner's and API's check that a configured JSON-RPC endpoint serves
 the chain it is configured for: `eth_chainId` must equal the chain's EIP-155
 id and, in the default `full` mode, block 0 must be readable and match the
 pinned genesis hash where one is pinned, or on Ingest and Live rechecks the
-one the intake cursor recorded. `chain-id-only` skips the block 0
+one the intake cursor recorded (on Verify reference rechecks, the one the
+reference reported at startup). `chain-id-only` skips the block 0
 read. It runs at startup and again on the ingest and verification providers;
 see [deployment](deployment.md#rpc-chain-check).
 

@@ -12,6 +12,7 @@ use phase_runner::{
     config::{ChainConfig, SeedBasis, SourceConfig},
     error::ErrorKind,
     rpc_chain_check,
+    state::PhaseStore,
 };
 use sepolia_rpc::SepoliaIdentityRpc;
 use support::ScratchDatabase;
@@ -120,6 +121,43 @@ async fn a_cursor_records_the_verified_identity_and_refuses_another_chain() -> R
         .unwrap_err();
     assert_eq!(error.kind(), ErrorKind::DataIntegrity);
     assert_eq!(recorded().await?, full, "a refused start changes nothing");
+
+    scratch.cleanup().await
+}
+
+#[tokio::test]
+async fn ingest_refuses_a_cursor_another_start_created_with_another_genesis() -> Result<()> {
+    let scratch = ScratchDatabase::create("bigname_rpc_identity_race").await?;
+    let observed = |genesis: &str| -> Result<ChainConfig> {
+        let mut sources = chain("ethereum-sepolia", "http://127.0.0.1:1/")?
+            .sources
+            .to_vec();
+        sources[0].verified_rpc_chain = Some(bigname_ingest::ObservedRpcChain {
+            chain_id: Some(11_155_111),
+            genesis_hash: Some(genesis.to_owned()),
+        });
+        Ok(ChainConfig::new("ethereum-sepolia", sources, false)?)
+    };
+    let first = observed(&format!("0x{}", "a".repeat(64)))?;
+    let second = observed(&format!("0x{}", "b".repeat(64)))?;
+    let store = PhaseStore::new(scratch.pool().clone());
+
+    rpc_chain_check::persist(scratch.pool(), std::slice::from_ref(&second)).await?;
+    store
+        .ensure_ingest_sources("ethereum-sepolia", &first.intake_sources())
+        .await?;
+    let error = store
+        .ensure_ingest_sources("ethereum-sepolia", &second.intake_sources())
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::DataIntegrity);
+    let recorded: Option<String> = sqlx::query_scalar(
+        "SELECT verified_genesis_hash FROM ingest_cursors
+         WHERE chain_id = 'ethereum-sepolia' AND source_key = 'primary'",
+    )
+    .fetch_one(scratch.pool())
+    .await?;
+    assert_eq!(recorded, Some(format!("0x{}", "a".repeat(64))));
 
     scratch.cleanup().await
 }

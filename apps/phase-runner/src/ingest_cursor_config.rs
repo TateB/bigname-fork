@@ -18,6 +18,7 @@ pub(crate) async fn ensure_all(
     for source in sources {
         let stored = initialize(pool, source).await?;
         validate(source, stored)?;
+        record_verified_rpc_chain(pool, source).await?;
     }
     validate_persisted_source_keys(pool, chain_id, sources, false).await?;
     Ok(())
@@ -325,8 +326,8 @@ fn verified_identity(source: &SourceConfig) -> RunnerResult<VerifiedIdentity> {
 
 /// Records the identity this start's RPC chain check observed on the source's cursor where the
 /// cursor has none yet, and refuses when the cursor recorded a different chain id, or a
-/// different genesis hash when both are known. A cursor not created yet gets the identity when
-/// it is created.
+/// different genesis hash when both are known. Runs at startup and again once Ingest holds its
+/// cursor, so a cursor another start created in between is held to this start's observation.
 pub(crate) async fn record_verified_rpc_chain(
     pool: &PgPool,
     source: &SourceConfig,

@@ -17,7 +17,8 @@ use crate::{
     metrics::RunnerMetricsFeed,
 };
 
-/// Source label the hydration RPC URL is checked and reported under.
+/// Source label the hydration RPC URL is checked and reported under. A configured source may
+/// carry the same key; its observation is kept apart by [`VerifiedRpcEndpoint::hydration`].
 pub const HYDRATION_SOURCE: &str = "hydration";
 
 /// The mode the CLI set; a configuration built without one checks in full.
@@ -30,6 +31,7 @@ pub fn mode(capacity: &CapacityConfig) -> RpcChainCheck {
 pub struct VerifiedRpcEndpoint {
     pub chain: String,
     pub source_key: String,
+    pub hydration: bool,
     pub observed: ObservedRpcChain,
 }
 
@@ -54,6 +56,7 @@ pub async fn verify_all<'a>(
             (
                 source.chain_id.clone(),
                 source.source_key.clone(),
+                false,
                 source.endpoint().to_owned(),
             )
         });
@@ -61,27 +64,29 @@ pub async fn verify_all<'a>(
         (
             chain.to_owned(),
             HYDRATION_SOURCE.to_owned(),
+            true,
             url.to_owned(),
         )
     });
-    for (chain, source_key, endpoint) in sources.chain(hydration) {
+    for (chain, source_key, hydration, endpoint) in sources.chain(hydration) {
         let expected = ExpectedRpcChain::new(&chain, &source_key, mode)
             .map_err(|error| RunnerError::new(ErrorKind::Configuration, error.to_string()))?;
         checks.spawn(async move {
             let result = verify_rpc_chain(&endpoint, &expected).await;
-            (expected, result)
+            (expected, hydration, result)
         });
     }
     let mut verified = Vec::new();
     let mut first_failure = None;
     while let Some(joined) = checks.join_next().await {
-        let (expected, result) = joined.map_err(|error| {
+        let (expected, hydration, result) = joined.map_err(|error| {
             RunnerError::transient(format!("RPC chain check task failed: {error}"))
         })?;
         match result {
             Ok(observed) => verified.push(VerifiedRpcEndpoint {
                 chain: expected.chain().to_owned(),
                 source_key: expected.source_key().to_owned(),
+                hydration,
                 observed,
             }),
             Err(error) => {
@@ -113,7 +118,11 @@ pub async fn verify_all<'a>(
         Some(error) => Err(error),
         None => {
             verified.sort_by(|left, right| {
-                (&left.chain, &left.source_key).cmp(&(&right.chain, &right.source_key))
+                (&left.chain, &left.source_key, left.hydration).cmp(&(
+                    &right.chain,
+                    &right.source_key,
+                    right.hydration,
+                ))
             });
             Ok(verified)
         }
@@ -128,6 +137,7 @@ pub fn record_on_chains(
 ) -> RunnerResult<()> {
     let observed = verified
         .iter()
+        .filter(|endpoint| !endpoint.hydration)
         .map(|endpoint| {
             (
                 (endpoint.chain.as_str(), endpoint.source_key.as_str()),
@@ -241,18 +251,36 @@ mod tests {
     }
 
     #[test]
-    fn the_hydration_label_cannot_be_a_source_key() {
-        let error = SourceConfig::new(
-            "ethereum-mainnet",
+    fn a_source_keyed_hydration_records_its_own_observation() {
+        let source = SourceConfig::new(
+            "base-mainnet",
             HYDRATION_SOURCE,
             "rpc",
             SeedBasis::EthereumHead,
             0,
             "https://node.invalid",
         )
-        .unwrap_err();
-        assert_eq!(error.kind(), ErrorKind::Configuration);
-        assert!(error.to_string().contains("reserved"), "{error}");
+        .unwrap();
+        let mut chains = [ChainConfig::new("base-mainnet", vec![source], false).unwrap()];
+        let endpoint = |hydration, genesis: char| VerifiedRpcEndpoint {
+            chain: "base-mainnet".to_owned(),
+            source_key: HYDRATION_SOURCE.to_owned(),
+            hydration,
+            observed: ObservedRpcChain {
+                chain_id: Some(8453),
+                genesis_hash: Some(format!("0x{}", genesis.to_string().repeat(64))),
+            },
+        };
+        for verified in [
+            [endpoint(false, 'a'), endpoint(true, 'b')],
+            [endpoint(true, 'b'), endpoint(false, 'a')],
+        ] {
+            record_on_chains(&mut chains, &verified).unwrap();
+            assert_eq!(
+                chains[0].sources[0].verified_rpc_chain,
+                Some(endpoint(false, 'a').observed)
+            );
+        }
     }
 
     #[test]

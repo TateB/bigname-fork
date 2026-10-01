@@ -596,7 +596,8 @@ Before `run` opens its database, before `redo` writes anything, and before
 that it serves the chain it is configured for. That covers each `BIGNAME_PHASE_RUNNER_SOURCES`
 entry with an RPC kind, whatever its role, and each
 `BIGNAME_PHASE_RUNNER_HYDRATION_RPC_URLS` entry; hydration URLs are checked and
-reported under the source key `hydration`, which no configured source may use.
+reported under the source key `hydration`. A configured source may also use
+that key; only its own endpoint's observation is recorded on its ingest cursor.
 Only a source whose endpoint is a well-formed URL with a host for another
 scheme, such as a fixture placeholder, is skipped; a malformed endpoint, or a
 bare `host:port` without `http://`, refuses the start. Replay and rebuild never
@@ -626,7 +627,10 @@ an HTTP client rebuilt after a timeout, including a retry. On `base-mainnet`,
 which has no pinned genesis hash, Ingest and Live hold each recheck to the
 genesis hash the startup check observed and the cursor recorded, so an endpoint
 that moves to another network with the same chain id is refused rather than
-accepted on any readable block 0. A mismatch then stops
+accepted on any readable block 0. A Verify reference there has no cursor, so
+its rechecks are held to the hash it reported at this start: a reference that
+moves mid-run is refused, but one repointed between starts is checked only for
+the chain id and a readable block 0. A mismatch then stops
 that chain with a configuration error, which is not retried. On an Ingest or
 Live source it also sets `phase_runner_rpc_chain_mismatch` (see the
 [monitoring runbook](runbooks/pipeline-monitoring.md#alerts)). That gauge pages
@@ -640,7 +644,8 @@ Each intake cursor records the chain id its endpoint reported and, once checked
 in `full` mode, its genesis hash (`ingest_cursors.verified_chain_id` and
 `verified_genesis_hash`). A later start whose endpoint reports another chain
 id, or another genesis hash when both are known, is refused as a
-data-integrity error before any phase runs. These columns are not source
+data-integrity error before any phase runs, or, when another start created the
+cursor after this start's check, when Ingest starts. These columns are not source
 identity: a cursor created before them fills them in on its next start, and
 moving a source to another node on the same chain stays allowed.
 
