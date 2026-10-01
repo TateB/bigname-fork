@@ -47,7 +47,7 @@ step-3-gate vocabulary needed by the route schemas:
 | `namehash` | ENS namehash hex string | `namehash` (unchanged) |
 | `token_id` | decimal-string token id for tokenized registrations/names | `token_id` (unchanged; now defined consistently) |
 | `owner` | token/registry owner | `token_holder`, `owner`, `owner_address`, `registry_owner` |
-| `manager` | controller/manager | `effective_controller`, `manager_address` |
+| `manager` | the account that can change the name's registry record (see [Manager](#manager)) | `effective_controller`, `manager_address` |
 | `registrant` | registrant | `registrant` (unchanged) |
 | `relation` | address-to-name relation filter: one or more of the authority relations `owner`, `manager`, `registrant`, and, on address names and address history, `role_holder` (the address holds an ENSv2 registry role on the name's current registration; not the manager) (comma-separated set); `any` = all authority relations supported on that route; or, on its own, the resolver-record relation `resolves_to` (names whose current `addr:<coin_type>` record resolves to the address, coin type from `coin_type`, default `60`, or every EVM coin type with `coin_type=evm`), or, on its own and on `GET /v1/addresses/{address}/names` only, `former_registrant` (released names whose ended registration the address last held; see [lapsed registration](#lapsed-registration)). `resolves_to` and `former_registrant` are not part of `any` and cannot be combined with another relation | four divergent relation/role enums incl. `owned`/`managed`/`both` (partner `BOTH` = `owner,manager`); ensjs `resolvedAddress` |
 | `relations` | address-to-name relations that matched a row, using `owner`, `manager`, `registrant`, `role_holder`, `resolves_to`, and `former_registrant` values | `relation_facets`, role-specific match arrays |
@@ -1102,6 +1102,48 @@ row. Uppercase hex digits, a `0x` prefix, or any digit count other than 64 are
 rejected: the name routes return `400 invalid_input`, and lookup returns an
 in-band `invalid_name`. The octal-escape non-name form is never accepted as a
 name input.
+
+### Manager
+
+`manager` is the account that can change the name's registry record, such as
+its resolver, which `owner` does not always say. It answers the same question
+as the `manager` address relation. A name with no NameWrapper state (an
+unwrapped ENSv1 name, a Basenames name or an ENSv2 name) serves its `owner`,
+the registry owner of its node; on an unwrapped `.eth` second-level name that
+is the controller, while `registrant` stays the BaseRegistrar token holder. A
+wrapped name's registry owner is the NameWrapper contract
+(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L372 @ ens_v1@91c966f),
+and the NameWrapper lets its token holder, or an operator the holder
+approved, change the record
+(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L202-L205 @ ens_v1@91c966f)
+(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L666-L669 @ ens_v1@91c966f),
+whatever the name's `ens_v1.wrapper_state`
+(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L214-L222 @ ens_v1@91c966f);
+a burned fuse can still forbid a particular change. A wrapped name therefore
+serves the NameWrapper token holder, the row's `registrant`.
+`manager` is omitted wherever the address it copies is omitted, such as on a
+released name. It can equal `owner` or `registrant`. A registry child with no
+name row serves its registry owner, except a child that a NameWrapper or
+registrar event named only under a label failing ENSIP-15 normalization:
+bigname cannot tell whether NameWrapper holds it for a token holder, so, as
+with its `ens_v1` lifecycle fields, it omits `manager` rather than serve the
+NameWrapper contract. The `manager` relation still lists that child for its
+registry owner (TYR-148).
+
+Three known gaps remain. NameWrapper refuses the holder while a wrapped `.eth`
+name is inside its registrar grace period
+(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L1082-L1089 @ ens_v1@91c966f);
+the field still serves the holder then, while the `manager` relation omits it.
+A parent owner can also reassign a wrapped child's registry record with the
+registry's `setSubnodeOwner`, which emits no `NameUnwrapped`
+(upstream: .refs/ens_v1/contracts/registry/ENSRegistry.sol:L75-L84 @ ens_v1@91c966f),
+after which NameWrapper no longer treats the child as wrapped
+(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L1076-L1079 @ ens_v1@91c966f);
+bigname keeps its wrapper state, so the field serves the old token holder while
+the `manager` relation follows the new registry owner (TYR-147). Both are
+listed under [known divergences](upstream.md#known-divergences).
+The `manager` relation also omits a `locked` name, which the field serves;
+aligning both is tracked as TYR-136.
 
 ## Status Vocabulary
 
@@ -2318,7 +2360,7 @@ What only ENSv1 holds about a name while ENSv1 decides it: the BaseRegistrar lea
 
 ### NameRecord
 
-Flat name-detail object, also used by resolver bound names. An identity-only unsupported record omits registration fields. A verified unsupported record may retain registration fields, but all unsupported name-level records omit counts and subregistry. Current constructors omit manager.
+Flat name-detail object, also used by resolver bound names. An identity-only unsupported record omits registration fields. A verified unsupported record may retain registration fields, but all unsupported name-level records omit counts and subregistry.
 
 <!-- openapi:object NameRecord -->
 | Field | Type | Presence | Description |
@@ -2326,7 +2368,7 @@ Flat name-detail object, also used by resolver bound names. An identity-only uns
 | `registration_id` | string | only when registration_held | Opaque registration lifecycle handle; permission rows use the published permission-handle mapping. |
 | `token_id` | string | optional | Decimal-string token identifier. |
 | `owner` | string | optional | Current token or registry owner address, when known. |
-| `manager` | string | optional | Optional manager address. Current forward-read constructors do not emit this field; no null placeholder is served. |
+| `manager` | string | optional | Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted, and on a registry child whose NameWrapper state is unknown. |
 | `registrant` | string | optional | Current registrant address; omitted on released names. |
 | `registered_at` | string | optional | Start of the current registration, which renewals keep, and the ENSv1→ENSv2 migration of a name with an ENSv1 registrar lease (a `.eth` second-level name); a migrated name without one, such as a subname, starts its registration at its ENSv2 grant; decimal string of Unix seconds; see [timestamp format and absent expiry](#timestamp-format-and-absent-expiry). |
 | `created_at` | string | optional | Decimal string of Unix seconds; see [timestamp format and absent expiry](#timestamp-format-and-absent-expiry). |
@@ -2435,7 +2477,7 @@ Flat name-detail object, also used by resolver bound names. An identity-only uns
 
 ### LookupRecord
 
-Shared lookup feed/detail record. Detail adds supported registration and grouped resolver fields; reverse records additionally carry matching relations and primary-name information. Current constructors omit manager.
+Shared lookup feed/detail record. Detail adds supported registration and grouped resolver fields; reverse records additionally carry matching relations and primary-name information. Feed records omit manager with the other registration fields.
 
 <!-- openapi:object LookupRecord -->
 | Field | Type | Presence | Description |
@@ -2447,7 +2489,7 @@ Shared lookup feed/detail record. Detail adds supported registration and grouped
 | `registration_id` | string | optional | Opaque registration lifecycle handle; permission rows use the published permission-handle mapping. |
 | `token_id` | string | optional | Decimal-string token identifier. |
 | `owner` | string | optional | Current token or registry owner address, when known. |
-| `manager` | string | optional | Optional manager address. Current forward-read constructors do not emit this field; no null placeholder is served. |
+| `manager` | string | optional | Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted, and on a registry child whose NameWrapper state is unknown. |
 | `registrant` | string | optional | Current registrant address; omitted on released names. |
 | `registered_at` | string | optional | Start of the current registration, which renewals keep, and the ENSv1→ENSv2 migration of a name with an ENSv1 registrar lease (a `.eth` second-level name); a migrated name without one, such as a subname, starts its registration at its ENSv2 grant; decimal string of Unix seconds; see [timestamp format and absent expiry](#timestamp-format-and-absent-expiry). |
 | `created_at` | string | optional | Decimal string of Unix seconds; see [timestamp format and absent expiry](#timestamp-format-and-absent-expiry). |
@@ -2517,6 +2559,7 @@ Current name summary used by search and the namespace expiry list. The expiry li
 | `namespace` | string | always | Resolved public namespace slug. |
 | `namehash` | string | always | Hexadecimal ENS namehash. |
 | `owner` | string | optional | Current token or registry owner address, when known. |
+| `manager` | string | optional | Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted, and on a registry child whose NameWrapper state is unknown. |
 | `registrant` | string | optional | Current registrant address; omitted on released names. |
 | `registration_status` | enum RegistrationStatus | always | Current registration and control lifecycle label. |
 | `registered_at` | string | optional | Start of the current registration, which renewals keep, and the ENSv1→ENSv2 migration of a name with an ENSv1 registrar lease (a `.eth` second-level name); a migrated name without one, such as a subname, starts its registration at its ENSv2 grant; decimal string of Unix seconds; see [timestamp format and absent expiry](#timestamp-format-and-absent-expiry). |
@@ -2538,6 +2581,7 @@ Current name summary used by search and the namespace expiry list. The expiry li
 | `namehash` | string | always | Hexadecimal ENS namehash. |
 | `labelhash` | string | optional | Hexadecimal labelhash when the readable label is not known. |
 | `owner` | string | optional | Current token or registry owner address, when known. |
+| `manager` | string | optional | Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted, and on a registry child whose NameWrapper state is unknown. |
 | `registrant` | string | optional | Current registrant address; omitted on released names. |
 | `registration_status` | enum RegistrationStatus | always | Current registration and control lifecycle label. |
 | `registered_at` | string | optional | Start of the current registration, which renewals keep, and the ENSv1→ENSv2 migration of a name with an ENSv1 registrar lease (a `.eth` second-level name); a migrated name without one, such as a subname, starts its registration at its ENSv2 grant; decimal string of Unix seconds; see [timestamp format and absent expiry](#timestamp-format-and-absent-expiry). |
@@ -2561,6 +2605,7 @@ Current name summary used by search and the namespace expiry list. The expiry li
 | `namehash` | string | always | Hexadecimal ENS namehash. |
 | `permission_resource_id` | string | optional | Opaque handle for requesting the selected registration's permissions. |
 | `owner` | string | optional | Current token or registry owner address, when known. |
+| `manager` | string | optional | Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted, and on a registry child whose NameWrapper state is unknown. |
 | `registrant` | string | optional | Current registrant address; omitted on released names. |
 | `registration_status` | enum RegistrationStatus | always | Current registration and control lifecycle label. |
 | `registered_at` | string | optional | Start of the current registration, which renewals keep, and the ENSv1→ENSv2 migration of a name with an ENSv1 registrar lease (a `.eth` second-level name); a migrated name without one, such as a subname, starts its registration at its ENSv2 grant; decimal string of Unix seconds; see [timestamp format and absent expiry](#timestamp-format-and-absent-expiry). |

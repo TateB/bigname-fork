@@ -508,6 +508,7 @@ async fn v2_get_names_lists_a_released_name_inside_the_window_next_to_a_live_one
                 "namespace": "ens",
                 "namehash": "0xf5d57b8ccea9df92d48c79fec7260d742812b8f135ef7bf64d5b7b87ac11ea29",
                 "owner": HOLDER,
+                "manager": HOLDER,
                 "registrant": HOLDER,
                 "registration_status": "active",
                 "registered_at": "1706832000",

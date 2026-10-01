@@ -198,6 +198,11 @@ fn former_row(
             .map(|resource| super::permission_resource_handle(Some(row), resource)),
         // A released name has no current owner or registrant; the former holder is in
         // `lapsed_registration`.
+        manager: crate::v2::name_record::served_manager(
+            &row.declared_summary,
+            registration.owner.as_ref(),
+            registration.registrant.as_ref(),
+        ),
         owner: registration.owner,
         registrant: registration.registrant,
         registration_status: registration.registration_status,
