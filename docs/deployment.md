@@ -569,7 +569,8 @@ must be that chain's genesis hash (`crates/domain/src/chain_identity.rs`);
 `base-mainnet` has no pinned genesis hash, so it is checked by chain id plus a
 readable block 0. A chain slug with no known chain id is refused. A failure
 exits with code 1 and one error log naming the chain, source key, and expected
-and observed chain id and genesis hash, never the URL's path, key or query. An endpoint that still
+and observed chain id, plus both genesis hashes when the chain id matched,
+never the URL's path, key or query. An endpoint that still
 does not answer after the provider's usual retries also refuses the start.
 
 `BIGNAME_PHASE_RUNNER_RPC_CHAIN_CHECK=chain-id-only` skips the block 0 read,

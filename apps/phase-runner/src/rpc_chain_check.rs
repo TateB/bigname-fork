@@ -50,6 +50,7 @@ pub async fn verify_all<'a>(
             normalized_kind(&source.source_kind) == ProviderKind::Rpc
                 && source
                     .endpoint()
+                    .trim()
                     .split_once("://")
                     .is_some_and(|(scheme, _)| {
                         scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")

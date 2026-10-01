@@ -320,13 +320,13 @@ async fn a_retry_on_a_client_rebuilt_after_a_timeout_is_checked_first() -> Resul
     let node = Node::stalling(
         "0x1",
         Some(MAINNET_GENESIS),
-        Some(("0x9", Duration::from_secs(2))),
+        Some(("0x9", Duration::from_secs(5))),
     )
     .await?;
     let mut provider = node.guarded("ethereum-mainnet", RpcChainCheck::Full)?;
     provider.client = super::http_client::RecoveringHttpClient::new(
         Duration::from_secs(1),
-        Duration::from_millis(200),
+        Duration::from_secs(1),
     )?;
 
     provider.resolve(&[9]).await?;

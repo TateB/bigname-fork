@@ -222,9 +222,13 @@ mod tests {
             let _held = listener.accept().await;
             std::future::pending::<()>().await;
         });
-        let Err(RpcChainCheckError::Refused(message)) =
-            check("ethereum-mainnet", &format!("http://{address}/"), true).await
-        else {
+        let checked = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            check("ethereum-mainnet", &format!("http://{address}/"), true),
+        )
+        .await
+        .expect("asking for block 0 would wait forever");
+        let Err(RpcChainCheckError::Refused(message)) = checked else {
             panic!("a wrong chain id is a refusal, whatever block 0 does");
         };
         assert!(message.contains("observed 11155111"), "{message}");
