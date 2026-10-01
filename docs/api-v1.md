@@ -1059,10 +1059,10 @@ ADR 0006 rollout step 3 includes that read-layer work.
 
 A name input is the `{name}` path of `GET /v1/names/{name}`, its `/records`,
 `/history`, and `/subnames` routes and the exact-name diagnostics routes; a
-`POST /v1/lookup` name input; and the `name` filter of `GET /v1/events` and
-`GET /v1/permissions`. It is normalized with bigname's ENSIP-15 normalizer
-(`ENS_NORMALIZER_VERSION` in `crates/domain/src/normalization.rs`) before
-reading, with one exception: a label spelled `[`, 64 lowercase hex digits, `]`
+`POST /v1/lookup` name input; and the `name` filter of `GET /v1/events`,
+`GET /v1/diagnostics/events`, and `GET /v1/permissions`. It is normalized with
+bigname's ENSIP-15 normalizer (`ENS_NORMALIZER_VERSION` in
+`crates/domain/src/normalization.rs`) before reading, with one exception: a label spelled `[`, 64 lowercase hex digits, `]`
 is a labelhash, not label text. It stands for the label whose labelhash those
 digits are, and is the [placeholder](glossary.md#non-name-form) that the
 subnames route serves for a label bigname cannot state. The normalizer rejects
@@ -1073,15 +1073,14 @@ whose labelhash is that of `eth` or `base` is read as that label, so
 `alice.[<labelhash of base>].eth` infers the `basenames` namespace as
 `alice.base.eth` does.
 
-The bracketed spelling is another way to name the node, not a separate name.
-A route reads the node's name row and serves that row's `name` and
-`display_name`. When bigname knows the label, the response uses the label,
-not the brackets. When the node has no name row, the name routes return
-`404 not_found` once the namespace's family publication is servable, and
-`409 stale` while it is not, as for a plain name; lookup answers as it does for
-any name with no row. A history continuation does not check the row again: it
-reads the node its cursor is bound to, and serves the bracketed spelling as
-`name` if the node no longer has a row. A node that registry events created
+The bracketed spelling is another way to name the node, not a separate name:
+every route reads the node exactly as it reads the node's plain spelling, with
+the same snapshot selection, cursor binding, and `404 not_found` or
+`409 stale` outcomes. Responses that come from the node's name row serve that
+row's `name` and `display_name`, so when bigname knows the label the response
+uses the label, not the brackets. Name history rows carry that name too; a
+history continuation, which does not require the row, serves the bracketed
+spelling when the node no longer has one. A node that registry events created
 without a label-bearing event (an ENSv1 or Basenames registry child with no
 [name surface](glossary.md#surface-name-surface)) has no name row yet. Its
 placeholder is listed on its parent's subnames page but does not address a

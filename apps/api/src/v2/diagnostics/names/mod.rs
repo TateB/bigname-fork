@@ -106,7 +106,6 @@ async fn resolve_diagnostic_name_with_resolution_auxiliary(
         SnapshotReadResource::DiagnosticData,
     )
     .await?;
-    let normalized = crate::v2::route_name::route_name(state, &namespace, normalized).await?;
     let row = load_name_current_for_selected_snapshot(
         &state.pool,
         &namespace,

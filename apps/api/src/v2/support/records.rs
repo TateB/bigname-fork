@@ -1,22 +1,48 @@
 use super::*;
 
+/// A route's normalized name. A label of it spelled as a bracketed labelhash stands for that
+/// labelhash: the normalizer rejects `[` and `]`, so the spelling is unambiguous in the text.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NormalizedRouteNameInput {
     pub(crate) namespace: &'static str,
     pub(crate) normalized_name: String,
     pub(crate) corrected_input_normalization: bool,
-    /// The node, when a label is spelled as its bracketed labelhash: `normalized_name` then keeps
-    /// that spelling and names no row by itself.
-    pub(crate) node: Option<String>,
 }
 
 impl NormalizedRouteNameInput {
     pub(crate) fn logical_name_id(&self, namespace: &str) -> String {
-        match &self.node {
-            Some(node) => format!("{namespace}:{node}"),
-            None => bigname_storage::logical_name_id_for_name(namespace, &self.normalized_name),
-        }
+        route_logical_name_id(namespace, &self.normalized_name)
     }
+
+    pub(crate) fn has_hashed_label(&self) -> bool {
+        self.normalized_name
+            .split('.')
+            .any(|label| bracketed_label(label).is_some())
+    }
+}
+
+/// [`bigname_storage::logical_name_id_for_name`] of a route's normalized name, hashing a
+/// bracketed label as the labelhash it spells.
+pub(crate) fn route_logical_name_id(namespace: &str, name: &str) -> String {
+    if !name
+        .split('.')
+        .any(|label| bracketed_label(label).is_some())
+    {
+        return bigname_storage::logical_name_id_for_name(namespace, name);
+    }
+    let node = name.split('.').rev().fold([0u8; 32], |node, label| {
+        let labelhash = match bracketed_label(label) {
+            Some(hex) => {
+                let mut labelhash = [0u8; 32];
+                alloy_primitives::hex::decode_to_slice(hex, &mut labelhash)
+                    .expect("64 hex digits decode to 32 bytes");
+                labelhash
+            }
+            None => alloy_primitives::keccak256(label.as_bytes()).0,
+        };
+        alloy_primitives::keccak256([node, labelhash].concat()).0
+    });
+    format!("{namespace}:0x{}", alloy_primitives::hex::encode(node))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,7 +88,6 @@ pub(crate) fn normalize_inferred_route_name(
         namespace: infer_resolution_namespace(&normalized.normalized_name),
         corrected_input_normalization: name != normalized.normalized_name,
         normalized_name: normalized.normalized_name,
-        node: None,
     })
 }
 
@@ -75,14 +100,12 @@ fn bracketed_label(label: &str) -> Option<&str> {
         .filter(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
-/// A name with at least one bracketed labelhash: the other labels are normalized one by one and
-/// the node is hashed from the given labelhashes.
+/// A name with at least one bracketed labelhash, which is kept; the other labels are normalized
+/// one by one.
 fn normalize_bracketed_route_name(
     name: &str,
 ) -> Result<NormalizedRouteNameInput, RouteNameNormalizationError> {
     let mut labels = Vec::new();
-    let mut labelhashes = Vec::new();
-    let mut has_hashed_label = false;
     for label in name.split('.') {
         if let Some(hex) = bracketed_label(label) {
             if hex.bytes().any(|byte| byte.is_ascii_uppercase()) {
@@ -98,26 +121,19 @@ fn normalize_bracketed_route_name(
                 .into_iter()
                 .find(|text| alloy_primitives::keccak256(text.as_bytes()).0 == labelhash);
             labels.push(known.map_or_else(|| label.to_owned(), str::to_owned));
-            labelhashes.push(labelhash);
-            has_hashed_label |= known.is_none();
             continue;
         }
         let normalized = bigname_domain::normalization::normalize_label_under_suffix(label, &[])
             .map_err(|error| RouteNameNormalizationError {
                 message: error.message().to_owned(),
             })?;
-        labelhashes.push(alloy_primitives::keccak256(normalized.normalized_name.as_bytes()).0);
         labels.push(normalized.normalized_name);
     }
-    let node = labelhashes.iter().rev().fold([0u8; 32], |node, labelhash| {
-        alloy_primitives::keccak256([node, *labelhash].concat()).0
-    });
     let normalized_name = labels.join(".");
     Ok(NormalizedRouteNameInput {
         namespace: infer_resolution_namespace(&normalized_name),
         corrected_input_normalization: name != normalized_name,
         normalized_name,
-        node: has_hashed_label.then(|| format!("0x{}", alloy_primitives::hex::encode(node))),
     })
 }
 
@@ -167,7 +183,6 @@ mod tests {
         .expect("bracketed name parses");
         assert_eq!(input.namespace, BASENAMES_NAMESPACE);
         assert_eq!(input.normalized_name, "alice.base.eth");
-        assert_eq!(input.node, None);
 
         let input =
             normalize_inferred_route_name(&format!("{}.{}.eth", bracketed("x"), bracketed("base")))

@@ -4568,7 +4568,8 @@ so there is no persisted artifact to explain. See
 - Request parameters: query `namespace`, `name`, `address`,
   `registration_id`, `type`, `from_block`, `to_block`, `cursor`, `page_size`,
   and optional `finality=latest`. `at` and historical `finality` values are
-  rejected by the shared latest-state collection rule. When `name` is present
+  rejected by the shared latest-state collection rule. `name` is a
+  [name input](api-v1.md#name-inputs). When `name` is present
   and `namespace` is omitted, namespace is inferred from the name; `namespace`
   defaults to `ens` only when there is no name filter.
 - Response shape: `data` is an array of raw normalized-event rows in

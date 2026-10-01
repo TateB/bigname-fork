@@ -40,18 +40,17 @@ async fn v2_bracketed_labelhash_addresses_a_named_node_on_name_routes() -> Resul
     }
 
     // Name filters read the same node.
-    for route in ["/v1/events?name=", "/v1/permissions?name="] {
+    for route in ["/v1/events?name=", "/v1/diagnostics/events?name="] {
         let uri = format!("{route}{}.eth", bracketed("alpha"));
         let (status, body) = read_family_response(&database, &uri).await?;
         assert_eq!(status, StatusCode::OK, "{uri}: {body:#}");
         let (_, plain) = read_family_response(&database, &format!("{route}alpha.eth")).await?;
-        assert_eq!(body, plain, "{uri}");
+        assert_eq!(body["data"], plain["data"], "{uri}");
+        assert!(
+            !plain["data"].as_array().expect("rows").is_empty(),
+            "{uri}: {plain:#}"
+        );
     }
-    let (_, events) = read_family_response(&database, "/v1/events?name=alpha.eth").await?;
-    assert!(
-        !events["data"].as_array().expect("rows").is_empty(),
-        "{events:#}"
-    );
 
     // The parent addressed by its labelhash lists the same children.
     let uri = format!("/v1/names/{}.eth/subnames?page_size=10", bracketed("alpha"));
@@ -201,3 +200,52 @@ async fn v2_bracketed_labelhash_history_continues_across_pages() -> Result<()> {
     database.cleanup().await
 }
 
+
+#[tokio::test]
+async fn v2_bracketed_labelhash_permissions_filter_reads_the_node() -> Result<()> {
+    let database = TestDatabase::new_migrated().await?;
+    seed_family_permissions_fixture(&database).await?;
+
+    let uri = format!("/v1/permissions?name={}.eth", bracketed("alpha"));
+    let (status, body) = read_family_response(&database, &uri).await?;
+    assert_eq!(status, StatusCode::OK, "{uri}: {body:#}");
+    let (_, plain) = read_family_response(&database, "/v1/permissions?name=alpha.eth").await?;
+    assert_eq!(body["data"], plain["data"], "{uri}");
+    assert!(
+        !plain["data"].as_array().expect("rows").is_empty(),
+        "{plain:#}"
+    );
+
+    database.cleanup().await
+}
+
+#[tokio::test]
+async fn v2_bracketed_labelhash_reads_like_the_plain_spelling_at_every_position() -> Result<()> {
+    let database = TestDatabase::new_migrated().await?;
+    seed_registry_children_fixture(&database).await?;
+
+    // `gains` has a name row; `unknown` has none at any position.
+    for (label, plain) in [("gains", "gains.alpha.eth"), ("unknown", "unknown.alpha.eth")] {
+        let spelling = format!("{}.alpha.eth", bracketed(label));
+        for suffix in ["", "/records", "/history", "/subnames"] {
+            for at in ["", "?at=1700000240", "?at=1700000230"] {
+                let uri = format!("/v1/names/{spelling}{suffix}{at}");
+                let (status, body) = read_family_response(&database, &uri).await?;
+                let (plain_status, plain_body) =
+                    read_family_response(&database, &format!("/v1/names/{plain}{suffix}{at}"))
+                        .await?;
+                assert_eq!(status, plain_status, "{uri}: {body:#} vs {plain_body:#}");
+                if label == "gains" && suffix.is_empty() && at != "?at=1700000230" {
+                    assert_eq!(status, StatusCode::OK, "{uri}: {body:#}");
+                }
+                if status == StatusCode::OK {
+                    assert_eq!(body["data"], plain_body["data"], "{uri}");
+                } else {
+                    assert_eq!(body["error"]["code"], plain_body["error"]["code"], "{uri}");
+                }
+            }
+        }
+    }
+
+    database.cleanup().await
+}
