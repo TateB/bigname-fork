@@ -248,6 +248,7 @@ async fn v2_registry_children_are_listed_for_their_registry_owner() -> Result<()
             "name",
             "display_name",
             "owner",
+            "manager",
             "registration_status",
             "authority",
         ] {
@@ -257,6 +258,7 @@ async fn v2_registry_children_are_listed_for_their_registry_owner() -> Result<()
             );
         }
         assert_eq!(row["owner"], json!(RC_OWNER), "{row:#}");
+        assert_eq!(row["manager"], json!(RC_OWNER), "{row:#}");
         assert_eq!(
             row["permission_resource_id"],
             json!(resource.to_string()),
@@ -555,8 +557,10 @@ async fn insert_shadow_child_surface(
 /// (crates/adapters/src/schema_v2/protocol/v1/wrapper.rs, `name_wrapped`), so no name row
 /// composes and both routes serve it from its registry. Its wrapper state and any lease are
 /// projected without a composed name, so its `ens_v1` object claims no lifecycle: no `expires_at`
-/// and no wrapper fields. A child whose only shadow a resolver `NameChanged` wrote has no such
-/// state and, like a sibling no label-bearing event named, keeps `expires_at: null`.
+/// and no wrapper fields. It omits `manager` rather than serve its registry owner, which the
+/// `manager` relation still lists it for. A child whose only shadow a resolver `NameChanged` wrote
+/// has no such state and, like a sibling no label-bearing event named, keeps `expires_at: null`
+/// and serves its registry owner as manager.
 #[tokio::test]
 async fn v2_shadowed_registry_child_serves_ens_v1_without_lifecycle() -> Result<()> {
     let database = TestDatabase::new_migrated().await?;
@@ -658,10 +662,10 @@ async fn v2_shadowed_registry_child_serves_ens_v1_without_lifecycle() -> Result<
     );
     let subnames =
         rows_of(&read_family_pages(&database, "/v1/names/alpha.eth/subnames?page_size=10").await?);
-    for (node, ens_v1) in [
-        (wrapped, json!({})),
-        (named, json!({"expires_at": null})),
-        (plain, json!({"expires_at": null})),
+    for (node, ens_v1, manager) in [
+        (wrapped, json!({}), None),
+        (named, json!({"expires_at": null}), Some(json!(RC_OWNER))),
+        (plain, json!({"expires_at": null}), Some(json!(RC_OWNER))),
     ] {
         let row = rows
             .iter()
@@ -674,7 +678,10 @@ async fn v2_shadowed_registry_child_serves_ens_v1_without_lifecycle() -> Result<
         for served in [row, subname] {
             assert_eq!(served["authority"], json!("ens_v1"), "{served:#}");
             assert_eq!(served["ens_v1"], ens_v1, "{served:#}");
+            assert_eq!(served["owner"], json!(RC_OWNER), "{served:#}");
+            assert_eq!(served.get("manager"), manager.as_ref(), "{served:#}");
         }
+        assert_eq!(row["relations"], json!(["manager"]), "{row:#}");
     }
 
     database.cleanup().await
