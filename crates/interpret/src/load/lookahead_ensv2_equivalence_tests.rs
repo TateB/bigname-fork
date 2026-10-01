@@ -327,6 +327,7 @@ async fn ensv2_lookahead_matches_full_state_for_every_batch() -> TestResult {
         let database = database_with_manifests("interpret_lookahead_ensv2", "sepolia").await?;
         seed_history(database.pool(), &OFFSETS).await?;
         stamp_interpreter_hash(database.pool()).await?;
+        super::RETRIES.set(0);
         let walk = walk_seeded(
             database.pool(),
             CHAIN,
@@ -336,6 +337,12 @@ async fn ensv2_lookahead_matches_full_state_for_every_batch() -> TestResult {
         )
         .await?;
         database.cleanup().await?;
+        // The walk runs the lookahead loader beside the engine's choice. This history reads
+        // names no log or stored event mentions, so it must exercise the retry.
+        assert!(
+            super::RETRIES.get() > 0,
+            "no lookahead attempt was retried for {blocks_per_batch} blocks per batch"
+        );
         assert!(
             walk.released.contains(&name("carol")),
             "carol's lapse is released: {:?}",

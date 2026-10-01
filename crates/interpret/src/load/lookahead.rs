@@ -107,22 +107,21 @@ pub(crate) async fn batch_input(
             node: node.to_owned(),
         });
     }
-    // ENSv2 state is restored whole: the first round also reads every retained ENSv2 event,
-    // which later rounds and attempts keep instead of reading again. Every event is written
-    // under one of the chain's manifests, so a chain with no ENSv2 manifest row skips that read.
+    // ENSv2 state is restored whole: the first round of each attempt also reads every retained
+    // ENSv2 event. Every event is written under one of the chain's manifests, so a chain with
+    // no ENSv2 manifest row skips that read.
     let has_v2_manifest = provenance
         .iter()
         .map(|manifest| manifest.source_family.as_str())
         .chain(other_families.iter().map(|(family, _)| family.as_str()))
         .any(|family| family.starts_with("ens_v2_"));
-    let mut v2_events = (!has_v2_manifest).then(Vec::new);
     let (prepared, restored_event_count) = loop {
         let prior = load_closure(
             &mut tx,
             chain_id,
             from_block,
             &mut dependencies,
-            &mut v2_events,
+            has_v2_manifest,
         )
         .await?;
         let restored_event_count = prior.len();
@@ -138,7 +137,9 @@ pub(crate) async fn batch_input(
         // Restore and interpretation both run under the loaded-names check. An attempt that
         // reads a name whose history was not loaded is discarded, and the next one loads it:
         // ENSv2 derives names from registry state while it interprets, so the collector cannot
-        // name them all in advance. Every attempt adds a name, and names are finite.
+        // name them all in advance. Every attempt that continues adds a name not loaded
+        // before, a name the batch's logs and the snapshot's finite history derive, so the
+        // attempts end. A name read under another spelling than the loaded one fails instead.
         let attempt =
             restore_schema_v2_lookahead_session(restore, prior, predecessor, &dependencies.nodes)
                 .and_then(|session| {
@@ -154,6 +155,8 @@ pub(crate) async fn batch_input(
             Ok(prepared) => break (prepared, restored_event_count),
             Err(error) => match error.downcast_ref::<UnloadedNames>() {
                 Some(UnloadedNames(names)) if names.is_disjoint(&dependencies.nodes) => {
+                    #[cfg(test)]
+                    RETRIES.set(RETRIES.get() + 1);
                     dependencies.nodes.extend(names.iter().cloned());
                 }
                 _ => {
@@ -184,14 +187,16 @@ pub(crate) async fn batch_input(
 /// before this batch, that history is finite and fixed inside this snapshot, and nothing is
 /// ever removed, so the set stops growing after finitely many rounds. A subname many labels
 /// deep costs one round per label, because each stored `NewOwner` links a name to its parent.
-/// Returns the loaded events in restore order, the ENSv2 events included.
+/// Returns the loaded events in restore order, the ENSv2 events included when `whole_v2`.
 async fn load_closure(
     connection: &mut sqlx::PgConnection,
     chain_id: &str,
     from_block: i64,
     dependencies: &mut V1BatchDependencies,
-    v2_events: &mut Option<Vec<OrderedEvent>>,
+    whole_v2: bool,
 ) -> Result<Vec<bigname_adapters::schema_v2::PriorEventInput>> {
+    // `None` until the first round has read them.
+    let mut v2_events: Option<Vec<OrderedEvent>> = (!whole_v2).then(Vec::new);
     loop {
         validate_dependencies(dependencies)?;
         let previous = (dependencies.nodes.len(), dependencies.resource_ids.len());
@@ -214,7 +219,7 @@ async fn load_closure(
             let (v2, other) = events
                 .into_iter()
                 .partition(|ordered| ordered.event.source_family.starts_with("ens_v2_"));
-            *v2_events = Some(v2);
+            v2_events = Some(v2);
             events = other;
             dependencies
                 .include_prior_events(v2_events.iter().flatten().map(|ordered| &ordered.event))
@@ -225,15 +230,12 @@ async fn load_closure(
             .map_err(|error| invalid_dependencies("expand prior links", error))?;
         validate_dependencies(dependencies)?;
         if previous == (dependencies.nodes.len(), dependencies.resource_ids.len()) {
-            events.extend(v2_events.iter().flatten().map(|ordered| OrderedEvent {
-                order: ordered.order,
-                event: ordered.event.clone(),
-            }));
+            events.extend(v2_events.into_iter().flatten());
             events.sort_by_key(|ordered| ordered.order);
             return Ok(events.into_iter().map(|ordered| ordered.event).collect());
         }
-        // Discard this partial fetch before querying the expanded set. Never retain the
-        // previous round's full payload while loading the next one.
+        // Discard this partial fetch before querying the expanded set. Only the ENSv2 events,
+        // which no later round reads again, are kept between rounds.
     }
 }
 
@@ -321,6 +323,12 @@ fn validate_dependencies(dependencies: &V1BatchDependencies) -> Result<()> {
 
 fn invalid_dependencies(operation: &str, error: anyhow::Error) -> InterpretError {
     InterpretError::data_integrity(format!("lookahead {operation} failed: {error:#}"))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Lookahead attempts discarded because they read an unloaded name, on this thread.
+    pub(super) static RETRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]

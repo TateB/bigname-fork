@@ -81,9 +81,14 @@ pub(super) fn checked<T>(
             let (namespace, node) = key
                 .split_once(':')
                 .ok_or_else(|| anyhow::anyhow!("lookahead name key {key} has no namespace"))?;
+            // The loader requests names in this spelling, so a key in any other could never
+            // load and would pass the check on the next attempt.
+            let node: alloy_primitives::B256 = node
+                .parse()
+                .map_err(|_| anyhow::anyhow!("lookahead name key {key} is not a namehash"))?;
             Ok(V1NodeRequest {
                 namespace: namespace.to_owned(),
-                node: node.to_owned(),
+                node: format!("{node:#x}"),
             })
         })
         .collect::<anyhow::Result<_>>()?;

@@ -281,6 +281,7 @@ pub(super) fn collect(
                     &selected.event.topic0,
                     "migration bridge NameRenewed log is malformed",
                 )?;
+                // The bridge renews `.eth` names only (upstream: .refs/ens_v2_sepolia_20260916/contracts/src/registrar/interfaces/IETHRenewer.sol:L15 @ ens_v2_sepolia_20260916@366de741).
                 labels(out, namespace, &[decoded.label.to_vec(), b"eth".to_vec()])?;
             }
             _ => unsupported(out, selected),

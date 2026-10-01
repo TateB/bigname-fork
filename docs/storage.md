@@ -1658,9 +1658,10 @@ interpretation derives names from registry state, such as the ENSv1 predecessor
 a migration retires, so the collector cannot list them all in advance: when
 restore or interpretation reads a name that was not loaded, Interpret discards
 that attempt, adds the name, repeats the rounds above and interprets again.
-Every attempt that continues adds a name from the chain's finite stored
-history, so the attempts end, and only an attempt that read no unloaded name
-is published. The
+Every attempt that continues adds a name not loaded before, and the names a
+batch can read are derived from its logs and the snapshot's finite stored
+history, so the attempts end; a read of a loaded name in another spelling fails
+the batch instead. Only an attempt that read no unloaded name is published. The
 session is discarded after the batch. Two partial expression indexes on
 `normalized_events` serve these reads for the ENSv1 families:
 `normalized_events_v1_direct_node_probe_idx` (events of one name) and
