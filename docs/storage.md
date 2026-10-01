@@ -2001,8 +2001,10 @@ spelling is not stale state. This is a serving-boundary compatibility rule and
 does not change which stored projection rows are authoritative or when they are
 rebuilt.
 
-Every selection also requires the current Project generation to be complete at
-the newest stored head with the API's compiled interpreter content hash. The
+Every selection also requires the current Project generation to be complete
+with the API's compiled interpreter content hash, at most the API's
+[publication lag tolerance](glossary.md#publication-lag-tolerance) (one block
+by default) behind the newest stored head. The
 API reads only projections eligible for the selected positions and revalidates
 the Project generation before returning. A concurrent head or generation
 change returns `409 stale`.

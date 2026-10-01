@@ -53,6 +53,7 @@ async fn main() -> Result<()> {
 
 async fn serve(args: ServeArgs) -> Result<()> {
     args.bounds.validate()?;
+    state::configure_publication_lag_tolerance_blocks(args.publication_lag_tolerance_blocks)?;
     let chain_rpc_urls = args.effective_lookup_chain_rpc_urls()?;
     let pool = bigname_storage::connect_phase_with_application_name_and_statement_timeout(
         &args.database,
@@ -122,6 +123,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
         rpc_connect_timeout_ms = args.rpc_connect_timeout_ms,
         rpc_timeout_ms = args.rpc_timeout_ms,
         phase_heartbeat_max_age_secs = args.phase_heartbeat_max_age_secs,
+        publication_lag_tolerance_blocks = args.publication_lag_tolerance_blocks,
         verified_rate_limit_per_second = args.bounds.verified_rate_limit_per_second,
         verified_rate_limit_burst = args.bounds.verified_rate_limit_burst,
         verified_rate_limit_max_clients = args.bounds.verified_rate_limit_max_clients,

@@ -9,7 +9,9 @@ use super::chain_position::{
 };
 use super::consistency::SnapshotConsistency;
 use super::error::{SnapshotSelectionError, SnapshotSelectionResult};
-use super::project::validate_current_project_publications;
+use super::project::{
+    PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS, validate_current_project_publications,
+};
 use crate::lineage::{CanonicalityState, load_chain_lineage_block};
 use crate::time::format_timestamp;
 
@@ -19,11 +21,13 @@ pub enum SnapshotAt {
     ResolvedPositions(ChainPositions),
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SnapshotSelectorInput {
     pub at: Option<SnapshotAt>,
     pub chain_positions: Option<ChainPositions>,
     pub consistency: SnapshotConsistency,
+    /// How many blocks the project publication may trail the stored head and still be served.
+    pub publication_lag_tolerance_blocks: i64,
 }
 
 impl SnapshotSelectorInput {
@@ -41,7 +45,13 @@ impl SnapshotSelectorInput {
             at,
             chain_positions,
             consistency,
+            publication_lag_tolerance_blocks: PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS,
         })
+    }
+
+    pub fn with_publication_lag_tolerance_blocks(mut self, blocks: i64) -> Self {
+        self.publication_lag_tolerance_blocks = blocks;
+        self
     }
 }
 
@@ -88,11 +98,16 @@ pub async fn resolve_exact_name_snapshot_selection(
         (Some(SnapshotAt::Timestamp(timestamp)), None) => {
             resolve_positions_at_timestamp(pool, scope, *timestamp, input.consistency).await?
         }
-        (None, None) => resolve_latest_positions(pool, scope, input.consistency).await?,
+        (None, None) => resolve_latest_positions(pool, scope, input).await?,
     };
 
     validate_cross_chain_positions(scope, &chain_positions)?;
-    validate_current_project_publications(pool, &chain_positions).await?;
+    validate_current_project_publications(
+        pool,
+        &chain_positions,
+        input.publication_lag_tolerance_blocks,
+    )
+    .await?;
     Ok(SelectedSnapshot {
         chain_positions,
         consistency: input.consistency,
@@ -172,8 +187,9 @@ async fn validate_supplied_positions(
 async fn resolve_latest_positions(
     pool: &PgPool,
     scope: &SnapshotSelectionScope,
-    consistency: SnapshotConsistency,
+    input: &SnapshotSelectorInput,
 ) -> SnapshotSelectionResult<ChainPositions> {
+    let consistency = input.consistency;
     let mut positions = BTreeMap::new();
 
     if let Some(authoritative_slot) = scope.authoritative_slot() {
@@ -185,7 +201,7 @@ async fn resolve_latest_positions(
             },
         )?;
         let authoritative_position =
-            load_phase_head_position(pool, authoritative_requirement, consistency).await?;
+            load_phase_head_position(pool, authoritative_requirement, input).await?;
         let upper_bound = authoritative_position.timestamp;
         positions.insert(authoritative_position.slot.clone(), authoritative_position);
 
@@ -203,7 +219,7 @@ async fn resolve_latest_positions(
     }
 
     for requirement in scope.required_positions() {
-        let position = load_phase_head_position(pool, requirement, consistency).await?;
+        let position = load_phase_head_position(pool, requirement, input).await?;
         positions.insert(position.slot.clone(), position);
     }
 
@@ -261,8 +277,9 @@ async fn resolve_positions_at_timestamp(
 async fn load_phase_head_position(
     pool: &PgPool,
     requirement: &SnapshotPositionRequirement,
-    consistency: SnapshotConsistency,
+    input: &SnapshotSelectorInput,
 ) -> SnapshotSelectionResult<ChainPosition> {
+    let consistency = input.consistency;
     let row = sqlx::query(
         r#"
         SELECT
@@ -357,8 +374,8 @@ async fn load_phase_head_position(
     // publication to sit exactly at the stored head rejected most reads under real block
     // cadence. A publication a few blocks behind the head is still one consistent, canonical
     // snapshot; the served position (reported as `as_of`) is the publication when it is behind
-    // the requested position. A publication further behind than
-    // [`PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS`] is still stale.
+    // the requested position. A publication further behind than the configured tolerance
+    // ([`PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS`] by default) is still stale.
     let publication = super::project::load_current_project_publication(pool, &requirement.chain_id)
         .await?
         .ok_or_else(|| {
@@ -371,9 +388,7 @@ async fn load_phase_head_position(
     {
         (block_hash, block_number)
     } else {
-        if latest_block_number - publication.block_number
-            > super::project::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS
-        {
+        if latest_block_number - publication.block_number > input.publication_lag_tolerance_blocks {
             return Err(SnapshotSelectionError::stale(format!(
                 "{} (publication at {} lags head {} beyond tolerance)",
                 super::project::unpublished_message(&requirement.chain_id),

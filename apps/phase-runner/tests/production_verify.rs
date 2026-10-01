@@ -3209,7 +3209,11 @@ async fn successful_verify_redo_clears_unconfigured_settlement_without_normal_pa
         ),
         "successful Verify redo must clear settlement provenance atomically"
     );
-    let status = bigname_storage::load_phase_indexing_status(scratch.pool()).await?;
+    let status = bigname_storage::load_phase_indexing_status(
+        scratch.pool(),
+        bigname_storage::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS,
+    )
+    .await?;
     let sepolia = status
         .chains
         .iter()
@@ -3422,8 +3426,11 @@ async fn partial_verify_redo_keeps_unconfigured_settlement_until_normal_resume()
         ),
         "redoing an already-processed prefix must retain evidence that Verify is incomplete"
     );
-    let status_after_partial_redo =
-        bigname_storage::load_phase_indexing_status(scratch.pool()).await?;
+    let status_after_partial_redo = bigname_storage::load_phase_indexing_status(
+        scratch.pool(),
+        bigname_storage::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS,
+    )
+    .await?;
     let sepolia_after_partial_redo = status_after_partial_redo
         .chains
         .iter()
@@ -3452,7 +3459,11 @@ async fn partial_verify_redo_keeps_unconfigured_settlement_until_normal_resume()
         "the next normal pass must resume Verify and clear settlement evidence only at completion"
     );
     assert_eq!(live_calls.load(Ordering::SeqCst), 1);
-    let status_after_resume = bigname_storage::load_phase_indexing_status(scratch.pool()).await?;
+    let status_after_resume = bigname_storage::load_phase_indexing_status(
+        scratch.pool(),
+        bigname_storage::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS,
+    )
+    .await?;
     let sepolia_after_resume = status_after_resume
         .chains
         .iter()

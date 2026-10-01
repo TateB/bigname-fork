@@ -5,16 +5,18 @@ mod family_support;
 
 use anyhow::Result;
 use bigname_storage::{
-    ChainPositions, ChildrenCurrentPageFilter, SnapshotAt, SnapshotConsistency,
-    SnapshotPositionRequirement, SnapshotSelectionError, SnapshotSelectionErrorKind,
-    SnapshotSelectionScope, SnapshotSelectorInput, load_children_current_page_filtered,
-    load_phase_indexing_status, load_served_project_generation, parse_rfc3339_utc_timestamp,
+    ChainPositions, ChildrenCurrentPageFilter, PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS,
+    SnapshotAt, SnapshotConsistency, SnapshotPositionRequirement, SnapshotSelectionError,
+    SnapshotSelectionErrorKind, SnapshotSelectionScope, SnapshotSelectorInput,
+    load_children_current_page_filtered, load_phase_indexing_status,
+    load_served_project_generation, parse_rfc3339_utc_timestamp,
     resolve_exact_name_snapshot_selection,
 };
 use bigname_test_support::{TestDatabase, TestDatabaseConfig};
 use sqlx::{PgPool, raw_sql};
 
 const CHAIN_ID: &str = "ethereum-mainnet";
+const HASH_8: &str = "0x0800000000000000000000000000000000000000000000000000000000000000";
 const HASH_9: &str = "0x0900000000000000000000000000000000000000000000000000000000000000";
 const HASH_10: &str = "0x1000000000000000000000000000000000000000000000000000000000000000";
 const HASH_11: &str = "0x1100000000000000000000000000000000000000000000000000000000000000";
@@ -134,7 +136,25 @@ async fn move_marker(pool: &PgPool, hash: &str) -> Result<()> {
 }
 
 async fn generation(pool: &PgPool, hash: &str, number: i64) -> Result<Option<String>> {
-    Ok(load_served_project_generation(pool, CHAIN_ID, number, hash, true, true).await?)
+    generation_within(pool, hash, number, PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS).await
+}
+
+async fn generation_within(
+    pool: &PgPool,
+    hash: &str,
+    number: i64,
+    lag_tolerance_blocks: i64,
+) -> Result<Option<String>> {
+    Ok(load_served_project_generation(
+        pool,
+        CHAIN_ID,
+        number,
+        hash,
+        true,
+        true,
+        lag_tolerance_blocks,
+    )
+    .await?)
 }
 
 fn scope() -> SnapshotSelectionScope {
@@ -147,6 +167,17 @@ fn scope() -> SnapshotSelectionScope {
 
 async fn select(pool: &PgPool) -> bigname_storage::SnapshotSelectionResult<ChainPositions> {
     select_input(pool, None).await
+}
+
+async fn select_within(
+    pool: &PgPool,
+    lag_tolerance_blocks: i64,
+) -> bigname_storage::SnapshotSelectionResult<ChainPositions> {
+    let input = SnapshotSelectorInput::new(None, None, SnapshotConsistency::Head)?
+        .with_publication_lag_tolerance_blocks(lag_tolerance_blocks);
+    resolve_exact_name_snapshot_selection(pool, &scope(), &input)
+        .await
+        .map(|selected| selected.chain_positions)
 }
 
 /// A historical `at` read at block 11's timestamp, which the selection checks against the current
@@ -179,7 +210,11 @@ fn selected_number(positions: &ChainPositions) -> i64 {
 }
 
 async fn generation_current(pool: &PgPool) -> Result<bool> {
-    let status = load_phase_indexing_status(pool).await?;
+    generation_current_within(pool, PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS).await
+}
+
+async fn generation_current_within(pool: &PgPool, lag_tolerance_blocks: i64) -> Result<bool> {
+    let status = load_phase_indexing_status(pool, lag_tolerance_blocks).await?;
     Ok(status
         .chains
         .iter()
@@ -267,6 +302,47 @@ async fn a_marker_beyond_the_lag_tolerance_is_stale() -> Result<()> {
         generation(&pool, HASH_10, 10).await?,
         Some(SEQUENCE.to_string())
     );
+
+    drop(pool);
+    database.cleanup().await
+}
+
+/// A wider configured tolerance moves the same boundary in selection, the generation recheck and
+/// `/v1/status` together: with two blocks, block 9 is served at its own position and block 8 is
+/// stale.
+#[tokio::test]
+async fn a_configured_lag_tolerance_moves_the_boundary_everywhere() -> Result<()> {
+    let database = fixture("family_marker_fence_configured_lag").await?;
+    let pool = database.pool().clone();
+    update(
+        &pool,
+        &format!(
+            "INSERT INTO chain_lineage
+                 (chain_id, block_hash, block_number, block_timestamp, canonicality_state)
+             VALUES ('{CHAIN_ID}', '{HASH_8}', 8, TIMESTAMPTZ '2026-04-17 00:01:36+00', 'canonical')"
+        ),
+    )
+    .await?;
+
+    move_marker(&pool, HASH_9).await?;
+    assert_eq!(selected_number(&select_within(&pool, 2).await?), 9);
+    assert_eq!(
+        generation_within(&pool, HASH_9, 9, 2).await?,
+        Some(SEQUENCE.to_string())
+    );
+    assert!(generation_current_within(&pool, 2).await?);
+    assert!(
+        !generation_current(&pool).await?,
+        "the default is one block"
+    );
+
+    move_marker(&pool, HASH_8).await?;
+    assert_eq!(
+        select_within(&pool, 2).await.expect_err("stale").kind(),
+        SnapshotSelectionErrorKind::Stale
+    );
+    assert_eq!(generation_within(&pool, HASH_8, 8, 2).await?, None);
+    assert!(!generation_current_within(&pool, 2).await?);
 
     drop(pool);
     database.cleanup().await
