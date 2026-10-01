@@ -865,8 +865,8 @@ negative, and one count for every chain. A `bootstrap_pending` marker means a
 rebuild is still populating the families, and reads return `409 stale`. When
 the publication trails the requested `head`, `safe` or `finalized` position
 within that tolerance, the route reports the publication in `meta.as_of`. A
-publication further behind, from another interpreter generation or on an
-orphaned fork is unavailable. A tolerance above the `/v1/status` thresholds
+publication further behind, ahead of the stored head, from another interpreter
+generation or on an orphaned fork is unavailable. A tolerance above the `/v1/status` thresholds
 means status can report `stale` while reads are still served.
 
 The API captures and rechecks the marker's `sequence` around indexed reads.

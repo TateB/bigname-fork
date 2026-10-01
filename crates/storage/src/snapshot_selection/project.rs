@@ -5,15 +5,6 @@ use sqlx::PgPool;
 use super::chain_position::ChainPositions;
 use super::error::{SnapshotSelectionError, SnapshotSelectionResult};
 
-pub const CURRENT_PROJECT_PUBLICATION_JOIN: &str = r#"
-JOIN bigname_phase.chain_phase_state project
-  ON project.chain_id = head.chain_id
- AND project.phase_name = 'project'
- AND project.phase_status IN ('completed', 'running')
- AND project.current_block_number = head.latest_block_number
- AND project.current_block_hash = head.latest_block_hash
-"#;
-
 /// The default for how many blocks the project phase's publication may trail the stored chain
 /// head and still be served. The API takes its value from
 /// `BIGNAME_API_PUBLICATION_LAG_TOLERANCE_BLOCKS`.
@@ -175,8 +166,8 @@ const SERVED_FAMILY_MARKER_GENERATION: &str = concat!(
     family_inputs_not_in_redo!()
 );
 
-/// Every selected chain must have a completed, readable project publication at most
-/// `lag_tolerance_blocks` behind the stored head. Historical `at`
+/// Every selected chain must have a live, readable family-marker publication at or below the
+/// stored head and at most `lag_tolerance_blocks` behind it. Historical `at`
 /// positions are not bounded by the publication here; the per-row projection-target checks
 /// keep rows ahead of the selected position out of the read.
 pub(super) async fn validate_current_project_publications(
@@ -208,7 +199,7 @@ pub(super) async fn validate_current_project_publications(
         let publication = load_current_project_publication(pool, chain_id)
             .await?
             .ok_or_else(|| SnapshotSelectionError::stale(unpublished_message(chain_id)))?;
-        if latest_block_number - publication.block_number > lag_tolerance_blocks {
+        if !(0..=lag_tolerance_blocks).contains(&(latest_block_number - publication.block_number)) {
             return Err(SnapshotSelectionError::stale(format!(
                 "{} (publication at {} lags head {latest_block_number})",
                 unpublished_message(chain_id),

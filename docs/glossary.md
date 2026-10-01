@@ -1933,7 +1933,8 @@ chain head and still be served, set on the API by
 `BIGNAME_API_PUBLICATION_LAG_TOLERANCE_BLOCKS` (one block by default, never
 negative, one count for every chain). Snapshot selection, the generation
 recheck, the `/v1/status` generation-current flag and the verified lookup's
-capture all apply it; a publication further behind returns `409 stale`.
+capture all apply it; a publication further behind, or ahead of the stored
+head, returns `409 stale`.
 
 <a id="publication-visible-event"></a>
 ## Publication-visible event

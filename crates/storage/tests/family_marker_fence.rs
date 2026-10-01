@@ -348,6 +348,60 @@ async fn a_configured_lag_tolerance_moves_the_boundary_everywhere() -> Result<()
     database.cleanup().await
 }
 
+/// A zero tolerance serves only a marker at the stored head.
+#[tokio::test]
+async fn a_zero_lag_tolerance_serves_only_the_head() -> Result<()> {
+    let database = fixture("family_marker_fence_zero_lag").await?;
+    let pool = database.pool().clone();
+
+    assert_eq!(selected_number(&select_within(&pool, 0).await?), 11);
+    assert_eq!(
+        generation_within(&pool, HASH_11, 11, 0).await?,
+        Some(SEQUENCE.to_string())
+    );
+    assert!(generation_current_within(&pool, 0).await?);
+
+    move_marker(&pool, HASH_10).await?;
+    assert_eq!(
+        select_within(&pool, 0).await.expect_err("stale").kind(),
+        SnapshotSelectionErrorKind::Stale
+    );
+    assert_eq!(generation_within(&pool, HASH_10, 10, 0).await?, None);
+    assert!(!generation_current_within(&pool, 0).await?);
+
+    drop(pool);
+    database.cleanup().await
+}
+
+/// A marker ahead of the stored head is stale in selection and the generation recheck alike.
+#[tokio::test]
+async fn a_marker_ahead_of_the_head_is_stale() -> Result<()> {
+    let database = fixture("family_marker_fence_ahead").await?;
+    let pool = database.pool().clone();
+    update(
+        &pool,
+        &format!(
+            "UPDATE chain_heads SET latest_block_hash = '{HASH_10}', latest_block_number = 10
+             WHERE chain_id = '{CHAIN_ID}'"
+        ),
+    )
+    .await?;
+
+    assert_eq!(
+        select(&pool).await.expect_err("stale").kind(),
+        SnapshotSelectionErrorKind::Stale
+    );
+    assert_eq!(
+        select_at_block_11(&pool).await.expect_err("stale").kind(),
+        SnapshotSelectionErrorKind::Stale
+    );
+    assert_eq!(generation(&pool, HASH_11, 11).await?, None);
+    assert!(!generation_current(&pool).await?);
+
+    drop(pool);
+    database.cleanup().await
+}
+
 #[tokio::test]
 async fn a_marker_on_an_orphaned_block_is_stale() -> Result<()> {
     let database = fixture("family_marker_fence_orphan").await?;

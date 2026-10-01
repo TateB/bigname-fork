@@ -369,13 +369,12 @@ async fn load_phase_head_position(
         }
     };
 
-    // Serve at the project phase's completed publication. Live-follow moves the stored head
-    // the moment a block arrives and Project publishes a few seconds later, so requiring the
-    // publication to sit exactly at the stored head rejected most reads under real block
-    // cadence. A publication a few blocks behind the head is still one consistent, canonical
-    // snapshot; the served position (reported as `as_of`) is the publication when it is behind
-    // the requested position. A publication further behind than the configured tolerance
-    // ([`PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS`] by default) is still stale.
+    // Serve at the family marker's publication. Live-follow moves the stored head the moment a
+    // block arrives and Project publishes a few seconds later, so requiring the publication to sit
+    // exactly at the stored head rejected most reads under real block cadence. A publication a
+    // few blocks behind is still one consistent, canonical snapshot, served (as `as_of`) at its
+    // own position when behind the requested one. A publication ahead of the head or further
+    // behind than the tolerance ([`PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS`] by default) is stale.
     let publication = super::project::load_current_project_publication(pool, &requirement.chain_id)
         .await?
         .ok_or_else(|| {
@@ -388,7 +387,9 @@ async fn load_phase_head_position(
     {
         (block_hash, block_number)
     } else {
-        if latest_block_number - publication.block_number > input.publication_lag_tolerance_blocks {
+        if !(0..=input.publication_lag_tolerance_blocks)
+            .contains(&(latest_block_number - publication.block_number))
+        {
             return Err(SnapshotSelectionError::stale(format!(
                 "{} (publication at {} lags head {} beyond tolerance)",
                 super::project::unpublished_message(&requirement.chain_id),
