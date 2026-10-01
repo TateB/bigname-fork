@@ -217,7 +217,12 @@ fn response_result(response: &Value, method: &str) -> Result<Option<Value>> {
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or("unknown JSON-RPC error");
-        bail!("provider returned JSON-RPC error for {method}: {code}: {message}");
+        return Err(JsonRpcError {
+            method: method.to_owned(),
+            code,
+            message: message.to_owned(),
+        }
+        .into());
     }
     let result = response.get("result").cloned().unwrap_or(Value::Null);
     Ok((!result.is_null()).then_some(result))
@@ -300,6 +305,53 @@ impl std::fmt::Display for HttpStatusError {
 
 impl std::error::Error for HttpStatusError {}
 
+/// A JSON-RPC error's message is provider text that can echo the endpoint's key; redacted
+/// renderings keep only its code and the code's standard meaning.
+#[derive(Debug)]
+pub(super) struct JsonRpcError {
+    method: String,
+    code: i64,
+    message: String,
+}
+
+impl JsonRpcError {
+    /// Names the standard meaning of the code (JSON-RPC 2.0 and EIP-1474) in place of the
+    /// provider's own message.
+    pub(super) fn without_message(&self) -> String {
+        let meaning = match self.code {
+            -32700 => "parse error",
+            -32600 => "invalid request",
+            -32601 => "method not found",
+            -32602 => "invalid params",
+            -32603 => "internal error",
+            -32000 => "invalid input or server error",
+            -32001 => "resource not found",
+            -32002 => "resource unavailable",
+            -32003 => "transaction rejected",
+            -32004 => "method not supported",
+            -32005 => "limit exceeded",
+            -32006 => "JSON-RPC version not supported",
+            _ => "provider-specific error",
+        };
+        format!(
+            "provider returned JSON-RPC error for {}: {} ({meaning}; provider message omitted)",
+            self.method, self.code
+        )
+    }
+}
+
+impl std::fmt::Display for JsonRpcError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "provider returned JSON-RPC error for {}: {}: {}",
+            self.method, self.code, self.message
+        )
+    }
+}
+
+impl std::error::Error for JsonRpcError {}
+
 fn truncate(body: &str) -> &str {
     let end = body
         .char_indices()
@@ -325,6 +377,26 @@ pub(super) fn validate_endpoint(endpoint: &str) -> Result<Url> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_json_rpc_error_renders_like_its_provider_text_until_redacted() {
+        let error = |code| JsonRpcError {
+            method: "eth_getLogs".to_owned(),
+            code,
+            message: "query returned more than 10000 results".to_owned(),
+        };
+        assert_eq!(
+            error(-32005).to_string(),
+            "provider returned JSON-RPC error for eth_getLogs: -32005: query returned more than \
+             10000 results"
+        );
+        assert!(retryable(&error(-32005).into()));
+        assert_eq!(
+            error(-39999).without_message(),
+            "provider returned JSON-RPC error for eth_getLogs: -39999 (provider-specific error; \
+             provider message omitted)"
+        );
+    }
 
     #[test]
     fn mid_fetch_reorg_races_are_retryable() {

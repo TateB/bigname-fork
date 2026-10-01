@@ -386,12 +386,15 @@ pub async fn verify_rpc_chain(
 }
 
 /// Startup errors and retry warnings never carry the endpoint's credentials, path or query: a
-/// provider's HTTP error body, which can echo any of them, is left out.
+/// provider's HTTP error body or JSON-RPC error message, which can echo any of them, is left out.
 fn redacted_text(error: &anyhow::Error, endpoint: &str) -> String {
     let mut rendered = provider_error_text(error);
     for cause in error.chain() {
         if let Some(http) = cause.downcast_ref::<request::HttpStatusError>() {
             rendered = rendered.replace(&http.to_string(), &http.without_body());
+        }
+        if let Some(rpc) = cause.downcast_ref::<request::JsonRpcError>() {
+            rendered = rendered.replace(&rpc.to_string(), &rpc.without_message());
         }
     }
     let Ok(url) = reqwest::Url::parse(endpoint) else {

@@ -360,25 +360,46 @@ async fn a_startup_check_error_never_repeats_the_endpoint_path_or_key() -> Resul
         listener.local_addr()?
     );
     tokio::spawn(async move {
-        let mut status = "503 Service Unavailable";
+        let echo = "unknown key in POST /v1/secret-key?token=hunter2, token hunter2";
+        let rpc_error = |code: i64, message: &str| {
+            json!({"jsonrpc": "2.0", "id": 1, "error": {"code": code, "message": message}})
+                .to_string()
+        };
+        let mut answers = vec![
+            ("200 OK", rpc_error(-32000, "invalid project id hunter2")),
+            (
+                "200 OK",
+                rpc_error(-32005, "rate limit exceeded for hunter2"),
+            ),
+            ("503 Service Unavailable", echo.to_owned()),
+        ];
         while let Ok((mut socket, _)) = listener.accept().await {
             let _ = read_request_body(&mut socket).await;
-            let body = "unknown key in POST /v1/secret-key?token=hunter2, token hunter2";
+            let (status, body) = answers
+                .pop()
+                .unwrap_or(("401 Unauthorized", echo.to_owned()));
             let response = format!(
                 "HTTP/1.1 {status}\r\ncontent-length: {}\r\n\r\n{body}",
                 body.len()
             );
             let _ = socket.write_all(response.as_bytes()).await;
-            status = "401 Unauthorized";
         }
     });
 
     let expected = ExpectedRpcChain::new("ethereum-mainnet", "primary", RpcChainCheck::Full)?;
     let error = verify_rpc_chain(&endpoint, &expected).await.unwrap_err();
     let rendered = format!("{error:#}");
-    assert!(rendered.contains("401"), "{rendered}");
+    assert!(
+        rendered.contains(
+            "eth_chainId: -32000 (invalid input or server error; provider message omitted)"
+        ),
+        "{rendered}"
+    );
     let logged = String::from_utf8(logs.0.lock().unwrap().clone())?;
-    assert!(logged.contains("503"), "{logged}");
+    assert!(
+        logged.contains("503") && logged.contains("-32005"),
+        "{logged}"
+    );
     for secret in ["secret-key", "hunter2"] {
         assert!(!rendered.contains(secret), "{rendered}");
         assert!(!logged.contains(secret), "{logged}");

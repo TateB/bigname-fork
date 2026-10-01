@@ -630,8 +630,10 @@ observed genesis hash when block 0 was read. An endpoint that cannot be read,
 including one that still does not answer after the provider's usual retries,
 also exits with code 1, and its error log names the chain, source key and the
 error only. Neither log, nor the retry warnings before it, carries the URL's
-path, key or query; an HTTP error is logged by its status only, without the
-provider's response body, which can echo them.
+path, key or query; an HTTP error is logged by its status only and a JSON-RPC
+error by its code and that code's standard meaning, such as `-32601 (method not
+found; provider message omitted)`, without the provider's response body or error
+message, which can echo them.
 
 `BIGNAME_PHASE_RUNNER_RPC_CHAIN_CHECK=chain-id-only` skips the block 0 read,
 for a local node that runs a production chain id on its own genesis, such as
