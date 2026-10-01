@@ -247,7 +247,7 @@ described as runnable; the other 3 semantic scenarios are retired and ignored.
 Together with the two [pre-surface](../../docs/glossary.md#pre-surface) resolver
 scenarios, the two zero-address resolver scenarios, registry-operator lifecycle,
 API shutdown scenario, eleven-log migration scenario, and subregistry-replacement
-scenario, these three connected scenarios produce 98 tests: 95 runnable and 3
+scenario, these three connected scenarios produce 100 tests: 97 runnable and 3
 ignored, split across the six CI shards listed in `run-gate`. This coverage changes no production rollout,
 deployment file, Docker configuration, environment file, checked-in manifest,
 or interpreter source.

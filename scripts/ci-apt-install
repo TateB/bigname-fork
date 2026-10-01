@@ -12,9 +12,9 @@ first; on 2026-10-01 that mirror trickled a 29 MB package for minutes while
 archive.ubuntu.com served it in a second, and later the same day
 archive.ubuntu.com trickled it once too. The Azure mirror is dropped from the
 list whenever another mirror remains, and the index update and package
-download each run under a timeout far above their usual few seconds, retried
-twice before a final untimed attempt; a fresh connection usually gets full
-speed.
+download each run under a timeout far above their usual few seconds. Two
+short attempts are followed by a longer third, about 13 minutes in all at
+worst; a fresh connection usually gets full speed.
 USAGE
 }
 
@@ -43,11 +43,11 @@ fi
 apt=(apt-get -o Acquire::Languages=none -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
 
 for attempt in 1 2 3; do
-  # The last attempt waits out a slow mirror rather than failing the job.
-  update_limit=(timeout 60) download_limit=(timeout 45)
-  [ "$attempt" -lt 3 ] || update_limit=() download_limit=()
-  if sudo "${update_limit[@]}" "${apt[@]}" update &&
-    sudo "${download_limit[@]}" "${apt[@]}" install -y --no-install-recommends --download-only "${missing[@]}"; then
+  # The last attempt waits out a slow mirror for longer rather than failing.
+  update_limit=60 download_limit=45
+  [ "$attempt" -lt 3 ] || update_limit=180 download_limit=300
+  if sudo timeout -k 10 "$update_limit" "${apt[@]}" update &&
+    sudo timeout -k 10 "$download_limit" "${apt[@]}" install -y --no-install-recommends --download-only "${missing[@]}"; then
     # Packages are already downloaded, so unpacking needs no network and is not
     # interrupted by a timeout.
     sudo "${apt[@]}" install -y --no-install-recommends --no-download "${missing[@]}"
