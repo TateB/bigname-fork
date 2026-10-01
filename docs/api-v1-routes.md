@@ -642,7 +642,8 @@ collection route carry neither header.
   whole-second formatting does not round an RFC 3339 filter boundary.
 - Response shape: `data` is an array of the same record-shaped rows
   `GET /v1/search` serves: `name`, `display_name`, `namespace`, `namehash`,
-  `owner`, `registrant`, `registration_status`, `registered_at`, `created_at`,
+  `owner`, `manager`, `registrant`, `registration_status`, `registered_at`,
+  `created_at`,
   `expires_at` and `grace_ends_at`, and the `ens_v1` object while the name's
   authority is `ens_v1` or `ens_v0` (see
   [the naming dictionary](api-v1.md#naming-dictionary)). Every row has an
@@ -822,8 +823,14 @@ collection route carry neither header.
   (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L221 @ ens_v1@91c966f)
   (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L820 @ ens_v1@91c966f)
   (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L825 @ ens_v1@91c966f)
-  `manager` remains an optional wire field; the current forward-read
-  constructors never emit it. No permanent null placeholder is emitted. `authority` names where the chain
+  `manager` is served on name detail, resolver `bound_names`, `profile=detail`
+  lookup records, `GET /v1/names` and search rows, subname rows and
+  address-name rows by the rule in
+  [Manager](api-v1.md#manager): the `owner` of a name with no NameWrapper
+  state and the `registrant` (the NameWrapper token holder) of a wrapped name
+  in any `ens_v1.wrapper_state`. It is absent wherever
+  the address it copies is absent, and on `profile=feed` lookup records, which
+  carry no registration fields. No null placeholder is emitted. `authority` names where the chain
   reads the current registration fields from: `ens_v2` or `ens_v1`, read from
   the projection's selected [authority epoch](glossary.md#authority-epoch), or
   `ens_v0` for an ENSv1 name whose registry record is still read from the 2017
@@ -1666,7 +1673,7 @@ to the product and record-diagnostic routes; a family outside it is rejected as
   `expires_at`. Any other value returns `400 invalid_input`.
 - Response shape: `data` is an array of dedicated subname rows in dictionary
   vocabulary: `name`, `display_name`, `namespace`, `namehash`, `labelhash`,
-  `owner`, `registrant`, `registration_status`, `registered_at`,
+  `owner`, `manager`, `registrant`, `registration_status`, `registered_at`,
   `created_at`, `expires_at`, and `authority`, and the `ens_v1` object while the
   child's `authority` is `ens_v1` or `ens_v0`: a subname has no lease, so its
   `ens_v1.expires_at` is `null`, and a wrapped one carries its NameWrapper
@@ -3113,7 +3120,7 @@ introduces it rebuilds Project from full history before serving the option; see
   `sort`, `order`, `dedupe`,
   and `include=role_summary` apply as for the authority relations.
 - Response shape: `data` is an array of record-shaped rows with `name`,
-  `display_name`, `namespace`, `namehash`, `owner`, `registrant`,
+  `display_name`, `namespace`, `namehash`, `owner`, `manager`, `registrant`,
   `registration_status`, `registered_at`, `created_at`, and `expires_at`.
   Address-name rows also return `permission_resource_id`, the handle
   `GET /v1/permissions?registration_id=` resolves to the permission authority
@@ -3298,7 +3305,9 @@ introduces it rebuilds Project from full history before serving the option; see
   except for a child a NameWrapper or registrar event named under a label that
   fails ENSIP-15 normalization: its lease and NameWrapper state are projected
   without a name row, so, as the subnames route serves it, its `ens_v1` object
-  carries no lifecycle fields, no `expires_at` and no wrapper fields.
+  carries no lifecycle fields, no `expires_at` and no wrapper fields, and the
+  row omits `manager` while still listing it with `relations: ["manager"]`
+  (see [Manager](api-v1.md#manager)).
   `relation=owner` and `relation=registrant` never list it; `authority` matches
   it by that value, `is_migrated=true` omits it and `is_migrated=false` keeps it; `q` matches its
   served text; the timestamp sorts place it among the rows without that

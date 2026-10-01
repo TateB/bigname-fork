@@ -6,6 +6,7 @@ use crate::v2::{
     Authority, V2Result,
     name_record::{
         ens_v1_of_registry_child, ens_v1_of_row, name_registration_fields, registration_id,
+        served_manager,
     },
 };
 
@@ -35,13 +36,28 @@ pub(crate) fn build_address_name(
         Some(_) => ens_v1_of_row(name_row)?,
         None => ens_v1_of_registry_child(authority, entry.served_lifecycle_shadow)?,
     };
+    let owner = registration
+        .owner
+        .clone()
+        .or_else(|| entry.served_owner.clone());
+    let manager = name_row.map_or_else(
+        || owner.clone().filter(|_| !entry.served_lifecycle_shadow),
+        |row| {
+            served_manager(
+                &row.declared_summary,
+                owner.as_ref(),
+                registration.registrant.as_ref(),
+            )
+        },
+    );
     Ok(AddressName {
         name: entry.normalized_name.clone(),
         display_name: entry.canonical_display_name.clone(),
         namespace: entry.namespace.clone(),
         namehash: entry.namehash.clone(),
         permission_resource_id: Some(permission_resource_handle(name_row, entry.resource_id)),
-        owner: registration.owner.or_else(|| entry.served_owner.clone()),
+        owner,
+        manager,
         registrant: registration.registrant,
         registration_status: registration.registration_status,
         registered_at: registration.registered_at,
