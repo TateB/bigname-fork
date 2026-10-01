@@ -126,8 +126,9 @@ direct declaration. The current resolver/node version selects inventory values;
 a reset excludes older-version values, and later writes contribute only to the
 new version. Incremental staging and replay apply the same declaration and
 pointer guards without creating a new surface or binding from record events.
-The inventory row publishes the attributed event ids in
-`provenance.attributed_event_ids`, and registration-scoped name history derives
+The inventory row carries the attributed event ids in
+`provenance.attributed_event_ids` when its reader asks for them (serving reads
+do not, `docs/storage.md`), and registration-scoped name history derives
 the same attribution from the pointer evidence at or below its published block
 (`docs/storage.md`), so the history lists the same writes; `name` scope does not, because
 the observation has no surface link of its own. Those ids are retained across

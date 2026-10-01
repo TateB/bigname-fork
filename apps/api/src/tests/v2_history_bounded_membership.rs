@@ -523,6 +523,31 @@ async fn ens_v2_pointer_attributes_public_resolver_v2_writes() -> Result<()> {
         std::collections::BTreeSet::from([write]),
         "the ENSv2 pointer must attribute exactly the write for its own node"
     );
+    // The family loader still carries the attribution; the serving reads behind names, records
+    // and lookup leave it out.
+    let inventory = bigname_storage::families::records::load_family_record_inventory(
+        &database.pool,
+        BOUNDED_CHAIN,
+        resource,
+    )
+    .await?
+    .context("family record inventory")?;
+    assert_eq!(inventory.provenance["attributed_event_ids"], json!([write]));
+    let served = bigname_storage::load_phase_identity_records_by_ids(
+        &database.pool,
+        std::slice::from_ref(&logical_name_id),
+    )
+    .await?;
+    let served = served
+        .first()
+        .and_then(|row| row.record_inventory_current.as_ref())
+        .context("served record inventory")?;
+    assert_eq!(served.entries, inventory.entries);
+    assert!(
+        served.provenance.get("attributed_event_ids").is_none(),
+        "{}",
+        served.provenance
+    );
     for (scope, listed) in [("registration", true), ("both", true), ("name", false)] {
         let route = format!("/v1/names/{NAME}/history?scope={scope}&page_size=20");
         let payload = v2_history_payload_for_database(&database, &route).await?;

@@ -4757,6 +4757,19 @@ async fn v2_mirror_records_payload_on(
     source: MirrorFixtureSource,
     v1_role: &str,
 ) -> Result<Value> {
+    let database = v2_mirror_records_database(name, mirror, source, v1_role).await?;
+    let body = v2_name_record_payload_for_database(&database, uri).await?;
+    database.cleanup().await?;
+    Ok(body)
+}
+
+/// The database [`v2_mirror_records_payload_on`] reads, with the name's resource `0x6100`.
+async fn v2_mirror_records_database(
+    name: &str,
+    mirror: &str,
+    source: MirrorFixtureSource,
+    v1_role: &str,
+) -> Result<TestDatabase> {
     const CHAIN: &str = "ethereum-sepolia";
     const HASH: &str = "0xmirror";
     const V1_REGISTRY: &str = "0x4444444444444444444444444444444444444401";
@@ -4901,9 +4914,7 @@ async fn v2_mirror_records_payload_on(
     }
     bigname_storage::insert_normalized_event_fixtures(&database.pool, &events).await?;
     rebuild_fixture_families(&database.pool, CHAIN, 21000003, HASH).await?;
-    let body = v2_name_record_payload_for_database(&database, uri).await?;
-    database.cleanup().await?;
-    Ok(body)
+    Ok(database)
 }
 
 async fn v2_reverse_root_records_payload(uri: &str, mirror_projected: bool) -> Result<Value> {
@@ -4918,6 +4929,46 @@ async fn v2_reverse_root_records_payload(uri: &str, mirror_projected: bool) -> R
         },
     )
     .await
+}
+
+#[tokio::test]
+async fn an_unsupported_mirror_row_omits_attribution_only_when_asked() -> Result<()> {
+    use bigname_storage::families::records::{FamilyAttribution, load_family_record_inventories_on};
+    let database = v2_mirror_records_database(
+        "reverse",
+        REVERSE_MIRROR,
+        MirrorFixtureSource::Absent,
+        "resolver",
+    )
+    .await?;
+    let resource = Uuid::from_u128(0x6100);
+    let mut conn = database.pool.acquire().await?;
+    for (attribution, expected) in [
+        (FamilyAttribution::Load, Some(json!([]))),
+        (FamilyAttribution::Given([7].into()), Some(json!([]))),
+        (FamilyAttribution::Omit, None),
+    ] {
+        let label = format!("{attribution:?}");
+        let inventory =
+            load_family_record_inventories_on(&mut conn, "ethereum-sepolia", &[resource], attribution)
+                .await?
+                .remove(&resource)
+                .context("unsupported mirror inventory")?;
+        assert!(inventory.mirrored, "{label}");
+        assert_eq!(
+            inventory.row.coverage["status"],
+            json!("unsupported"),
+            "{label}: {}",
+            inventory.row.coverage
+        );
+        assert_eq!(
+            inventory.row.provenance.get("attributed_event_ids").cloned(),
+            expected,
+            "{label}"
+        );
+    }
+    drop(conn);
+    database.cleanup().await
 }
 
 #[tokio::test]
