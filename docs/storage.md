@@ -1618,8 +1618,11 @@ by the adapter. If the chain
 process discards the whole interpreter session and rebuilds it from readable
 rows. It retains only the block anchors added since the last validation while
 the epoch is unchanged, rather than one dependency entry per historical state
-key. Interpret also supplies the timestamp of the resume position's readable
-predecessor block from `chain_lineage`; there is no predecessor at block zero
+key. A redo's first batch always rebuilds the session, because adapter state
+only moves forward; a completed Interpret redo ends at the block the normal
+phase resumes from, so its session carries into the next normal batch, under
+the same epoch check. Interpret also supplies the timestamp of the resume
+position's readable predecessor block from `chain_lineage`; there is no predecessor at block zero
 or before the first retained lineage block. After replaying retained events,
 the adapter advances time-derived protocol state to that timestamp. Exact
 cold-restore reconstruction therefore depends on the predecessor remaining

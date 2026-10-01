@@ -72,6 +72,7 @@ pub(crate) async fn batch_input(
         })?;
     validate_snapshot_resume_marker(&mut transaction, chain_id, resume_marker).await?;
     let orphaning_epoch = cache::orphaning_epoch(&mut transaction, chain_id).await?;
+    let had_session = cached_prior.is_some();
     let cached = match cached_prior {
         Some(CachedPrior {
             cache: prior_cache,
@@ -103,6 +104,17 @@ pub(crate) async fn batch_input(
     let (prior_cache, adapter_session, restored_event_count) = match cached {
         Some((prior_cache, adapter_session)) => (prior_cache, adapter_session, 0),
         None => {
+            let started = std::time::Instant::now();
+            tracing::info!(
+                chain_id,
+                from_block,
+                reason = if had_session {
+                    "a chain reorganization since the last batch invalidated the retained session"
+                } else {
+                    "no retained session resumes at this block"
+                },
+                "interpret is restoring prior adapter state from stored events"
+            );
             let mut restore = bigname_adapters::begin_schema_v2_adapter_restore_with_provenance(
                 chain_id.to_owned(),
                 manifests.clone(),
@@ -120,6 +132,13 @@ pub(crate) async fn batch_input(
                 prior::restore_events(&mut transaction, chain_id, from_block, &mut restore).await?;
             let adapter_session =
                 resume::finish_restore(&mut transaction, chain_id, from_block, restore).await?;
+            tracing::info!(
+                chain_id,
+                from_block,
+                restored_events = restored_event_count,
+                elapsed_ms = started.elapsed().as_millis(),
+                "interpret restored prior adapter state"
+            );
             (
                 cache::freshly_loaded(orphaning_epoch),
                 adapter_session,

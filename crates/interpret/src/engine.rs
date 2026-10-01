@@ -1,6 +1,6 @@
-use std::{collections::HashMap, num::NonZeroU32, sync::Mutex, time::Instant};
+use std::{num::NonZeroU32, time::Instant};
 
-use bigname_adapters::{SchemaV2AdapterSession, StateCacheCapacity};
+use bigname_adapters::StateCacheCapacity;
 use sqlx::PgPool;
 
 use crate::{InterpretError, Result, load, recompute, write};
@@ -46,21 +46,7 @@ pub struct Engine {
     lookahead_statement_timeout_secs: Option<NonZeroU32>,
     force_full_state_loader: bool,
     loader_choices: loader_choice::LoaderChoices,
-    prior_sessions: Mutex<HashMap<String, PriorSession>>,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct SessionKey {
-    chain_id: String,
-    from_block: i64,
-    mode: RunMode,
-}
-
-struct PriorSession {
-    key: SessionKey,
-    next_block: i64,
-    cache: load::PriorCache,
-    adapter_session: SchemaV2AdapterSession,
+    prior_sessions: prior_sessions::PriorSessions,
 }
 
 impl Engine {
@@ -76,7 +62,7 @@ impl Engine {
             lookahead_statement_timeout_secs: None,
             force_full_state_loader: false,
             loader_choices: loader_choice::LoaderChoices::default(),
-            prior_sessions: Mutex::new(HashMap::new()),
+            prior_sessions: prior_sessions::PriorSessions::default(),
         }
     }
 
@@ -170,14 +156,17 @@ impl Engine {
             )));
         };
         let (batch_to, batch_hash) = markers.last().expect("non-empty markers");
-        let session_key = SessionKey {
+        let session_key = prior_sessions::SessionKey {
             chain_id: request.chain_id.clone(),
             from_block: request.from_block,
             mode: request.mode,
         };
         let phase_started = Instant::now();
-        let cached_prior =
-            self.take_prior_session(&session_key, *batch_from, request.resume_current.is_some())?;
+        let cached_prior = self.prior_sessions.take(
+            &session_key,
+            *batch_from,
+            request.resume_current.is_some(),
+        )?;
         profile_phase(profile, "take_prior_session", phase_started, None);
         let phase_started = Instant::now();
         let resume_marker = request
@@ -312,11 +301,13 @@ impl Engine {
         let phase_started = Instant::now();
         // Lookahead restores each batch from the database, so it keeps no session.
         if !used_lookahead {
-            self.store_prior_session(
+            self.prior_sessions.store(
                 session_key,
                 batch_to.saturating_add(1),
-                next_prior_cache,
-                adapter_session,
+                load::CachedPrior {
+                    cache: next_prior_cache,
+                    adapter_session,
+                },
                 complete,
             )?;
         }
@@ -337,50 +328,6 @@ impl Engine {
             target,
             estimated_write_bytes,
         })
-    }
-
-    fn take_prior_session(
-        &self,
-        key: &SessionKey,
-        next_block: i64,
-        allow_resume: bool,
-    ) -> Result<Option<load::CachedPrior>> {
-        let mut sessions = self.prior_sessions.lock().map_err(|_| {
-            InterpretError::transient("interpret prior-state session lock was poisoned")
-        })?;
-        // Moving the value out prevents a retained copy from overlapping the active batch and
-        // makes the chain ID itself the one-session ownership boundary.
-        let session = sessions.remove(&key.chain_id);
-        Ok(session
-            .filter(|session| {
-                allow_resume && session.key == *key && session.next_block == next_block
-            })
-            .map(|session| load::CachedPrior {
-                cache: session.cache,
-                adapter_session: session.adapter_session,
-            }))
-    }
-
-    fn store_prior_session(
-        &self,
-        key: SessionKey,
-        next_block: i64,
-        cache: load::PriorCache,
-        adapter_session: SchemaV2AdapterSession,
-        complete: bool,
-    ) -> Result<()> {
-        let mut sessions = self.prior_sessions.lock().map_err(|_| {
-            InterpretError::transient("interpret prior-state session lock was poisoned")
-        })?;
-        let chain_id = key.chain_id.clone();
-        let session = (!(matches!(key.mode, RunMode::Redo) && complete)).then_some(PriorSession {
-            key,
-            next_block,
-            cache,
-            adapter_session,
-        });
-        update_prior_sessions(&mut sessions, chain_id, session);
-        Ok(())
     }
 }
 
@@ -407,18 +354,6 @@ fn profile_phase(enabled: bool, phase: &str, started: Instant, retained_events: 
     );
 }
 
-fn update_prior_sessions<T>(
-    sessions: &mut HashMap<String, T>,
-    chain_id: String,
-    session: Option<T>,
-) {
-    if let Some(session) = session {
-        sessions.insert(chain_id, session);
-    } else {
-        sessions.remove(&chain_id);
-    }
-}
-
 fn validate_loaded_lineage(
     chain_id: &str,
     selected: &[(i64, String)],
@@ -434,11 +369,9 @@ fn validate_loaded_lineage(
 
 #[path = "engine/loader_choice.rs"]
 mod loader_choice;
+#[path = "engine/prior_sessions.rs"]
+mod prior_sessions;
 pub use loader_choice::{FullStateReason, StateLoader};
-
-#[cfg(test)]
-#[path = "engine/tests.rs"]
-mod tests;
 
 #[cfg(test)]
 #[path = "engine/activation_tests.rs"]
