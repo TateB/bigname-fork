@@ -67,7 +67,10 @@ verify, and continuous live follow. See [`docs/development.md`](docs/development
 
 ## Container
 
-Published as `ghcr.io/ensdomains/bigname`. The image entrypoint takes a service
+Published as `ghcr.io/ensdomains/bigname` when a `vMAJOR.MINOR.PATCH[-PRERELEASE]`
+tag is pushed on a commit on `main` whose CI passed. Each image is tagged with
+the release tag and the short commit sha; `:latest` moves only for releases
+without a pre-release suffix. The image entrypoint takes a service
 name (`api`, `phases`, or `phases-migrate`). The one-time `phases-migrate`
 command installs schema-v2 into an empty `bigname_phase` namespace in that
 same database.

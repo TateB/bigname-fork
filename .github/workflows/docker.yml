@@ -1,20 +1,17 @@
 name: Docker Image
 
 on:
-  workflow_run:
-    workflows:
-      - CI
-    branches:
-      - main
-    types:
-      - completed
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: read
   packages: write
+  actions: read
 
 concurrency:
-  group: docker-publish
+  group: docker-publish-${{ github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -23,33 +20,65 @@ env:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      # workflow_run never fires for tags, so the tagged commit's own CI result
+      # is read here rather than rebuilding CI's gates in this job.
+      - name: Require a released commit on main with green CI
+        id: commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag $TAG is not vMAJOR.MINOR.PATCH[-PRERELEASE]"
+            exit 1
+          fi
+          sha="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "::error::tag $TAG points at $sha, which is not on main"
+            exit 1
+          fi
+          # A tag pushed right after a merge can race main's own CI run.
+          deadline=$((SECONDS + 3600))
+          while :; do
+            runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=100" \
+              --jq '[.workflow_runs[] | {status, conclusion}]')"
+            if jq -e 'any(.[]; .conclusion == "success")' <<<"$runs" >/dev/null; then
+              break
+            fi
+            if ! jq -e 'any(.[]; .status != "completed")' <<<"$runs" >/dev/null || ((SECONDS >= deadline)); then
+              echo "::error::no successful CI run for $sha"
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       - name: Resolve image metadata
         id: image
         shell: bash
         env:
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ steps.commit.outputs.sha }}
+          TAG: ${{ github.ref_name }}
         run: |
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
-          short_sha="${HEAD_SHA::7}"
           {
             echo "name=$image"
             echo "tags<<EOF"
-            echo "$image:$short_sha"
-            echo "$image:latest"
+            echo "$image:$TAG"
+            echo "$image:${HEAD_SHA::7}"
+            [[ "$TAG" == *-* ]] || echo "$image:latest"
             echo "EOF"
             echo "labels<<EOF"
             echo "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY"
             echo "org.opencontainers.image.revision=$HEAD_SHA"
+            echo "org.opencontainers.image.version=$TAG"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -72,7 +101,7 @@ jobs:
           platforms: linux/amd64
           build-args: |
             RUST_VERSION=${{ env.RUST_VERSION }}
-            BIGNAME_BUILD_SHA=${{ github.event.workflow_run.head_sha }}
+            BIGNAME_BUILD_SHA=${{ steps.commit.outputs.sha }}
           tags: ${{ steps.image.outputs.tags }}
           labels: ${{ steps.image.outputs.labels }}
           cache-from: type=gha
