@@ -116,14 +116,17 @@ impl ChainProvider {
         source_key: &str,
         kind: &str,
         endpoint: &str,
+        recorded_genesis: Option<&str>,
         config: IngestConfig,
     ) -> Result<Self> {
         match normalized_kind(kind) {
             ProviderKind::Rpc => {
                 let provider = JsonRpcProvider::with_config(endpoint, config)?;
                 let provider = match config.rpc_chain_check() {
-                    Some(mode) => provider
-                        .with_chain_check(ExpectedRpcChain::new(chain_id, source_key, mode)?),
+                    Some(mode) => provider.with_chain_check(
+                        ExpectedRpcChain::new(chain_id, source_key, mode)?
+                            .with_recorded_genesis(recorded_genesis),
+                    ),
                     None => provider,
                 };
                 Ok(Self::JsonRpc(provider))

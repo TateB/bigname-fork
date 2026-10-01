@@ -52,6 +52,8 @@ pub struct SourceDescriptor {
     pub kind: String,
     pub start_block: i64,
     pub endpoint: String,
+    /// The block 0 hash the source's intake cursor recorded, for a chain with no pinned genesis.
+    pub recorded_genesis: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -474,6 +476,7 @@ impl Engine {
                 &source.key,
                 &source.kind,
                 &source.endpoint,
+                source.recorded_genesis.as_deref(),
                 self.config,
             )
             .map_err(|error| {

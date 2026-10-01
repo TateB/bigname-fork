@@ -280,11 +280,38 @@ async fn unknown_chains_fail_closed() {
         "primary",
         "rpc",
         "http://127.0.0.1:1",
+        None,
         IngestConfig::default().with_rpc_chain_check(RpcChainCheck::ChainIdOnly),
     )
     .err()
     .expect("an unknown chain has no RPC chain check");
     assert!(format!("{error:#}").contains("no known EIP-155 chain id"));
+}
+
+#[tokio::test]
+async fn an_unpinned_chain_is_held_to_its_recorded_genesis() -> Result<()> {
+    let node = Node::start("0x2105", Some(SEPOLIA_GENESIS)).await?;
+    let source = |recorded: &str| {
+        ChainProvider::with_config(
+            "base-mainnet",
+            "primary",
+            "rpc",
+            &node.endpoint,
+            Some(recorded),
+            IngestConfig::default().with_rpc_chain_check(RpcChainCheck::Full),
+        )
+    };
+
+    source(SEPOLIA_GENESIS)?.resolve(&[9]).await?;
+    let mismatch = mismatch_of(&source(MAINNET_GENESIS)?.resolve(&[9]).await.unwrap_err());
+    assert_eq!(
+        (
+            mismatch.expected_genesis_hash.as_deref(),
+            mismatch.observed_genesis_hash.as_deref()
+        ),
+        (Some(MAINNET_GENESIS), Some(SEPOLIA_GENESIS))
+    );
+    Ok(())
 }
 
 #[tokio::test]

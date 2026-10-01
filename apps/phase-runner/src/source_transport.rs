@@ -397,6 +397,7 @@ async fn admit_retention_floor(
         kind: to_kind.to_owned(),
         start_block: new.start_block_number,
         endpoint: new.endpoint().to_owned(),
+        recorded_genesis: new.recorded_genesis(),
     };
     let admitted = match resume {
         ResumePoint::Redo(_) => {

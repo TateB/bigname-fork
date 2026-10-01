@@ -78,6 +78,7 @@ impl Phase for IngestPhase {
                         kind: source.source_kind.clone(),
                         start_block: source.start_block_number,
                         endpoint: source.endpoint().to_owned(),
+                        recorded_genesis: source.recorded_genesis(),
                     })
                     .collect(),
                 cursors: context

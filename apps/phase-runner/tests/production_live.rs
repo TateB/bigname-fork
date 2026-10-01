@@ -3538,6 +3538,7 @@ fn live_request(
             kind: "rpc".to_owned(),
             start_block: 0,
             endpoint: endpoint.to_owned(),
+            recorded_genesis: None,
         }],
         live_handoff: Marker {
             number: handoff,

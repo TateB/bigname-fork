@@ -50,7 +50,7 @@ pub struct ExpectedRpcChain {
     chain: String,
     source_key: String,
     chain_id: u64,
-    genesis_hash: Option<&'static str>,
+    genesis_hash: Option<String>,
     mode: RpcChainCheck,
 }
 
@@ -70,7 +70,8 @@ impl ExpectedRpcChain {
         let genesis_hash = chain
             .parse::<ChainId>()
             .ok()
-            .and_then(ChainId::genesis_hash);
+            .and_then(ChainId::genesis_hash)
+            .map(str::to_owned);
         Ok(Self {
             chain: chain.to_owned(),
             source_key: source_key.to_owned(),
@@ -78,6 +79,16 @@ impl ExpectedRpcChain {
             genesis_hash,
             mode,
         })
+    }
+
+    /// Holds a chain with no pinned genesis hash to the one its intake cursor recorded, so a
+    /// recheck refuses an endpoint that has moved to another network with the same chain id.
+    #[must_use]
+    pub fn with_recorded_genesis(mut self, genesis_hash: Option<&str>) -> Self {
+        if self.genesis_hash.is_none() {
+            self.genesis_hash = genesis_hash.map(str::to_owned);
+        }
+        self
     }
 
     pub fn chain(&self) -> &str {
@@ -102,7 +113,7 @@ impl ExpectedRpcChain {
             source_key: self.source_key.clone(),
             expected_chain_id: self.chain_id,
             observed_chain_id: observed.chain_id,
-            expected_genesis_hash: self.genesis_hash.map(str::to_owned),
+            expected_genesis_hash: self.genesis_hash.clone(),
             observed_genesis_hash: observed.genesis_hash.clone(),
         }
     }
@@ -218,7 +229,7 @@ impl JsonRpcProvider {
             chain_id,
             genesis_hash,
         };
-        let genesis_matches = match (expected.mode, expected.genesis_hash) {
+        let genesis_matches = match (expected.mode, expected.genesis_hash.as_deref()) {
             (RpcChainCheck::ChainIdOnly, _) => true,
             (RpcChainCheck::Full, Some(genesis)) => {
                 observed.genesis_hash.as_deref() == Some(genesis)

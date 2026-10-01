@@ -101,6 +101,12 @@ impl SourceConfig {
         &self.endpoint
     }
 
+    /// The block 0 hash this start's RPC chain check observed, which `persist` holds equal to
+    /// the cursor's recorded one.
+    pub fn recorded_genesis(&self) -> Option<String> {
+        self.verified_rpc_chain.as_ref()?.genesis_hash.clone()
+    }
+
     pub(crate) fn sepolia_start_is_admitted(&self) -> bool {
         self.start_block_number == 0
     }

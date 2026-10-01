@@ -622,7 +622,11 @@ the end-to-end suite's Anvil chains. There is no mode that skips the check.
 
 Ingest, Live, Verify and `source-transport` readers repeat the check before their
 first request, again once five minutes have passed, and before any request on
-an HTTP client rebuilt after a timeout, including a retry. A mismatch then stops
+an HTTP client rebuilt after a timeout, including a retry. On `base-mainnet`,
+which has no pinned genesis hash, Ingest and Live hold each recheck to the
+genesis hash the startup check observed and the cursor recorded, so an endpoint
+that moves to another network with the same chain id is refused rather than
+accepted on any readable block 0. A mismatch then stops
 that chain with a configuration error, which is not retried. On an Ingest or
 Live source it also sets `phase_runner_rpc_chain_mismatch` (see the
 [monitoring runbook](runbooks/pipeline-monitoring.md#alerts)). That gauge pages
