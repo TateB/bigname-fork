@@ -1821,6 +1821,8 @@ async fn v2_get_address_names_filters_by_authority_and_reports_migration() -> Re
     assert_eq!(rows[0]["name"], json!("alpha.eth"));
     assert_eq!(rows[0]["authority"], json!("ens_v2"));
     assert_eq!(rows[0]["migrated_at"], json!("1717180007"));
+    // The migration keeps the ENSv1 lease's registration time.
+    assert_eq!(rows[0]["registered_at"], json!("1704153600"));
     assert_eq!(rows[1]["name"], json!("beta.eth"));
     assert_eq!(rows[1]["authority"], json!("ens_v1"));
     assert!(rows[1].get("migrated_at").is_none());
@@ -2052,7 +2054,7 @@ async fn v2_wrapped_subname_manager_is_the_token_holder_in_every_state() -> Resu
                 .await?;
         }
         let detail = assert_lookup_detail_matches_name_detail(&database, "sub.perms.eth").await?;
-        assert_eq!(detail["wrapper_state"], json!(state), "{detail}");
+        assert_eq!(detail["ens_v1"]["wrapper_state"], json!(state), "{detail}");
         assert_eq!(detail.get("manager"), manager.as_ref(), "{state}: {detail}");
         let (status, subnames) =
             read_family_response(&database, "/v1/names/perms.eth/subnames").await?;
