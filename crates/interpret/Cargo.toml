@@ -26,3 +26,4 @@ bigname-project.workspace = true
 bigname-storage.workspace = true
 bigname-test-support.workspace = true
 tokio.workspace = true
+tracing-subscriber.workspace = true
