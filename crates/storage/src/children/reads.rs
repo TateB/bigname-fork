@@ -27,7 +27,7 @@ pub async fn load_children_current_page(
 /// name it serves, narrowed by `owner` when given. `label_count` counts every such child the
 /// owner filter admits, not just the page.
 pub async fn load_registry_children_current_page(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     parent_logical_name_id: &str,
     registry_address: &str,
     owner: Option<RegistryLabelOwnerFilter<'_>>,
@@ -35,7 +35,7 @@ pub async fn load_registry_children_current_page(
     page_size: u64,
 ) -> Result<RegistryChildrenPage> {
     super::families::registry_page(
-        pool,
+        db.into(),
         parent_logical_name_id,
         registry_address,
         owner,
@@ -48,20 +48,20 @@ pub async fn load_registry_children_current_page(
 /// Exact count of the labels `registry_address` holds on `chain_id` at the current family
 /// publication, under the name the registry serves there.
 pub async fn count_registry_labels_current(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     chain_id: &str,
     registry_address: &str,
 ) -> Result<i64> {
-    super::families::registry_count_current(pool, chain_id, registry_address).await
+    super::families::registry_count_current(db.into(), chain_id, registry_address).await
 }
 
 pub async fn load_children_current_summaries(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     parent_logical_name_ids: &[String],
 ) -> Result<Vec<ChildrenCurrentSummary>> {
     if parent_logical_name_ids.is_empty() {
         return Ok(Vec::new());
     }
 
-    super::families::summaries(pool, parent_logical_name_ids).await
+    super::families::summaries(db.into(), parent_logical_name_ids).await
 }

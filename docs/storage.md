@@ -2029,11 +2029,14 @@ spelling is not stale state. This is a serving-boundary compatibility rule and
 does not change which stored projection rows are authoritative or when they are
 rebuilt.
 
-Every selection also requires the current Project generation to be complete at
-the newest stored head with the API's compiled interpreter content hash. The
-API reads only projections eligible for the selected positions and revalidates
-the Project generation before returning. A concurrent head or generation
-change returns `409 stale`.
+Every selection also requires the current Project generation to be complete,
+within the one-block publication lag tolerance of the newest stored head, with
+the API's compiled interpreter content hash. The API reads only projections
+eligible for the selected positions and revalidates the Project generation
+before returning; a current-state collection checks it instead on its one read
+snapshot, before its first read. A head that advances within that tolerance
+leaves the publication servable; a replaced publication, or one that stops being
+servable, before that check returns `409 stale`.
 
 ### History page order
 

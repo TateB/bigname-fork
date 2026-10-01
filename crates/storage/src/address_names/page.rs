@@ -93,7 +93,7 @@ pub async fn load_address_names_current_page_sorted_for_relations(
 /// original row need not still exist in the current collection.
 #[allow(clippy::too_many_arguments)]
 pub async fn load_address_names_current_page_filtered(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     address: &str,
     namespace: Option<&str>,
     relations: Option<&[AddressNameRelation]>,
@@ -107,7 +107,7 @@ pub async fn load_address_names_current_page_filtered(
     page_size: u64,
 ) -> Result<AddressNamesCurrentSortedPage> {
     crate::families::records::load_family_address_names_page(
-        pool,
+        db,
         address,
         namespace,
         relations,

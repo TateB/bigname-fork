@@ -65,12 +65,13 @@ async fn collection(
         &["key1", "key2"],
         params.at.is_some(),
     )?;
-    let publication = crate::v2::collection_snapshot::CollectionSnapshot::capture_for_namespace(
-        &state,
-        None,
-        Some(super::resolver_namespace(slug)?),
-    )
-    .await?;
+    let mut publication =
+        crate::v2::collection_snapshot::CollectionSnapshot::capture_for_namespace(
+            &state,
+            None,
+            Some(super::resolver_namespace(slug)?),
+        )
+        .await?;
     let selected = resolve_v2_snapshot_for(
         &state.pool,
         &resolver_snapshot_scope(slug)?,
@@ -91,13 +92,23 @@ async fn collection(
             ))
         })
         .transpose()?;
-    let row = bigname_storage::load_phase_resolver_current(&state.pool, slug, &address)
-        .await
-        .map_err(crate::v2::name_rows_error(
-            SnapshotReadResource::Resolver,
-            |_| read_error(),
-        ))?
-        .ok_or_else(|| V2Error::not_found("resolver was not found"))?;
+    super::revalidate_project_generations(
+        &state,
+        &mut publication,
+        &selected,
+        &generations,
+        params.at.is_some(),
+        "resolver collection changed while reading; retry the request",
+    )
+    .await?;
+    let row =
+        bigname_storage::load_phase_resolver_current(publication.conn().await?, slug, &address)
+            .await
+            .map_err(crate::v2::name_rows_error(
+                SnapshotReadResource::Resolver,
+                |_| read_error(),
+            ))?
+            .ok_or_else(|| V2Error::not_found("resolver was not found"))?;
     require_phase_target_snapshot(&row.chain_positions, slug, &selected)?;
     let summary_key = match section {
         "roles" => "role_holders",
@@ -120,7 +131,7 @@ async fn collection(
             *bound = (*bound).min(height);
         }
         reads::page(
-            &state.pool,
+            publication.conn().await?,
             slug,
             &address,
             section,
@@ -172,14 +183,6 @@ async fn collection(
             _ => data.push(super::link_items::compact_resolver_link_item(&item)?),
         }
     }
-    super::revalidate_project_generations(
-        &state.pool,
-        &selected,
-        &generations,
-        params.at.is_some(),
-        "resolver collection changed while reading; retry the request",
-    )
-    .await?;
     publication.finish(&state).await?;
     Ok(Json(Envelope {
         data,

@@ -371,8 +371,10 @@ position of the last row returned, and an `at` token only when the request
 explicitly pinned one. It carries no publication generation or evaluation time.
 A continuation reads the current data after that position; a changed or deleted
 row, a newer publication or a completed rebuild does not invalidate it. Rows can
-repeat or be skipped when data changes. Each request retains its own publication
-consistency check. Explicit `at` and finality constraints remain route-specific.
+repeat or be skipped when data changes. Each request still reads one consistent
+publication: search keeps its own recheck, and the other collections read each
+page on one database snapshot of the publication captured at admission.
+Explicit `at` and finality constraints remain route-specific.
 See [api-v1.md](api-v1.md#current-state-list-cursors) and [history walk](#history-walk).
 
 ## Declared vs verified

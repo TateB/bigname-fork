@@ -21,12 +21,11 @@ use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
-use sqlx::PgPool;
 
 use crate::{
     NameCurrentListCursor, NameCurrentListCursorValue, NameCurrentListOrder, NameCurrentRow,
     UnixSeconds,
-    families::name::{CoverageShape, load_composed, read_snapshot, servable_publication},
+    families::name::{CoverageShape, load_composed, servable_publication},
 };
 
 /// What a former-registrant page selects besides its order and position.
@@ -97,7 +96,7 @@ fn served_expiry(row: &NameCurrentRow) -> Option<UnixSeconds> {
 
 /// The page of names `filter.address` formerly held.
 pub async fn load_family_former_registrant_page(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     filter: &FormerRegistrantFilter<'_>,
     order: NameCurrentListOrder,
     cursor: Option<&NameCurrentListCursor>,
@@ -105,7 +104,7 @@ pub async fn load_family_former_registrant_page(
 ) -> Result<FormerRegistrantPage> {
     let after = cursor.map(cursor_key).transpose()?;
     let address = filter.address.to_ascii_lowercase();
-    let mut snapshot = read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     let indexed: Vec<(String, String)> = sqlx::query_as(
         "/* storage:families.records.former_registrant_index */
          SELECT DISTINCT indexed.chain_id, indexed.logical_name_id
@@ -140,7 +139,7 @@ pub async fn load_family_former_registrant_page(
                 }),
         );
     }
-    snapshot.commit().await?;
+    snapshot.close().await?;
 
     let windowed = filter.expires_after.is_some() || filter.expires_before.is_some();
     held.retain(|held| match held.expiry {

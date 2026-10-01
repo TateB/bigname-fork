@@ -1,6 +1,6 @@
 //! The `address_records_current` page entry point for one coin type, and its switch branch.
 use anyhow::Result;
-use sqlx::{PgConnection, PgPool};
+use sqlx::PgConnection;
 
 use super::{
     resolves_to::{
@@ -22,7 +22,7 @@ use super::{
 /// from the owned key families instead (`families::records::load_family_resolves_to_page`).
 #[allow(clippy::too_many_arguments)]
 pub async fn load_address_records_current_page(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     address: &str,
     coin_type: &str,
     namespaces: Option<&[String]>,
@@ -35,8 +35,7 @@ pub async fn load_address_records_current_page(
     page_size: u64,
 ) -> Result<AddressRecordsCurrentPage> {
     crate::families::records::load_family_resolves_to_page(
-        pool, address, coin_type, namespaces, dedupe_by, q, authority, sort, order, cursor,
-        page_size,
+        db, address, coin_type, namespaces, dedupe_by, q, authority, sort, order, cursor, page_size,
     )
     .await
 }

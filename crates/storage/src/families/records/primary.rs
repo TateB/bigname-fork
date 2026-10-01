@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
-use sqlx::{PgConnection, PgPool, Row};
+use sqlx::{PgConnection, Row};
 
 use super::reverse::{load_family_reverse_claim_on, node_resolver};
 use crate::{
@@ -34,26 +34,26 @@ const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 
 /// `load_primary_name_current_snapshot` over the families.
 pub async fn load_family_primary_name_snapshot(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     address: &str,
     namespace: &str,
     coin_type: &str,
 ) -> Result<Option<PrimaryNameCurrentSnapshot>> {
     let keys = [(namespace.to_owned(), coin_type.to_owned())];
-    Ok(load_family_primary_name_snapshots(pool, address, &keys)
+    Ok(load_family_primary_name_snapshots(db, address, &keys)
         .await?
         .remove(&keys[0]))
 }
 
 /// `load_primary_name_current_snapshots` over the families, read in one snapshot.
 pub async fn load_family_primary_name_snapshots(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     address: &str,
     keys: &[(String, String)],
 ) -> Result<BTreeMap<(String, String), PrimaryNameCurrentSnapshot>> {
-    let mut snapshot = crate::families::read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     let out = load_family_primary_name_snapshots_on(&mut snapshot, address, keys, None).await?;
-    snapshot.commit().await?;
+    snapshot.close().await?;
     Ok(out)
 }
 

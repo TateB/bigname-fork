@@ -10,15 +10,16 @@
 //! family facts, so the rows and summaries built here leave them empty (no route reads them).
 use anyhow::{Context, Result};
 use serde_json::json;
-use sqlx::{PgPool, Postgres, Transaction, types::time::OffsetDateTime};
+use sqlx::types::time::OffsetDateTime;
 
 use crate::families::{
-    name::{ensure_published, read_snapshot},
+    name::ensure_published,
     topology::{
         FamilyChildRow, RegistryLabels, children_page_on, count_children_of_parents_on,
         count_children_on, require_publication,
     },
 };
+use crate::{ReadDb, read_db::ReadConn};
 
 use super::{
     DECLARED_SURFACE_CLASS,
@@ -29,30 +30,27 @@ use super::{
 };
 
 /// The snapshot a child read runs in, once its parents' publication is checked.
-async fn snapshot(
-    pool: &PgPool,
-    parent_logical_name_ids: &[String],
-) -> Result<Transaction<'static, Postgres>> {
-    let mut transaction = read_snapshot(pool).await?;
+async fn snapshot<'a>(db: ReadDb<'a>, parent_logical_name_ids: &[String]) -> Result<ReadConn<'a>> {
+    let mut transaction = db.snapshot().await?;
     require_publication(&mut transaction, parent_logical_name_ids).await?;
     Ok(transaction)
 }
 
-async fn close(transaction: Transaction<'static, Postgres>) -> Result<()> {
+async fn close(transaction: ReadConn<'_>) -> Result<()> {
     transaction
-        .commit()
+        .close()
         .await
         .context("failed to close the children snapshot")
 }
 
 pub(super) async fn page(
-    pool: &PgPool,
+    db: ReadDb<'_>,
     parent_logical_name_id: &str,
     filter: &ChildrenCurrentPageFilter<'_>,
     cursor: Option<&ChildrenCurrentKeysetCursor>,
     page_size: u64,
 ) -> Result<ChildrenCurrentPage> {
-    let mut transaction = snapshot(pool, &[parent_logical_name_id.to_owned()]).await?;
+    let mut transaction = snapshot(db, &[parent_logical_name_id.to_owned()]).await?;
     let page = children_page_on(
         &mut transaction,
         parent_logical_name_id,
@@ -77,7 +75,7 @@ pub(super) async fn page(
 }
 
 pub(super) async fn registry_page(
-    pool: &PgPool,
+    db: ReadDb<'_>,
     parent_logical_name_id: &str,
     registry_address: &str,
     owner: Option<RegistryLabelOwnerFilter<'_>>,
@@ -85,7 +83,7 @@ pub(super) async fn registry_page(
     page_size: u64,
 ) -> Result<RegistryChildrenPage> {
     let registry = registry_address.to_ascii_lowercase();
-    let mut transaction = snapshot(pool, &[parent_logical_name_id.to_owned()]).await?;
+    let mut transaction = snapshot(db, &[parent_logical_name_id.to_owned()]).await?;
     let page = children_page_on(
         &mut transaction,
         parent_logical_name_id,
@@ -125,12 +123,12 @@ const SERVING_PARENT: &str = "/* storage:children.registry_serving_parent */
 /// same snapshot, or zero when no name points at it. The name is resolved here, not passed in,
 /// so the count never anchors to a name read from an earlier publication.
 pub(super) async fn registry_count_current(
-    pool: &PgPool,
+    db: ReadDb<'_>,
     chain_id: &str,
     registry_address: &str,
 ) -> Result<i64> {
     let registry = registry_address.to_ascii_lowercase();
-    let mut transaction = read_snapshot(pool).await?;
+    let mut transaction = db.snapshot().await?;
     ensure_published(&mut transaction, &[chain_id.to_owned()]).await?;
     let parent: Option<String> = sqlx::query_scalar(SERVING_PARENT)
         .bind(chain_id)
@@ -147,10 +145,10 @@ pub(super) async fn registry_count_current(
 }
 
 pub(super) async fn summaries(
-    pool: &PgPool,
+    db: ReadDb<'_>,
     parent_logical_name_ids: &[String],
 ) -> Result<Vec<ChildrenCurrentSummary>> {
-    let mut transaction = snapshot(pool, parent_logical_name_ids).await?;
+    let mut transaction = snapshot(db, parent_logical_name_ids).await?;
     // One statement for every parent, as the served summaries aggregate them in one query.
     let counts = count_children_of_parents_on(&mut transaction, parent_logical_name_ids).await?;
     close(transaction).await?;

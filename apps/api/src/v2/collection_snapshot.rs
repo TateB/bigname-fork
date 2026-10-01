@@ -1,19 +1,23 @@
 use crate::AppState;
-use sqlx::types::time::OffsetDateTime;
+use sqlx::{PgConnection, PgPool, Postgres, Transaction, types::time::OffsetDateTime};
 
 use super::support::{
     PublicNamespaceSet, derive_public_namespace_set, ensure_public_namespace, request_scope_meta,
-    revalidate_collection_namespace_set,
+    revalidate_collection_manifests,
 };
 use super::{CursorPayload, Meta, V2Error, V2Result, api_error_to_v2};
 
-/// The publication captured for one request. Current-state pages revalidate it before
-/// returning, but their continuation positions survive later publications. History pages
-/// retain their separately documented bounded-walk behavior.
+/// The publication captured for one request. A current-state page reads it on one read-only
+/// REPEATABLE READ snapshot ([`Self::conn`]), so its reads cannot mix publications; its
+/// continuation positions survive later publications. History pages retain their separately
+/// documented bounded-walk behavior.
 pub(crate) struct CollectionSnapshot {
     namespaces: PublicNamespaceSet,
     evaluated_at: OffsetDateTime,
     namespace: Option<String>,
+    pool: PgPool,
+    reads: Option<Transaction<'static, Postgres>>,
+    served: bool,
 }
 
 impl CollectionSnapshot {
@@ -77,6 +81,9 @@ impl CollectionSnapshot {
             namespaces,
             evaluated_at,
             namespace: namespace.map(str::to_owned),
+            pool: state.pool.clone(),
+            reads: None,
+            served: false,
         };
         Ok((snapshot, cursor))
     }
@@ -102,17 +109,69 @@ impl CollectionSnapshot {
         bounds
     }
 
+    /// The connection every current-state read of this request runs on: one read-only
+    /// REPEATABLE READ snapshot, begun on first use. Before the first read on it, the snapshot must
+    /// still serve each captured publication; a publication since admission is the retry 409.
+    /// Marker sequences only grow, so that check also covers the published rows the request read
+    /// on the pool between admission and the snapshot. After it, every read sees the captured publication
+    /// whatever is published meanwhile; nothing may read the pool until [`Self::finish`].
+    pub(crate) async fn conn(&mut self) -> V2Result<&mut PgConnection> {
+        self.begin().await?;
+        let reads = self
+            .reads
+            .as_deref_mut()
+            .expect("the collection read snapshot was just begun");
+        if !self.served {
+            if !self
+                .namespaces
+                .served_on(reads)
+                .await
+                .map_err(api_error_to_v2)?
+            {
+                return Err(changed_during_read());
+            }
+            self.served = true;
+            #[cfg(test)]
+            finish_test_hooks::run_at(&self.pool, finish_test_hooks::Stage::Pinned).await?;
+        }
+        Ok(self
+            .reads
+            .as_deref_mut()
+            .expect("the collection read snapshot was just begun"))
+    }
+
+    /// The snapshot before [`Self::conn`]'s publication check, for a route whose own pinned
+    /// selection must be checked on it first.
+    pub(crate) async fn begin(&mut self) -> V2Result<&mut PgConnection> {
+        if self.reads.is_none() {
+            #[cfg(test)]
+            finish_test_hooks::run_at(&self.pool, finish_test_hooks::Stage::BeforeRead).await?;
+            let reads = bigname_storage::begin_read_snapshot(&self.pool)
+                .await
+                .map_err(|_| V2Error::internal_error("failed to begin the collection read"))?;
+            self.reads = Some(reads);
+        }
+        Ok(self
+            .reads
+            .as_deref_mut()
+            .expect("the collection read snapshot was just begun"))
+    }
+
     /// A name with no
     /// composed row may be one a family rebuild has yet to reach: before a route answers it not
     /// found, the family markers of this snapshot's chains must be servable, otherwise it is the
-    /// stale 409 for `resource`.
+    /// stale 409 for `resource`. Read on the request's snapshot when it has begun one.
     pub(crate) async fn ensure_families_published(
-        &self,
+        &mut self,
         state: &AppState,
         resource: super::SnapshotReadResource,
     ) -> V2Result<()> {
         let chains: Vec<String> = self.block_bounds().into_keys().collect();
-        bigname_storage::families::name::ensure_family_publications(&state.pool, &chains)
+        let db = match self.reads.as_deref_mut() {
+            Some(conn) => bigname_storage::ReadDb::from(conn),
+            None => bigname_storage::ReadDb::from(&state.pool),
+        };
+        bigname_storage::families::name::ensure_family_publications(db, &chains)
             .await
             .map(|_| ())
             .map_err(super::name_rows_error(resource, |_| {
@@ -120,10 +179,27 @@ impl CollectionSnapshot {
             }))
     }
 
-    pub(crate) async fn finish(&self, state: &AppState) -> V2Result<Meta> {
+    /// The `meta` of the captured publication, which every read on [`Self::conn`] sees.
+    pub(crate) fn meta(&self) -> V2Result<Meta> {
+        request_scope_meta(self.namespaces.request_scope())
+    }
+
+    /// Ends the snapshot and reports the captured publication. A page that never read on the
+    /// snapshot still has its publication checked on one. After that only the namespace authority
+    /// is rechecked: a publication after the snapshot began is not part of this page.
+    pub(crate) async fn finish(&mut self, state: &AppState) -> V2Result<Meta> {
+        if !self.served {
+            self.conn().await?;
+        }
         #[cfg(test)]
         finish_test_hooks::run(&state.pool).await?;
-        revalidate_collection_namespace_set(state, &self.namespaces, self.namespace.as_deref())
+        if let Some(reads) = self.reads.take() {
+            reads
+                .commit()
+                .await
+                .map_err(|_| V2Error::internal_error("failed to end the collection read"))?;
+        }
+        revalidate_collection_manifests(state, &self.namespaces, self.namespace.as_deref())
             .await
             .map_err(|error| {
                 if error.status != axum::http::StatusCode::CONFLICT {
@@ -132,7 +208,16 @@ impl CollectionSnapshot {
                     changed_during_read()
                 }
             })?;
-        request_scope_meta(self.namespaces.request_scope())
+        self.meta()
+    }
+
+    /// `error` for a page refused after its reads, once [`Self::finish`] succeeds; otherwise
+    /// finish's own error, such as the retry 409 for a namespace manifest change.
+    pub(crate) async fn refuse(&mut self, state: &AppState, error: V2Error) -> V2Error {
+        match self.finish(state).await {
+            Ok(_) => error,
+            Err(finish_error) => finish_error,
+        }
     }
 
     /// The `meta` of a history page: the publication captured when the request was admitted. A
@@ -171,13 +256,14 @@ pub(super) fn restart_required() -> V2Error {
     )
 }
 
-/// The same request and cursor can be retried against the new publication.
+/// The publication or namespace authority moved before the read could pin it; the same request
+/// and cursor can be retried against the new publication.
 pub(super) fn changed_during_read() -> V2Error {
     V2Error::stale("collection publication changed during the read; retry the request")
 }
 
-/// Pauses the next `finish()` for one test database so a test can republish between a
-/// handler's last generation check and the publication revalidation.
+/// Pauses one test database's next request at a [`Stage`], so a test can publish a block there.
+/// Finding the hook takes a second pool connection while the read snapshot may hold one.
 #[cfg(test)]
 pub(crate) mod finish_test_hooks {
     use std::sync::Arc;
@@ -212,12 +298,31 @@ pub(crate) mod finish_test_hooks {
         }
     }
 
-    static HOOKS: ScopedTestHookRegistry<String, FinishHook> = ScopedTestHookRegistry::new();
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    pub(crate) enum Stage {
+        /// After admission, before the read snapshot begins.
+        BeforeRead,
+        /// Once the snapshot has passed its publication check, before the page reads on it.
+        Pinned,
+        /// After the page was read, while its snapshot is still open.
+        Finish,
+    }
+
+    type Key = (String, Stage);
+
+    static HOOKS: ScopedTestHookRegistry<Key, FinishHook> = ScopedTestHookRegistry::new();
 
     pub(crate) async fn install(
         pool: &PgPool,
-    ) -> Result<(ScopedTestHookGuard<String, FinishHook>, FinishControl)> {
-        let database = current_test_database(pool).await?;
+    ) -> Result<(ScopedTestHookGuard<Key, FinishHook>, FinishControl)> {
+        install_at(pool, Stage::Finish).await
+    }
+
+    pub(crate) async fn install_at(
+        pool: &PgPool,
+        stage: Stage,
+    ) -> Result<(ScopedTestHookGuard<Key, FinishHook>, FinishControl)> {
+        let database = (current_test_database(pool).await?, stage);
         let reached = Arc::new(Barrier::new(2));
         let resume = Arc::new(Barrier::new(2));
         let guard = HOOKS.install(
@@ -231,9 +336,14 @@ pub(crate) mod finish_test_hooks {
     }
 
     pub(crate) async fn run(pool: &PgPool) -> V2Result<()> {
+        run_at(pool, Stage::Finish).await
+    }
+
+    pub(crate) async fn run_at(pool: &PgPool, stage: Stage) -> V2Result<()> {
         let database = current_test_database(pool)
             .await
             .map_err(|_| V2Error::internal_error("failed to run collection finish test hook"))?;
+        let database = (database, stage);
         if let Some(hook) = HOOKS.take(&database) {
             hook.reached.wait().await;
             hook.resume.wait().await;
