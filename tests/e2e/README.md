@@ -336,8 +336,8 @@ The 70 runnable scenarios include the #154 known-defect reproduction described
 above; it is kept runnable so the provider path and explicit repair remain
 observable rather than being hidden as an ignored test.
 
-The crate contains 98 total tests when 25 harness/support checks are included.
-The pre-retarget crate contained 88; the net change is +10: obsolete
+The crate contains 100 total tests when 27 harness/support checks are included.
+The pre-retarget crate contained 88; the net change is +12: obsolete
 Cargo-artifact tests for the old indexer, worker, v1 API, and execution plane
 were removed, while deployment-profile binary lifecycle and normalized-event
 parity-completeness regression tests, the archived-artifact path check, the
@@ -444,15 +444,15 @@ explicitly with issue #314.
 
 | Measure | Historical baseline | Current suite | Delta |
 | --- | ---: | ---: | ---: |
-| Total crate tests | 88 | 98 | +10 |
+| Total crate tests | 88 | 100 | +12 |
 | Semantic scenario inventory | 62 at the retarget base, including one pure helper | 73 | -1 reclassified, -3 deleted, +15 added |
-| Runnable passed-count gate | 65 in the historical Anvil gate | 95 | +30 |
+| Runnable passed-count gate | 65 in the historical Anvil gate | 97 | +32 |
 | Anvil-backed semantic inventory | 65 historical gate reference | 73 | +8 |
 | Runnable Anvil-backed semantic scenarios | 65 historical gate reference | 70 | +5 |
 
 The 65 comparisons are reported because that is the historical gate reference,
 but the current passed-count denominator is explicit: 70 runnable Anvil
-scenarios and 25 harness/support checks produce 95 passes. Three semantic
+scenarios and 27 harness/support checks produce 97 passes. Three semantic
 scenarios are explicitly ignored with their retired behavior recorded above.
 
 ## Diagnostics
