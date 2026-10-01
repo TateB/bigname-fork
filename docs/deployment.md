@@ -1854,7 +1854,8 @@ Schema-migration
 rerun [`ops/v1-lookahead-indexes/install.sql`](../ops/v1-lookahead-indexes/README.md)
 before applying the schema-migrations and starting the release: it accepts the
 existing ENSv1 pair and builds the Basenames pair concurrently. Then run
-`ANALYZE bigname_phase.normalized_events`. The Basenames pair is needed on a
+`ANALYZE bigname_phase.normalized_events` and apply the schema-migrations with
+`--target-version 20261001120100`, which then only adopts and checks the prebuilt pair. The Basenames pair is needed on a
 database that holds only Ethereum mainnet too: the Ethereum batches run the same
 queries, whose Basenames arms would otherwise scan `normalized_events` once per
 requested name. `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true`
