@@ -664,7 +664,8 @@ in `full` mode, its genesis hash (`ingest_cursors.verified_chain_id` and
 id, or another genesis hash when both are known, is refused as a
 data-integrity error before any phase runs, or, when another start created the
 cursor after this start's check, when Ingest, Live or Verify next starts, before
-it builds a provider. These columns are not source
+the phase runs or reads from its endpoints (a Verify redo may already have built
+its reference provider, which reads nothing until then). These columns are not source
 identity: a cursor created before them fills them in on its next start, and
 moving a source to another node on the same chain stays allowed.
 
