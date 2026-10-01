@@ -5,22 +5,14 @@ use sqlx::PgPool;
 use super::chain_position::ChainPositions;
 use super::error::{SnapshotSelectionError, SnapshotSelectionResult};
 
-pub const CURRENT_PROJECT_PUBLICATION_JOIN: &str = r#"
-JOIN bigname_phase.chain_phase_state project
-  ON project.chain_id = head.chain_id
- AND project.phase_name = 'project'
- AND project.phase_status IN ('completed', 'running')
- AND project.current_block_number = head.latest_block_number
- AND project.current_block_hash = head.latest_block_hash
-"#;
-
-/// How far the project phase's publication may trail the stored chain head and still be
-/// served.
+/// The default for how many blocks the project phase's publication may trail the stored chain
+/// head and still be served. The API takes its value from
+/// `BIGNAME_API_PUBLICATION_LAG_TOLERANCE_BLOCKS`.
 ///
 /// Live-follow stores a new head as soon as a block arrives; Project publishes for it well
-/// under a second later. Only the publication for the block just before the head is served
-/// as the snapshot position (reported as `as_of`); anything further behind is stale, so a
-/// wedged or paused Project surfaces within one block instead of serving old data.
+/// under a second later. By default only the publication for the block just before the head
+/// is served as the snapshot position (reported as `as_of`); anything further behind is
+/// stale, so a wedged or paused Project surfaces within one block instead of serving old data.
 pub const PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS: i64 = 1;
 
 /// Why a chain's family publication is unavailable, for an operator-visible `409 stale`.
@@ -113,7 +105,7 @@ const CURRENT_FAMILY_MARKER_PUBLICATION: &str = concat!(
 
 /// The family marker sequence serving `block_number` / `block_hash`, or `None` when unavailable.
 /// Callers compare the sequence as an opaque string. The marker must be live, on readable
-/// lineage, from this interpreter build and within the one-block head lag tolerance.
+/// lineage, from this interpreter build and at most `lag_tolerance_blocks` behind the head.
 /// `require_position_is_publication` additionally requires the exact selected position.
 /// `require_interpret_not_redo` requires a completed/running Interpret row without redo;
 /// any Interpret or Project redo overlapping the publication is refused regardless of it.
@@ -124,6 +116,7 @@ pub async fn load_served_project_generation<'e>(
     block_hash: &str,
     require_position_is_publication: bool,
     require_interpret_not_redo: bool,
+    lag_tolerance_blocks: i64,
 ) -> Result<Option<String>, sqlx::Error> {
     let sql = { SERVED_FAMILY_MARKER_GENERATION };
     sqlx::query_scalar::<_, String>(sql)
@@ -131,7 +124,7 @@ pub async fn load_served_project_generation<'e>(
         .bind(block_number)
         .bind(block_hash)
         .bind(bigname_content_hash::INTERPRETER_CONTENT_HASH)
-        .bind(PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS)
+        .bind(lag_tolerance_blocks)
         .bind(require_position_is_publication)
         .bind(require_interpret_not_redo)
         .fetch_optional(executor)
@@ -173,13 +166,14 @@ const SERVED_FAMILY_MARKER_GENERATION: &str = concat!(
     family_inputs_not_in_redo!()
 );
 
-/// Every selected chain must have a completed, readable project publication at most
-/// [`PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS`] behind the stored head. Historical `at`
+/// Every selected chain must have a live, readable family-marker publication at or below the
+/// stored head and at most `lag_tolerance_blocks` behind it. Historical `at`
 /// positions are not bounded by the publication here; the per-row projection-target checks
 /// keep rows ahead of the selected position out of the read.
 pub(super) async fn validate_current_project_publications(
     pool: &PgPool,
     chain_positions: &ChainPositions,
+    lag_tolerance_blocks: i64,
 ) -> SnapshotSelectionResult<()> {
     let chains = chain_positions
         .as_map()
@@ -205,10 +199,9 @@ pub(super) async fn validate_current_project_publications(
         let publication = load_current_project_publication(pool, chain_id)
             .await?
             .ok_or_else(|| SnapshotSelectionError::stale(unpublished_message(chain_id)))?;
-        if latest_block_number - publication.block_number > PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS
-        {
+        if !(0..=lag_tolerance_blocks).contains(&(latest_block_number - publication.block_number)) {
             return Err(SnapshotSelectionError::stale(format!(
-                "{} (publication at {} lags head {latest_block_number})",
+                "{} (publication at {} is outside the lag tolerance of head {latest_block_number})",
                 unpublished_message(chain_id),
                 publication.block_number
             )));

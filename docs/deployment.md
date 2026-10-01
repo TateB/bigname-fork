@@ -950,7 +950,15 @@ connection. `/v1/status`, snapshot selection,
 [verified lookup](glossary.md#verified-lookup), and all projection reads use
 phase relations. The `/v1/status` phase-runner heartbeat
 threshold uses `BIGNAME_API_PHASE_HEARTBEAT_MAX_AGE_SECS` (60 seconds by
-default). Every API path is read-only, including verified records, automatic
+default). `BIGNAME_API_PUBLICATION_LAG_TOLERANCE_BLOCKS` (one block by default,
+negative values refused at startup) sets how many blocks the family publication
+may trail the stored head and still be served, beside the status thresholds
+`BIGNAME_API_STATUS_MAX_BLOCK_LAG` and `BIGNAME_API_STATUS_MAX_LAG_SECS`. It is
+one count for every chain, so the same value covers six times as much time on a
+12-second chain as on a 2-second one. Set above the status thresholds, it lets
+`/v1/status` report `stale` while the API still serves. It widens indexed
+serving only: verified calls run at the stored head, so while the publication
+trails the head the verified section on combined routes reports `stale`. Every API path is read-only, including verified records, automatic
 live fallback, primary names with an omitted `source`, and diagnostics.
 `BIGNAME_API_DATABASE_URL` may point at a primary or a physical streaming hot
 standby with the reviewed schema installed. Logical replicas are not supported:
@@ -1858,3 +1866,20 @@ briefly. `BIGNAME_DATABASE_MAX_CONNECTIONS` therefore bounds the collection
 reads one API process runs at once. Responses keep their shapes, status codes and cursors; a
 publication that lands while a page is read no longer turns it into
 `409 stale`.
+
+### Configurable publication lag tolerance
+
+The build that adds `BIGNAME_API_PUBLICATION_LAG_TOLERANCE_BLOCKS` (see
+[Surviving services](#surviving-services)) keeps today's behaviour at its
+default of one block. It changes only API, lookup and status read paths and the
+verified lookup's database guard, none of them hashed sources, so the
+[interpreter content hash](glossary.md#interpreter-content-hash) does not
+rotate and no redo is needed. It needs
+`20261001150000_lookup_guard_configured_publication_lag.sql`, which replaces
+`bigname_phase.revalidate_resolution_lookup_state` so the guard no longer fixes
+its own one-block bound: it still requires the head the lookup pinned and the
+exact publication the lookup captured, and the lookup applied the configured
+tolerance when it captured them. The schema-migration changes no rows. Apply it
+on the primary and wait for it to replay on any serving standby before raising
+the tolerance; with the old guard, a verified lookup against a publication more
+than one block behind is refused at revalidation.

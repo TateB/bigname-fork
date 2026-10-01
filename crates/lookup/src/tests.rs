@@ -37,6 +37,8 @@ const ETHEREUM_PRIOR_HASH: &str =
     "0x4444444444444444444444444444444444444444444444444444444444444444";
 const ETHEREUM_FAR_HASH: &str =
     "0x5555555555555555555555555555555555555555555555555555555555555555";
+const ETHEREUM_FARTHER_HASH: &str =
+    "0x6666666666666666666666666666666666666666666666666666666666666666";
 const BASE_HASH: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
 const UNIVERSAL_RESOLVER: &str = "0xeeeeeeee14d718c2b47d9923deab1335e144eeee";
 const ENS_REGISTRY: &str = "0x00000000000c2e074ec69a0dfb2997ba6c7d2e1e";
@@ -444,6 +446,7 @@ async fn rust_and_sql_indexed_answer_derivations_are_equivalent() -> AnyResult<(
         let mut snapshot = crate::store::load_snapshot(
             fixture.pool(),
             &LookupRequest::new(&fixture.logical_name_id, [&record_key])?,
+            bigname_storage::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS,
         )
         .await?;
         let comparison = &mut snapshot.execution_authority["family_comparison"];
@@ -795,7 +798,12 @@ async fn least_privileged_non_api_writer_keeps_its_existing_function_grants() ->
     assert_eq!(guard_access, (true, false, false));
 
     let request = lookup_request(&fixture.logical_name_id)?;
-    let snapshot = crate::store::load_snapshot(&writer_pool, &request).await?;
+    let snapshot = crate::store::load_snapshot(
+        &writer_pool,
+        &request,
+        bigname_storage::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS,
+    )
+    .await?;
 
     let mut writer_connection = writer_pool.acquire().await?;
     let comparison = &snapshot.execution_authority["family_comparison"];
@@ -1015,6 +1023,33 @@ async fn lookup_is_stale_while_project_cursor_lags_the_head_beyond_tolerance() -
     Ok(())
 }
 
+/// The engine's configured tolerance admits a publication further behind, and the database guard
+/// accepts it at write time because the head and publication are unchanged since capture.
+#[tokio::test]
+async fn lookup_admits_and_writes_within_a_configured_lag_tolerance() -> AnyResult<()> {
+    let (rpc_url, rpc_handle) =
+        spawn_mock_rpc(vec![RpcResponse::Result(encoded_text_result(LIVE_VALUE))]).await?;
+    let fixture = setup_fixture(FixtureKind::Ens, INDEXED_VALUE).await?;
+    advance_head_to(fixture.pool(), 12, ETHEREUM_FAR_HASH).await?;
+    let response = lookup_engine(fixture.pool(), &rpc_url)?
+        .with_publication_lag_tolerance_blocks(2)
+        .lookup(lookup_request(&fixture.logical_name_id)?)
+        .await?;
+    assert_eq!(response.records[0].ledger_action, LedgerAction::Written);
+    assert_eq!(ledger_count(fixture.pool()).await?, 1);
+    assert_hash_pinned(&join_rpc(rpc_handle).await?, ETHEREUM_FAR_HASH);
+
+    advance_head_to(fixture.pool(), 13, ETHEREUM_FARTHER_HASH).await?;
+    let error = lookup_engine(fixture.pool(), "http://127.0.0.1:1")?
+        .with_publication_lag_tolerance_blocks(2)
+        .lookup(lookup_request(&fixture.logical_name_id)?)
+        .await
+        .expect_err("three blocks behind is beyond a two-block tolerance");
+    assert_eq!(error.kind(), ErrorKind::Stale);
+    fixture.cleanup().await?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn lookup_completes_with_a_lagging_publication() -> AnyResult<()> {
     for running in [false, true] {
@@ -1086,6 +1121,9 @@ async fn lookup_publication_migration_preserves_guard_writer_and_privileges() ->
         include_str!("../../../migrations/20260929160000_remove_served_projections.sql"),
         include_str!("../../../migrations/20260930100000_read_only_lookup_guard.sql"),
         include_str!("../../../migrations/20260930230000_project_redo_execution_extent.sql"),
+        include_str!(
+            "../../../migrations/20261001150000_lookup_guard_configured_publication_lag.sql"
+        ),
     ] {
         raw_sql(migration).execute(fixture.pool()).await?;
     }
@@ -1746,9 +1784,12 @@ async fn event_linked_ownerless_name_loads_verified_snapshot_without_control_bin
     let fixture = setup_fixture(FixtureKind::Ens, INDEXED_VALUE).await?;
     make_fixture_ownerless(&fixture).await?;
 
-    let snapshot =
-        crate::store::load_snapshot(fixture.pool(), &lookup_request(&fixture.logical_name_id)?)
-            .await?;
+    let snapshot = crate::store::load_snapshot(
+        fixture.pool(),
+        &lookup_request(&fixture.logical_name_id)?,
+        bigname_storage::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS,
+    )
+    .await?;
     assert_eq!(snapshot.resolver_chain_id, ETHEREUM);
     assert_eq!(
         snapshot.indexed_answer(&RecordSelector::parse("text:url")?),
@@ -1825,9 +1866,13 @@ async fn lookup_snapshot_requires_readable_token_lineage_lineage() -> AnyResult<
     let token_lineage_id = "00000000-0000-0000-0000-000000000110";
     let losing_hash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
-    crate::store::load_snapshot(fixture.pool(), &lookup_request(&fixture.logical_name_id)?)
-        .await
-        .expect("winning identity anchors must load the lookup snapshot");
+    crate::store::load_snapshot(
+        fixture.pool(),
+        &lookup_request(&fixture.logical_name_id)?,
+        bigname_storage::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS,
+    )
+    .await
+    .expect("winning identity anchors must load the lookup snapshot");
 
     sqlx::query(
         "INSERT INTO chain_lineage
@@ -1863,10 +1908,13 @@ async fn lookup_snapshot_requires_readable_token_lineage_lineage() -> AnyResult<
     .await?;
     assert_eq!(row_local_state, "canonical");
 
-    let error =
-        crate::store::load_snapshot(fixture.pool(), &lookup_request(&fixture.logical_name_id)?)
-            .await
-            .expect_err("orphaned token lineage must hide the lookup snapshot");
+    let error = crate::store::load_snapshot(
+        fixture.pool(),
+        &lookup_request(&fixture.logical_name_id)?,
+        bigname_storage::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS,
+    )
+    .await
+    .expect_err("orphaned token lineage must hide the lookup snapshot");
     assert_eq!(error.kind(), ErrorKind::Unsupported);
 
     fixture.cleanup().await?;

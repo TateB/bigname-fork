@@ -159,6 +159,7 @@ pub(crate) async fn load_v2_primary_name_route_read(
         state.pool.clone(),
         state.lookup_chain_rpc_urls.clone(),
     )
+    .with_publication_lag_tolerance_blocks(crate::state::publication_lag_tolerance_blocks())
     .lookup_ens_primary_name_gated(&lookup_chain_id, address, move |claimed_name| async move {
         let outcome =
             match unverifiable_name_authority(&gate_pool, &gate_namespace, &claimed_name).await {
@@ -275,7 +276,7 @@ async fn current_primary_name_publication(
         false,
     )
     .await?;
-    let input = SnapshotSelectorInput::new(None, None, SnapshotConsistency::Head)
+    let input = crate::v2::snapshots::selector_input(None, None, SnapshotConsistency::Head)
         .map_err(snapshot_selection_api_error)?;
     match resolve_exact_name_snapshot_selection(phase_pool, &scope, &input).await {
         Ok(selected_snapshot) => {
@@ -297,6 +298,7 @@ async fn current_primary_name_publication(
                 &position.block_hash,
                 true,
                 false,
+                crate::state::publication_lag_tolerance_blocks(),
             )
             .await
             .map_err(|error| {
@@ -363,6 +365,7 @@ async fn require_primary_name_projection_position(
         &position.block_hash,
         true,
         false,
+        crate::state::publication_lag_tolerance_blocks(),
     )
     .await
     .map(|generation| generation.is_some())

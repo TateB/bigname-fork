@@ -270,14 +270,14 @@ mod tests {
         indexing::publication::require_published_head(&writer, CHAIN, HEAD).await?;
 
         // Live follow can store a new head before Project has published it. The
-        // benchmark requires the exact head, even though serving admits one-block lag.
+        // benchmark requires the exact head, even though serving admits a lagging publication.
         sqlx::query("INSERT INTO chain_lineage (chain_id, block_hash, parent_hash, block_number, block_timestamp, canonicality_state) SELECT chain_id, 'next-head', block_hash, block_number + 1, block_timestamp + interval '1 second', canonicality_state FROM chain_lineage WHERE chain_id=$1 AND block_number=$2")
             .bind(CHAIN).bind(HEAD).execute(&writer).await?;
         sqlx::query("UPDATE chain_heads SET latest_block_number=$2, latest_block_hash='next-head' WHERE chain_id=$1")
             .bind(CHAIN).bind(HEAD + 1).execute(&writer).await?;
         let error = indexing::publication::require_published_head(&writer, CHAIN, HEAD + 1)
             .await
-            .expect_err("one-block serving tolerance must not admit benchmark replay")
+            .expect_err("the serving lag tolerance must not admit benchmark replay")
             .to_string();
         assert!(
             error.contains("already be a completed Project publication"),
