@@ -321,6 +321,32 @@ fn key_tuple(cursor: &ReverseIdentityCursor) -> (bool, i16, &str, &str, &str) {
     )
 }
 
+/// Bound by `candidates_on`; the plan test prepares this exact text. The length bound matches
+/// `name_surfaces_name_order_idx`'s predicate.
+pub(crate) const REVERSE_CANDIDATES_SQL: &str = "/* storage:families.records.reverse_candidates */
+     SELECT DISTINCT surface.logical_name_id, surface.raw_name, surface.namespace, surface.namehash
+     FROM bigname_phase.name_surfaces surface
+     JOIN bigname_phase.chain_lineage lineage
+       ON lineage.chain_id = surface.chain_id AND lineage.block_hash = surface.block_hash
+     JOIN bigname_phase.project_family_marker marker ON marker.chain_id = surface.chain_id
+     WHERE surface.visibility_state = 'active' AND surface.raw_name <> ''
+       AND octet_length(surface.raw_name) <= 2000
+       AND surface.block_number <= marker.current_block_number
+       AND surface.canonicality_state IN ('canonical', 'safe', 'finalized')
+       AND lineage.canonicality_state IN ('canonical', 'safe', 'finalized')
+       AND surface.namespace = ANY($2)
+       AND ($10::text[] IS NULL OR surface.chain_id = ANY($10))
+       AND COALESCE(surface.raw_name = $3::jsonb ->> surface.namespace, false) = $4
+       AND EXISTS (
+           SELECT 1 FROM bigname_phase.project_address_name_index indexed
+           WHERE indexed.address = lower($1)
+             AND indexed.logical_name_id = surface.logical_name_id
+             AND indexed.chain_id = surface.chain_id AND indexed.relation = ANY($5)
+       )
+       AND ($6::text IS NULL OR (surface.raw_name, surface.namespace, surface.namehash) > ($6, $7, $8))
+     ORDER BY surface.raw_name, surface.namespace, surface.namehash, surface.logical_name_id
+     LIMIT $9";
+
 #[allow(clippy::too_many_arguments)]
 async fn candidates_on(
     conn: &mut PgConnection,
@@ -338,34 +364,21 @@ async fn candidates_on(
     } else {
         vec!["effective_controller"]
     };
-    sqlx::query_as(
-        "/* storage:families.records.reverse_candidates */
-         SELECT DISTINCT surface.logical_name_id, surface.raw_name, surface.namespace, surface.namehash
-         FROM bigname_phase.name_surfaces surface
-         JOIN bigname_phase.chain_lineage lineage
-           ON lineage.chain_id = surface.chain_id AND lineage.block_hash = surface.block_hash
-         JOIN bigname_phase.project_family_marker marker ON marker.chain_id = surface.chain_id
-         WHERE surface.visibility_state = 'active' AND surface.raw_name <> ''
-           AND surface.block_number <= marker.current_block_number
-           AND surface.canonicality_state IN ('canonical', 'safe', 'finalized')
-           AND lineage.canonicality_state IN ('canonical', 'safe', 'finalized')
-           AND surface.namespace = ANY($2)
-           AND ($10::text[] IS NULL OR surface.chain_id = ANY($10))
-           AND COALESCE(surface.raw_name = $3::jsonb ->> surface.namespace, false) = $4
-           AND EXISTS (
-               SELECT 1 FROM bigname_phase.project_address_name_index indexed
-               WHERE indexed.address = lower($1)
-                 AND indexed.logical_name_id = surface.logical_name_id
-                 AND indexed.chain_id = surface.chain_id AND indexed.relation = ANY($5)
-           )
-           AND ($6::text IS NULL OR (surface.raw_name, surface.namespace, surface.namehash) > ($6, $7, $8))
-         ORDER BY surface.raw_name, surface.namespace, surface.namehash, surface.logical_name_id
-         LIMIT $9",
-    )
-    .bind(&input.address).bind(namespaces).bind(primary).bind(is_primary).bind(relations)
-    .bind(after.map(|key| &key.0)).bind(after.map(|key| &key.1)).bind(after.map(|key| &key.2))
-    .bind(limit).bind(chains).persistent(false).fetch_all(conn).await
-    .context("failed to seek family reverse lookup candidates")
+    sqlx::query_as(REVERSE_CANDIDATES_SQL)
+        .bind(&input.address)
+        .bind(namespaces)
+        .bind(primary)
+        .bind(is_primary)
+        .bind(relations)
+        .bind(after.map(|key| &key.0))
+        .bind(after.map(|key| &key.1))
+        .bind(after.map(|key| &key.2))
+        .bind(limit)
+        .bind(chains)
+        .persistent(false)
+        .fetch_all(conn)
+        .await
+        .context("failed to seek family reverse lookup candidates")
 }
 
 async fn ensure_publications(conn: &mut PgConnection, chains: Option<&[String]>) -> Result<()> {

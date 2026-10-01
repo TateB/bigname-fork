@@ -452,7 +452,8 @@ collection route carry neither header.
   one completed projection-phase generation. For each reverse result, the
   readable name fetched with the candidate row is the common source for the
   emitted normalized and display names, label-derived fields, primary-name
-  ordering, the `is_primary` result, and the reverse cursor. A `resolves_to`
+  ordering, the `is_primary` result, and the reverse cursor. A name longer than
+  2000 bytes is never a reverse result, as for [search](#get-v1search). A `resolves_to`
   input additionally requires each resolver-record relation it serves to be
   published at or before the selected head and omits unreadable current names. Unsupported rows are also omitted except for the documented TLD
   [root-registry resolver pointer](glossary.md#root-registry-resolver-pointer)
@@ -3775,7 +3776,9 @@ introduces it rebuilds Project from full history before serving the option; see
   the failed admission terms, including when the redo begins during the read.
   A Project publication that becomes ready between admission reads with no
   redo involved is instead a readiness change and returns `409 conflict`.
-- Status semantics: no matches returns `200` with empty `data`. `q` is
+- Status semantics: no matches returns `200` with empty `data`. A stored name
+  longer than 2000 bytes is never a result, because search walks an index
+  that holds only shorter names. `q` is
   required; a missing or empty `q` returns `400 invalid_input`. The API treats
   `q` as an ENSIP-15 name fragment, normalizes it, and then applies the selected
   `match=prefix|contains` byte comparison directly to stored names. Invalid
@@ -4005,7 +4008,9 @@ For a registrar lease first identified by a later readable observation, registra
   `400 invalid_input`.
 - Response shape: `data` is a resolver overview in product vocabulary. The
   route includes route-local `bound_names: {data, page}`, a nested collection
-  of record-shaped name rows that replaces resolver-based name filtering.
+  of record-shaped name rows that replaces resolver-based name filtering. A
+  name longer than 2000 bytes is never listed, as for
+  [search](#get-v1search).
   `data.mirror` is present only when the resolver is a declared
   [ENSv1 mirror resolver](glossary.md#ensv1-mirror-resolver-ensv1_mirror_resolver):
   `{kind: "ensv1_registry", registry: {chain_id, address}}` names the ENSv1
