@@ -16,7 +16,7 @@
 //! classification row (`topology::overview`).
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
-use sqlx::{PgConnection, PgPool, Row};
+use sqlx::{PgConnection, Row};
 
 use super::{CoverageShape, batch};
 use crate::{
@@ -32,7 +32,7 @@ const BATCH_FLOOR: i64 = 200;
 /// The bound-name listing over the composed rows: up to `limit` names
 /// bound to `resolver_address` on `chain_id`, after `cursor`, in name order.
 pub async fn load_family_bound_names(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     chain_id: &str,
     resolver_address: &str,
     namespace: Option<&str>,
@@ -55,7 +55,7 @@ pub async fn load_family_bound_names(
             .unwrap_or(usize::MAX),
     ))
     .unwrap_or(i64::MAX);
-    let mut snapshot = batch::read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     // The walk reads family tables, which a rebuild empties: read the marker first, so a rebuild
     // refuses rather than answers a resolver with no names.
     batch::ensure_published(&mut snapshot, &[chain_id.to_owned()]).await?;
@@ -95,7 +95,7 @@ pub async fn load_family_bound_names(
             break;
         }
     }
-    snapshot.commit().await?;
+    snapshot.close().await?;
     Ok(out)
 }
 

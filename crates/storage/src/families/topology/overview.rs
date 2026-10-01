@@ -17,11 +17,11 @@
 //! row describes the family marker's publication: its `chain_positions` name the marker's block.
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 
 use crate::{
     ResolverCurrentRow,
-    families::name::{FamilyPublicationUnavailable, publication_on, read_snapshot},
+    families::name::{FamilyPublicationUnavailable, publication_on},
 };
 
 /// The `declared_summary` of an F3 row aliased `classification_row`, as a SQL expression: the
@@ -102,12 +102,12 @@ pub(crate) fn resolver_classification_relation() -> String {
 /// The overview row of `resolver_address` on `chain_id` from F3, at the family marker's
 /// publication; none when F3 holds no servable row for it.
 pub async fn load_family_resolver_current(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     chain_id: &str,
     resolver_address: &str,
 ) -> Result<Option<ResolverCurrentRow>> {
     let address = resolver_address.to_ascii_lowercase();
-    let mut snapshot = read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     let Some(publication) = publication_on(&mut snapshot, chain_id).await? else {
         return Err(FamilyPublicationUnavailable {
             chain_id: chain_id.to_owned(),
@@ -133,7 +133,7 @@ pub async fn load_family_resolver_current(
     .fetch_optional(&mut *snapshot)
     .await
     .with_context(|| format!("failed to load the resolver overview of {chain_id}:{address}"))?;
-    snapshot.commit().await?;
+    snapshot.close().await?;
     row.map(|row| {
         let support_status: String = row.try_get("support_status")?;
         let unsupported_reason: Option<String> = row.try_get("unsupported_reason")?;

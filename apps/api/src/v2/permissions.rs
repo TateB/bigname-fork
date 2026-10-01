@@ -118,7 +118,7 @@ pub(crate) async fn get_permissions(
         .as_ref()
         .map(|name| name.namespace.as_str())
         .or(params.namespace.as_deref());
-    let snapshot =
+    let mut snapshot =
         CollectionSnapshot::capture_for_namespace(&state, params.cursor.as_deref(), namespace)
             .await?;
 
@@ -148,9 +148,10 @@ pub(crate) async fn get_permissions(
                 .pair_support_resource_id
                 .into_iter()
                 .collect::<Vec<_>>();
-            let summaries = bigname_storage::load_serving_permission_summaries(&state.pool, &ids)
-                .await
-                .map_err(read_errors::support_error())?;
+            let summaries =
+                bigname_storage::load_serving_permission_summaries(snapshot.conn().await?, &ids)
+                    .await
+                    .map_err(read_errors::support_error())?;
             permission_support_for_resources(&ids, &summaries)
         } else {
             PermissionSupport::UNKNOWN
@@ -164,7 +165,7 @@ pub(crate) async fn get_permissions(
     }
 
     let storage_page = bigname_storage::load_serving_effective_permissions_page(
-        &state.pool,
+        snapshot.conn().await?,
         resolved.subject.as_deref(),
         resolved.resource_id,
         // A name filter already selected its registration inside the name's namespace.
@@ -190,14 +191,16 @@ pub(crate) async fn get_permissions(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
+    let block_bounds = snapshot.block_bounds();
+    let reads = snapshot.conn().await?;
     let permission_summaries =
-        bigname_storage::load_serving_permission_summaries(&state.pool, &support_resource_ids)
+        bigname_storage::load_serving_permission_summaries(&mut *reads, &support_resource_ids)
             .await
             .map_err(read_errors::support_error())?;
     // The selected resource is included so an empty page still serves its restrictions under
     // the name's registration_id.
     let current_names =
-        bigname_storage::load_current_names_by_resource_ids(&state.pool, &support_resource_ids)
+        bigname_storage::load_current_names_by_resource_ids(&mut *reads, &support_resource_ids)
             .await
             .map_err(super::name_rows_error(
                 super::SnapshotReadResource::Resource,
@@ -209,10 +212,10 @@ pub(crate) async fn get_permissions(
         .filter(|id| !current_names.contains_key(id))
         .collect::<Vec<_>>();
     let registry_registrations = bigname_storage::load_registry_permission_registration_map(
-        &state.pool,
+        reads,
         &nameless_resource_ids,
         None,
-        &snapshot.block_bounds(),
+        &block_bounds,
     )
     .await
     .map_err(|_| V2Error::internal_error("failed to load permission registrations"))?;

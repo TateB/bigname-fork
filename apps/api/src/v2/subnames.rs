@@ -115,13 +115,13 @@ pub(crate) async fn get_subnames(
     let include_counts = subnames_include_counts(&params.include)?;
 
     let logical_name_id = normalized.logical_name_id(&namespace);
-    let snapshot = super::collection_snapshot::CollectionSnapshot::capture_for_namespace(
+    let mut snapshot = super::collection_snapshot::CollectionSnapshot::capture_for_namespace(
         &state,
         params.cursor.as_deref(),
         Some(&namespace),
     )
     .await?;
-    let parent = bigname_storage::load_name_current(&state.pool, &logical_name_id)
+    let parent = bigname_storage::load_name_current(snapshot.conn().await?, &logical_name_id)
         .await
         .map_err(super::name_rows_error(
             super::SnapshotReadResource::Name,
@@ -175,7 +175,7 @@ pub(crate) async fn get_subnames(
         .transpose()?;
 
     let storage_page = bigname_storage::load_children_current_page_filtered(
-        &state.pool,
+        snapshot.conn().await?,
         &parent.logical_name_id,
         &filter,
         storage_cursor.as_ref(),
@@ -198,7 +198,7 @@ pub(crate) async fn get_subnames(
         .map(|row| row.child_logical_name_id.clone())
         .collect::<Vec<_>>();
     let child_name_rows = bigname_storage::load_name_current_by_logical_name_ids(
-        &state.pool,
+        snapshot.conn().await?,
         &child_logical_name_ids,
     )
     .await
@@ -212,20 +212,23 @@ pub(crate) async fn get_subnames(
         },
     ))?;
     let child_summaries = if include_counts {
-        bigname_storage::load_children_current_summaries(&state.pool, &child_logical_name_ids)
-            .await
-            .map_err(super::name_rows_error(
-                super::SnapshotReadResource::Name,
-                |_| {
-                    V2Error::internal_error(format!(
-                        "failed to load subname counts for {}/{}",
-                        namespace, normalized.normalized_name
-                    ))
-                },
-            ))?
-            .into_iter()
-            .map(|summary| (summary.parent_logical_name_id.clone(), summary))
-            .collect()
+        bigname_storage::load_children_current_summaries(
+            snapshot.conn().await?,
+            &child_logical_name_ids,
+        )
+        .await
+        .map_err(super::name_rows_error(
+            super::SnapshotReadResource::Name,
+            |_| {
+                V2Error::internal_error(format!(
+                    "failed to load subname counts for {}/{}",
+                    namespace, normalized.normalized_name
+                ))
+            },
+        ))?
+        .into_iter()
+        .map(|summary| (summary.parent_logical_name_id.clone(), summary))
+        .collect()
     } else {
         std::collections::BTreeMap::new()
     };
@@ -242,7 +245,8 @@ pub(crate) async fn get_subnames(
     let bounds = snapshot.block_bounds();
     for (chain, names) in pointer_names_by_chain {
         if let Some(block) = bounds.get(&chain) {
-            subregistries.extend(load_subregistry_refs(&state.pool, &names, Some(*block)).await?);
+            subregistries
+                .extend(load_subregistry_refs(snapshot.conn().await?, &names, Some(*block)).await?);
         }
     }
 

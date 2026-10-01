@@ -117,8 +117,8 @@ const CURRENT_FAMILY_MARKER_PUBLICATION: &str = concat!(
 /// `require_position_is_publication` additionally requires the exact selected position.
 /// `require_interpret_not_redo` requires a completed/running Interpret row without redo;
 /// any Interpret or Project redo overlapping the publication is refused regardless of it.
-pub async fn load_served_project_generation(
-    pool: &PgPool,
+pub async fn load_served_project_generation<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     chain_id: &str,
     block_number: i64,
     block_hash: &str,
@@ -134,7 +134,7 @@ pub async fn load_served_project_generation(
         .bind(PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS)
         .bind(require_position_is_publication)
         .bind(require_interpret_not_redo)
-        .fetch_optional(pool)
+        .fetch_optional(executor)
         .await
 }
 

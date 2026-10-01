@@ -3,19 +3,20 @@ use crate::v2::collection_snapshot::CollectionSnapshot;
 
 const MAX_INLINE_GRANT_ROWS: u64 = 1_000;
 
-/// The grant read is not pinned to `snapshot`, so an overflow is only reported for a publication
-/// that is still the captured one. The under-budget path relies on the caller's final fence.
+/// The grants of the page's resources, read on the page's snapshot.
 pub(super) async fn load_rows(
     state: &AppState,
-    snapshot: &CollectionSnapshot,
+    snapshot: &mut CollectionSnapshot,
     ids: &[sqlx::types::Uuid],
     namespace: Option<&str>,
     returned_resources: impl Iterator<Item = sqlx::types::Uuid>,
 ) -> V2Result<Vec<EffectivePermissionRow>> {
     #[cfg(test)]
     grant_read_test_hooks::run(&state.pool).await?;
+    #[cfg(not(test))]
+    let _ = state;
     let rows = bigname_storage::load_bounded_effective_permissions_by_resource_ids(
-        &state.pool,
+        snapshot.conn().await?,
         ids,
         namespace,
         MAX_INLINE_GRANT_ROWS,
@@ -33,7 +34,6 @@ pub(super) async fn load_rows(
     // serialized expansion, not only distinct storage rows or permission subjects.
     let expanded_rows: usize = rows.iter().map(|row| multiplicity[&row.resource_id]).sum();
     if expanded_rows > MAX_INLINE_GRANT_ROWS as usize {
-        snapshot.finish(state).await?;
         return Err(V2Error::unsupported(
             "inline role_summary exceeds 1000 total grant rows; omit include and paginate /v1/permissions using the returned permission handle as registration_id; preserve only an explicitly requested namespace and do not add name or address filters",
         ));

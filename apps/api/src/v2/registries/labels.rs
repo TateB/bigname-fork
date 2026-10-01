@@ -65,12 +65,13 @@ pub(crate) async fn get_registry_labels(
     let normalized_address = parse_evm_address(&address, "address").map_err(api_error_to_v2)?;
     let include_counts = labels_include_counts(&params.include)?;
     let owner = labels_owner_filter(params.owner.as_deref(), params.exclude_owner.as_deref())?;
-    let collection = super::super::collection_snapshot::CollectionSnapshot::capture_for_namespace(
-        &state,
-        params.cursor.as_deref(),
-        Some("ens"),
-    )
-    .await?;
+    let mut collection =
+        super::super::collection_snapshot::CollectionSnapshot::capture_for_namespace(
+            &state,
+            params.cursor.as_deref(),
+            Some("ens"),
+        )
+        .await?;
     let selected = super::super::resolve_v2_snapshot_for(
         &state.pool,
         &super::super::resolver_snapshot_scope(chain_id_slug)?,
@@ -87,7 +88,7 @@ pub(crate) async fn get_registry_labels(
     };
 
     bigname_storage::load_registry_contract(
-        &state.pool,
+        collection.conn().await?,
         chain_id_slug,
         &normalized_address,
         as_of_block,
@@ -108,7 +109,7 @@ pub(crate) async fn get_registry_labels(
         })
         .transpose()?;
     let serving = bigname_storage::load_registry_serving_pointer(
-        &state.pool,
+        collection.conn().await?,
         chain_id_slug,
         &normalized_address,
         as_of_block,
@@ -130,7 +131,7 @@ pub(crate) async fn get_registry_labels(
     };
 
     let storage_page = bigname_storage::load_registry_children_current_page(
-        &state.pool,
+        collection.conn().await?,
         &serving.logical_name_id,
         &normalized_address,
         owner,
@@ -147,15 +148,17 @@ pub(crate) async fn get_registry_labels(
         .iter()
         .map(|row| row.child_logical_name_id.clone())
         .collect::<Vec<_>>();
-    let child_name_rows =
-        bigname_storage::load_name_current_by_logical_name_ids(&state.pool, &child_ids)
-            .await
-            .map_err(crate::v2::name_rows_error(
-                crate::v2::SnapshotReadResource::Registry,
-                |_| internal_error(),
-            ))?;
+    let child_name_rows = bigname_storage::load_name_current_by_logical_name_ids(
+        collection.conn().await?,
+        &child_ids,
+    )
+    .await
+    .map_err(crate::v2::name_rows_error(
+        crate::v2::SnapshotReadResource::Registry,
+        |_| internal_error(),
+    ))?;
     let child_summaries = if include_counts {
-        bigname_storage::load_children_current_summaries(&state.pool, &child_ids)
+        bigname_storage::load_children_current_summaries(collection.conn().await?, &child_ids)
             .await
             .map_err(crate::v2::name_rows_error(
                 crate::v2::SnapshotReadResource::Registry,
@@ -173,7 +176,7 @@ pub(crate) async fn get_registry_labels(
             .filter_map(|row| row.resource_id)
             .collect::<Vec<_>>();
         super::role_counts::label_role_counts(
-            &state.pool,
+            collection.conn().await?,
             chain_id_slug,
             &normalized_address,
             &resources,
@@ -183,7 +186,8 @@ pub(crate) async fn get_registry_labels(
     } else {
         BTreeMap::new()
     };
-    let mut subregistries = load_subregistry_refs(&state.pool, &child_ids, as_of_block).await?;
+    let mut subregistries =
+        load_subregistry_refs(collection.conn().await?, &child_ids, as_of_block).await?;
 
     let next_cursor = storage_page.next_cursor.as_ref().map(|cursor| {
         encode(&labels_cursor_payload(

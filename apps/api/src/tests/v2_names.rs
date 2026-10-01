@@ -640,57 +640,37 @@ async fn v2_names_cursor_holds_no_publication_and_continues_across_one() -> Resu
 }
 
 #[tokio::test]
-async fn v2_collection_revalidates_publication_after_reads() -> Result<()> {
+async fn v2_collection_reads_one_publication_across_a_republish() -> Result<()> {
     let database = TestDatabase::new_migrated().await?;
     seed_v2_names_fixture(&database).await?;
     publish_v2_names_fixture(&database).await?;
     let state = database.app_state();
-    let snapshot = crate::v2::collection_snapshot::CollectionSnapshot::capture_for_namespace(
+    let mut snapshot = crate::v2::collection_snapshot::CollectionSnapshot::capture_for_namespace(
         &state,
         None,
         Some("ens"),
     )
     .await
     .expect("capture ready publication");
-    assert!(snapshot.finish(&state).await.is_ok());
+    snapshot.conn().await.expect("the snapshot serves the capture");
     publish_v2_names_fixture(&database).await?;
-    let error = snapshot
+    snapshot
         .finish(&state)
         .await
-        .expect_err("republished state cannot finish prior read");
-    assert_eq!(error.code(), crate::v2::ErrorCode::Stale);
-    // A first page carried no cursor, so there is none to drop: the request is retried.
-    assert_eq!(
-        error.envelope().error.message,
-        "collection publication changed during the read; retry the request"
-    );
+        .expect("a republish after the snapshot began does not refuse the read");
 
-    // A continued page retries with the same cursor.
-    let _first = crate::v2::collection_snapshot::CollectionSnapshot::capture_for_namespace(
+    let mut late = crate::v2::collection_snapshot::CollectionSnapshot::capture_for_namespace(
         &state,
         None,
         Some("ens"),
     )
     .await
     .expect("capture republished publication");
-    let cursor = crate::v2::encode(&crate::v2::CursorPayload::new(
-        "test",
-        Default::default(),
-        Default::default(),
-        None,
-    ));
-    let continued = crate::v2::collection_snapshot::CollectionSnapshot::capture_for_namespace(
-        &state,
-        Some(&cursor),
-        Some("ens"),
-    )
-    .await
-    .expect("the continuation reads the current publication");
     publish_v2_names_fixture(&database).await?;
-    let error = continued
-        .finish(&state)
+    let error = late
+        .conn()
         .await
-        .expect_err("republished state cannot finish a continued read");
+        .expect_err("a republish before the snapshot began is retried");
     assert_eq!(error.code(), crate::v2::ErrorCode::Stale);
     assert_eq!(
         error.envelope().error.message,
@@ -966,7 +946,7 @@ async fn v2_collection_explicit_namespace_ignores_unavailable_other_namespace() 
         .await?;
     rebuild_fixture_families(&database.pool, "ethereum-mainnet", 100, "0xcollection-head").await?;
     let state = database.app_state();
-    let ens = crate::v2::collection_snapshot::CollectionSnapshot::capture_for_namespace(
+    let mut ens = crate::v2::collection_snapshot::CollectionSnapshot::capture_for_namespace(
         &state,
         None,
         Some("ens"),

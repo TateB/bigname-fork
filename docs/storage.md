@@ -2004,8 +2004,9 @@ rebuilt.
 Every selection also requires the current Project generation to be complete at
 the newest stored head with the API's compiled interpreter content hash. The
 API reads only projections eligible for the selected positions and revalidates
-the Project generation before returning. A concurrent head or generation
-change returns `409 stale`.
+the Project generation before returning; a current-state collection checks it
+instead on its one read snapshot, before its first read. A concurrent head or
+generation change before that check returns `409 stale`.
 
 ### History page order
 

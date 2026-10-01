@@ -7,7 +7,6 @@
 //! order over that column so the cursor logic is written once per sort, not once per filter.
 
 use anyhow::Result;
-use sqlx::PgPool;
 
 use super::types::{ChildrenCurrentKeysetCursor, ChildrenCurrentPage, ChildrenCurrentPageFilter};
 
@@ -18,11 +17,11 @@ use super::types::{ChildrenCurrentKeysetCursor, ChildrenCurrentPage, ChildrenCur
 /// the same `sort` and `order`; a cursor whose sort value kind does not match the sort is
 /// rejected here rather than silently re-anchored.
 pub async fn load_children_current_page_filtered(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     parent_logical_name_id: &str,
     filter: &ChildrenCurrentPageFilter<'_>,
     cursor: Option<&ChildrenCurrentKeysetCursor>,
     page_size: u64,
 ) -> Result<ChildrenCurrentPage> {
-    super::families::page(pool, parent_logical_name_id, filter, cursor, page_size).await
+    super::families::page(db.into(), parent_logical_name_id, filter, cursor, page_size).await
 }

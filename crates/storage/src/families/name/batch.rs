@@ -25,7 +25,7 @@ use super::{
     serving::{PointerRow, ownerless_serving, root_tld_serving},
 };
 use crate::{
-    NameCurrentRow,
+    NameCurrentRow, ReadDb,
     families::control::{
         lifecycle::{
             AuthoritySelection, Clock, NameFacts, NameInput, NamePlace, evaluate,
@@ -128,14 +128,14 @@ pub(crate) async fn ensure_published(
     Ok(out)
 }
 
-/// [`ensure_published`] on its own snapshot, for a caller holding a pool.
+/// [`ensure_published`] on the caller's snapshot, or on its own for a pool.
 pub async fn ensure_family_publications(
-    pool: &PgPool,
+    db: impl Into<ReadDb<'_>>,
     chain_ids: &[String],
 ) -> Result<Vec<FamilyPublication>> {
-    let mut snapshot = read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     let publications = ensure_published(&mut snapshot, chain_ids).await?;
-    snapshot.commit().await?;
+    snapshot.close().await?;
     Ok(publications)
 }
 
@@ -171,42 +171,42 @@ pub(crate) async fn publication(
 /// The composed row of one name, with the single-name coverage shape; none when the name has
 /// no readable active surface or its chain no family marker.
 pub async fn load_family_name(
-    pool: &PgPool,
+    db: impl Into<ReadDb<'_>>,
     logical_name_id: &str,
 ) -> Result<Option<NameCurrentRow>> {
-    let mut snapshot = read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     let mut rows = load(
         &mut snapshot,
         &[logical_name_id.to_owned()],
         CoverageShape::WithBasis,
     )
     .await?;
-    snapshot.commit().await?;
+    snapshot.close().await?;
     Ok(rows.remove(logical_name_id))
 }
 
 /// The composed rows of `logical_name_ids` keyed by name, missing names omitted, as
 /// `load_name_current_by_logical_name_ids` serves them.
 pub async fn load_family_names_by_logical_name_ids(
-    pool: &PgPool,
+    db: impl Into<ReadDb<'_>>,
     logical_name_ids: &[String],
 ) -> Result<BTreeMap<String, NameCurrentRow>> {
-    let mut snapshot = read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     let rows = load(&mut snapshot, logical_name_ids, CoverageShape::Plain).await?;
-    snapshot.commit().await?;
+    snapshot.close().await?;
     Ok(rows)
 }
 
 /// One composed row per resource: of the names whose row is bound to the resource, the first by
 /// raw name then name id (`load_current_names_by_resource_ids`).
 pub async fn load_family_names_by_resource_ids(
-    pool: &PgPool,
+    db: impl Into<ReadDb<'_>>,
     resource_ids: &[Uuid],
 ) -> Result<BTreeMap<Uuid, NameCurrentRow>> {
     if resource_ids.is_empty() {
         return Ok(BTreeMap::new());
     }
-    let mut snapshot = read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     let names: Vec<String> = sqlx::query_scalar(
         "/* storage:families.name.by_resource */
          SELECT DISTINCT candidate.logical_name_id
@@ -230,7 +230,7 @@ pub async fn load_family_names_by_resource_ids(
     .await
     .context("failed to order the names bound to resources")?;
     let mut rows = load(&mut snapshot, &names, CoverageShape::Plain).await?;
-    snapshot.commit().await?;
+    snapshot.close().await?;
     let mut out: BTreeMap<Uuid, NameCurrentRow> = BTreeMap::new();
     for name in ordered {
         let Some(row) = rows.remove(&name) else {

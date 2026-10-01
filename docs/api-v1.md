@@ -162,12 +162,15 @@ For a registrar lease first identified by a later readable observation, registra
 `GET /v1/permissions` and `GET /v1/addresses/{address}/names?include=role_summary`
 read current permission rows and per-resource permission summaries. Canonical
 identity checks exclude rows from an orphaned chain lineage. These routes capture
-the project publication for each request and revalidate it before returning.
+the project publication for each request and read the page, its counts and
+permission summaries on one read-only `REPEATABLE READ` database snapshot of it.
 Rows use the binding selected by Project. A later Interpret binding closure does
 not change the published collection's membership or count; the next Project
 publication installs the replacement or removal. Canonicality checks still apply.
-A publication changed during the request returns `409 stale` asking to retry
-with the same cursor. Publication changes between pages do not invalidate it.
+A publication that lands between admission and the first read returns
+`409 stale` asking to retry with the same cursor; a publication during the read
+does not affect the page. Publication changes between pages do not invalidate
+the cursor.
 The base address-name collection remains available without the expansion.
 
 An approved ENSv1 or Basenames registry `ApprovalForAll` row is effective for a
@@ -610,9 +613,10 @@ Rules:
   and permission collections disclose `meta.as_of` and omit `meta.as_of_token`
   because old publications are not retained for collection replay. Their
   [current-state list cursors](glossary.md#current-state-list-cursor) hold a
-  position that each continuation reads from the current publication; a
-  publication changed during the request asks to retry with the same cursor
-  (see [current-state list cursors](#current-state-list-cursors)). History collections (`/v1/events`, name history, and address
+  position that each continuation reads from the current publication. Each page
+  is read on one database snapshot of the publication `meta.as_of` reports; a
+  publication that lands before the page's first read asks to retry with the
+  same cursor (see [current-state list cursors](#current-state-list-cursors)). History collections (`/v1/events`, name history, and address
   history) disclose in `meta.as_of` the publication captured when the request
   was admitted and do not bind cursors to it; see [Cursors And Pagination](#cursors-and-pagination).
   `/v1/search` reports request-scoped `meta.as_of` as
@@ -866,8 +870,9 @@ interpreter generation or on an orphaned fork is unavailable.
 
 The API captures and rechecks the marker's `sequence` around indexed reads.
 Collection cursors carry no publication generation. Each current-state page
-captures and rechecks its own publication; later pages read the then-current
-rows after the cursor position. See [current-state list cursors](#current-state-list-cursors)
+captures its own publication and checks it again on its read snapshot before
+the first read; later pages read the then-current rows after the cursor
+position. See [current-state list cursors](#current-state-list-cursors)
 for explicit `at` pins and legacy cursor compatibility.
 
 Collection expiry filters, including `include_expired=false`, use the published
@@ -920,9 +925,9 @@ Composed names also refuse a publication while Interpret or Project has a redo
 whose range overlaps it. Interpret's normalization-flag recompute can change a
 surface's visibility before the required Project replay publishes the new name
 state; finishing Interpret alone does not make the old publication readable.
-The composed reader and the collection's final generation check both enforce
-this rule. Diagnostic reads that do not compose published names keep their
-existing snapshot selection. Event diagnostics still return their audit rows
+The composed reader and the collection's generation check on its read snapshot
+both enforce this rule. Diagnostic reads that do not compose published names
+keep their existing snapshot selection. Event diagnostics still return their audit rows
 when the name publication is unavailable, omitting the optional name attachment.
 Resolver bound-name pages require the selected family publication even when the
 page is empty, so an older `at` answers
@@ -977,11 +982,11 @@ hash) it answers `409 stale` like the composed reads, never an empty list.
 Indexed lookup names, record inventories, address-name relations, resolver
 overviews and bound names all use the selected family publication. Composition
 has no historical per-name row to admit below that publication. Current reads
-capture and revalidate its generation; history routes retain their documented
-event windows and audit semantics. One exception: the registry overview's
-`counts.labels` is read after that revalidation from its own snapshot of the
-current publication, so `meta.as_of` does not cover it
-([registry overview](api-v1-routes.md#get-v1registrieschain_idaddress)).
+capture its generation; current-state collections, the resolver and registry
+overviews (including the registry's `counts.labels`) and name detail's
+`include=counts` then read on one database snapshot that is checked against
+that generation before the first read. History routes retain their documented
+event windows and audit semantics.
 
 ### Tier 3: Diagnostics
 
@@ -1578,10 +1583,14 @@ it runs and returns the rows that sort after that position:
   selected position. The pin is a chain position, not a publication generation:
   a same-block rebuild does not invalidate the cursor. See each route's
   historical availability and finality constraints.
-- A publication that lands while one page is being read still refuses that
-  request with a retryable error, and retrying with the same cursor then
-  continues. Current-state product collections return `409 stale` with a message
-  asking to retry; `GET /v1/search` keeps its
+- Every one of these collections except `GET /v1/search` reads a page on one
+  read-only `REPEATABLE READ` database snapshot of the publication captured at
+  admission, which `meta.as_of` reports. A publication that lands between
+  admission and the page's first read returns `409 stale` with a message asking
+  to retry, and retrying with the same cursor then continues; a publication
+  during the read does not affect the page. A change to the public namespace
+  manifests during the read returns the same retryable `409 stale`.
+  `GET /v1/search` keeps its
   documented request-scope recheck, which returns `409 conflict` for a head,
   publication, or readiness change and `409 stale` when an Interpret redo is
   involved (see [`GET /v1/search`](api-v1-routes.md#get-v1search)).
