@@ -35,7 +35,8 @@ pub struct VerifiedRpcEndpoint {
 
 /// Checks every RPC source of every chain, whatever its role, and every hydration URL. Direct
 /// Reth DB sources compare their stored genesis when they open, and Coinbase SQL is not an RPC
-/// endpoint. Any failure refuses the start; the error and log name the chain, source and both
+/// endpoint; nor is a source whose endpoint is not an http(s) URL, such as a fixture
+/// placeholder, which no RPC provider accepts. Any failure refuses the start; the error and log name the chain, source and both
 /// identities, never the URL.
 pub async fn verify_all<'a>(
     sources: impl IntoIterator<Item = &'a SourceConfig>,
@@ -45,7 +46,15 @@ pub async fn verify_all<'a>(
     let mut checks = JoinSet::new();
     let sources = sources
         .into_iter()
-        .filter(|source| normalized_kind(&source.source_kind) == ProviderKind::Rpc)
+        .filter(|source| {
+            normalized_kind(&source.source_kind) == ProviderKind::Rpc
+                && source
+                    .endpoint()
+                    .split_once("://")
+                    .is_some_and(|(scheme, _)| {
+                        scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+                    })
+        })
         .map(|source| {
             (
                 source.chain_id.clone(),
@@ -169,4 +178,40 @@ pub async fn persist(pool: &PgPool, chains: &[ChainConfig]) -> RunnerResult<()> 
         crate::ingest_cursor_config::record_verified_rpc_chain(pool, &source).await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::SeedBasis, phase::PhaseName, runner::RedoPhase};
+
+    #[tokio::test]
+    async fn a_source_without_an_http_endpoint_is_not_checked() {
+        let fixture = SourceConfig::new(
+            "ethereum-mainnet",
+            "e2e-fixture",
+            "fixture",
+            SeedBasis::NewSignatureRange,
+            0,
+            "fixture://upfront",
+        )
+        .unwrap();
+        let verified = verify_all([&fixture], &ChainRpcUrls::default(), RpcChainCheck::Full)
+            .await
+            .unwrap();
+        assert!(verified.is_empty());
+    }
+
+    #[test]
+    fn an_interpret_redo_checks_its_sources_because_discovery_repair_can_ingest() {
+        for (phase, reads) in [
+            (RedoPhase::Phase(PhaseName::Ingest), true),
+            (RedoPhase::Phase(PhaseName::Interpret), true),
+            (RedoPhase::Phase(PhaseName::Verify), true),
+            (RedoPhase::All, true),
+            (RedoPhase::Phase(PhaseName::Project), false),
+        ] {
+            assert_eq!(phase.reads_sources(), reads, "{phase:?}");
+        }
+    }
 }

@@ -26,6 +26,17 @@ impl Drop for Node {
 
 impl Node {
     async fn start(chain_id: &str, genesis: Option<&str>) -> Result<Self> {
+        Self::stalling(chain_id, genesis, None).await
+    }
+
+    /// Like [`Node::start`], but holds the first `eth_getBlockByNumber` for `block` (a hex
+    /// quantity) for the given time before answering it.
+    async fn stalling(
+        chain_id: &str,
+        genesis: Option<&str>,
+        stall: Option<(&'static str, Duration)>,
+    ) -> Result<Self> {
+        let stall = Arc::new(Mutex::new(stall));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let endpoint = format!("http://user:secret@{}/v1/apikey", listener.local_addr()?);
         let methods = Arc::new(Mutex::new(Vec::new()));
@@ -35,6 +46,7 @@ impl Node {
         let listener = tokio::spawn(async move {
             while let Ok((mut socket, _)) = listener.accept().await {
                 let seen = Arc::clone(&seen);
+                let stall = Arc::clone(&stall);
                 let chain_id = chain_id.clone();
                 let genesis = genesis.clone();
                 tokio::spawn(async move {
@@ -54,6 +66,24 @@ impl Node {
                         seen.lock().unwrap().push(method);
                         json!({"jsonrpc": "2.0", "id": call["id"], "result": result})
                     };
+                    let calls = request
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_else(|| vec![request.clone()]);
+                    let delay = {
+                        let mut stall = stall.lock().unwrap();
+                        let hit = stall.is_some_and(|(block, _)| {
+                            calls.iter().any(|call| {
+                                call["method"] == "eth_getBlockByNumber"
+                                    && call["params"][0] == block
+                            })
+                        });
+                        if hit {
+                            stall.take().map(|(_, delay)| delay)
+                        } else {
+                            None
+                        }
+                    };
                     let response = match request.as_array() {
                         Some(calls) => Value::Array(calls.iter().map(answer).collect()),
                         None => answer(&request),
@@ -63,7 +93,10 @@ impl Node {
                         "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{response}",
                         response.len()
                     );
-                    socket.write_all(reply.as_bytes()).await.unwrap();
+                    if let Some(delay) = delay {
+                        tokio::time::sleep(delay).await;
+                    }
+                    let _ = socket.write_all(reply.as_bytes()).await;
                 });
             }
         });
@@ -131,26 +164,24 @@ async fn a_wrong_chain_id_is_refused_without_retry_or_url() -> Result<()> {
         (mismatch.expected_chain_id, mismatch.observed_chain_id),
         (1, Some(11_155_111))
     );
-    assert_eq!(
-        (
-            mismatch.expected_genesis_hash.as_deref(),
-            mismatch.observed_genesis_hash.as_deref()
-        ),
-        (Some(MAINNET_GENESIS), Some(SEPOLIA_GENESIS))
-    );
+    assert_eq!(mismatch.observed_genesis_hash, None);
     assert!(!is_retryable(&error));
     let classified = provider_error("failed to fetch ingest target heads", error);
     assert_eq!(classified.kind(), crate::ErrorKind::Configuration);
     assert_eq!(classified.rpc_chain_mismatch(), Some(&mismatch));
     let rendered = classified.to_string();
-    for needle in ["ethereum-mainnet", "primary", "11155111", MAINNET_GENESIS] {
+    for needle in ["ethereum-mainnet", "primary", "11155111"] {
         assert!(rendered.contains(needle), "{rendered} lacks {needle}");
     }
     for secret in ["secret", "apikey", "127.0.0.1"] {
         assert!(!rendered.contains(secret), "{rendered} leaks {secret}");
     }
     assert_eq!(node.count("eth_chainId"), 1);
-    assert_eq!(node.count("eth_getBlockByNumber"), 1);
+    assert_eq!(
+        node.count("eth_getBlockByNumber"),
+        0,
+        "a wrong chain id is refused before block 0 is asked for"
+    );
 
     provider.heads().await.unwrap_err();
     assert_eq!(node.count("eth_chainId"), 2, "a refusal is never trusted");
@@ -281,5 +312,58 @@ async fn verification_references_and_one_shot_checks_share_the_guard() -> Result
     .await
     .unwrap_err();
     assert_eq!(error.kind(), crate::ErrorKind::Configuration);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_retry_on_a_client_rebuilt_after_a_timeout_is_checked_first() -> Result<()> {
+    let node = Node::stalling(
+        "0x1",
+        Some(MAINNET_GENESIS),
+        Some(("0x9", Duration::from_secs(2))),
+    )
+    .await?;
+    let mut provider = node.guarded("ethereum-mainnet", RpcChainCheck::Full)?;
+    provider.client = super::http_client::RecoveringHttpClient::new(
+        Duration::from_secs(1),
+        Duration::from_millis(200),
+    )?;
+
+    provider.resolve(&[9]).await?;
+
+    assert_eq!(
+        node.methods.lock().unwrap()[..],
+        [
+            "eth_chainId",
+            "eth_getBlockByNumber",
+            "eth_getBlockByNumber",
+            "eth_chainId",
+            "eth_getBlockByNumber",
+            "eth_getBlockByNumber",
+        ],
+        "the timed-out read rebuilt the client, which was checked before the retry"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_client_rebuilt_while_the_check_runs_is_checked_again() -> Result<()> {
+    let node = Node::stalling(
+        "0x1",
+        Some(MAINNET_GENESIS),
+        Some(("0x0", Duration::from_millis(300))),
+    )
+    .await?;
+    let provider = node.guarded("ethereum-mainnet", RpcChainCheck::Full)?;
+
+    let rebuild = async {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        provider.client.rebuild();
+    };
+    let (checked, ()) = tokio::join!(provider.ensure_chain(), rebuild);
+    checked?;
+
+    assert_eq!(node.count("eth_chainId"), 2);
+    assert!(provider.chain_verified_for(provider.client.client_id()));
     Ok(())
 }

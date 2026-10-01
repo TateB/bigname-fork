@@ -61,3 +61,16 @@ async fn an_endpoint_serving_another_chain_refuses_the_start_and_a_dead_one_warn
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn base_sepolia_is_checked_against_the_api_chain_registry() {
+    let sepolia = sepolia_node().await;
+    let error = ensure_rpc_chains(&urls(&[("base-sepolia", &sepolia)]), true)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("expected chain id 84532, observed 11155111"),
+        "{error}"
+    );
+}

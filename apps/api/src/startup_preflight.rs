@@ -32,7 +32,13 @@ pub(crate) async fn ensure_verified_lookup_ddl_available(pool: &PgPool) -> Resul
 /// answers.
 pub(crate) async fn ensure_rpc_chains(urls: &ChainRpcUrls, check_genesis: bool) -> Result<()> {
     for (chain, _) in urls.iter() {
-        match verify_chain_rpc_url(urls, chain, check_genesis).await {
+        let Some(expected_chain_id) = crate::v2::slug_to_numeric(chain) else {
+            bail!(
+                "API RPC chain check refused to start: chain {chain} has no known EIP-155 chain \
+                 id, so its RPC endpoint cannot be checked"
+            );
+        };
+        match verify_chain_rpc_url(urls, chain, expected_chain_id, check_genesis).await {
             Ok(()) => {}
             Err(RpcChainCheckError::Refused(message)) => {
                 bail!("API RPC chain check refused to start: {message}")

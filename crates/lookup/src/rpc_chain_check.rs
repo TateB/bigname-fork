@@ -10,7 +10,7 @@ use crate::rpc::{ChainRpcUrls, JsonRpcHttpClient};
 /// Why a configured endpoint failed the RPC chain check.
 #[derive(Debug)]
 pub enum RpcChainCheckError {
-    /// The endpoint answered for another chain, or names a chain with no known chain id.
+    /// The endpoint answered for another chain, or is not a valid endpoint.
     Refused(String),
     /// The endpoint could not be asked. The text names the failure class, never the URL.
     Unreachable(String),
@@ -26,20 +26,16 @@ impl fmt::Display for RpcChainCheckError {
 
 impl std::error::Error for RpcChainCheckError {}
 
-/// Compares `eth_chainId` and, with `check_genesis`, the block 0 hash of the endpoint configured
-/// for `chain` against the chain's pinned identity. A chain with no pinned genesis still needs a
-/// readable block 0 when `check_genesis` is set.
+/// Compares `eth_chainId` of the endpoint configured for `chain` with `expected_chain_id` and,
+/// with `check_genesis`, its block 0 hash with the chain's pinned genesis. A chain with no pinned
+/// genesis still needs a readable block 0 hash when `check_genesis` is set. A wrong chain id is
+/// refused before block 0 is asked for, so a later transport failure cannot mask it.
 pub async fn verify_chain_rpc_url(
     rpc_urls: &ChainRpcUrls,
     chain: &str,
+    expected_chain_id: u64,
     check_genesis: bool,
 ) -> Result<(), RpcChainCheckError> {
-    let parsed = chain.parse::<ChainId>().ok();
-    let Some(expected_chain_id) = parsed.and_then(ChainId::numeric_chain_id) else {
-        return Err(RpcChainCheckError::Refused(format!(
-            "chain {chain} has no known EIP-155 chain id, so its RPC endpoint cannot be checked"
-        )));
-    };
     let endpoint = rpc_urls.url_for(chain).ok_or_else(|| {
         RpcChainCheckError::Refused(format!("chain {chain} has no configured RPC endpoint"))
     })?;
@@ -51,39 +47,48 @@ pub async fn verify_chain_rpc_url(
     let observed_chain_id = read(&client, chain, "eth_chainId", Vec::new())
         .await?
         .and_then(|value| u64::from_str_radix(value.as_str()?.strip_prefix("0x")?, 16).ok());
-    let expected_genesis = parsed.and_then(ChainId::genesis_hash);
-    let observed_genesis = if check_genesis {
-        read(
-            &client,
-            chain,
-            "eth_getBlockByNumber",
-            vec![Value::String("0x0".to_owned()), Value::Bool(false)],
-        )
-        .await?
-        .and_then(|block| Some(block.get("hash")?.as_str()?.to_ascii_lowercase()))
-    } else {
-        None
-    };
-    let genesis_matches = !check_genesis
-        || match expected_genesis {
-            Some(expected) => observed_genesis.as_deref() == Some(expected),
-            None => observed_genesis.is_some(),
-        };
-    if observed_chain_id == Some(expected_chain_id) && genesis_matches {
+    if observed_chain_id != Some(expected_chain_id) {
+        return Err(RpcChainCheckError::Refused(format!(
+            "RPC endpoint for chain {chain} does not serve that chain: expected chain id \
+             {expected_chain_id}, observed {}",
+            observed_chain_id.map_or_else(|| "an unreadable value".to_owned(), |id| id.to_string())
+        )));
+    }
+    if !check_genesis {
         return Ok(());
     }
-    let mut message = format!(
-        "RPC endpoint for chain {chain} does not serve that chain: expected chain id \
-         {expected_chain_id}, observed {}",
-        observed_chain_id.map_or_else(|| "an unreadable value".to_owned(), |id| id.to_string())
-    );
-    if check_genesis && let Some(expected) = expected_genesis {
-        message.push_str(&format!(
-            "; expected genesis block hash {expected}, observed {}",
-            observed_genesis.as_deref().unwrap_or("no block 0")
-        ));
+    let observed_genesis = read(
+        &client,
+        chain,
+        "eth_getBlockByNumber",
+        vec![Value::String("0x0".to_owned()), Value::Bool(false)],
+    )
+    .await?
+    .and_then(|block| block_hash(block.get("hash")?.as_str()?));
+    let expected_genesis = chain
+        .parse::<ChainId>()
+        .ok()
+        .and_then(ChainId::genesis_hash);
+    let genesis_matches = match expected_genesis {
+        Some(expected) => observed_genesis.as_deref() == Some(expected),
+        None => observed_genesis.is_some(),
+    };
+    if genesis_matches {
+        return Ok(());
     }
-    Err(RpcChainCheckError::Refused(message))
+    Err(RpcChainCheckError::Refused(format!(
+        "RPC endpoint for chain {chain} does not serve that chain: expected genesis block hash \
+         {}, observed {}",
+        expected_genesis.unwrap_or("a readable block 0 hash"),
+        observed_genesis.as_deref().unwrap_or("none")
+    )))
+}
+
+/// A 32-byte hex hash in lowercase, or `None` for anything else.
+fn block_hash(value: &str) -> Option<String> {
+    let digits = value.strip_prefix("0x")?;
+    (digits.len() == 64 && digits.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| value.to_ascii_lowercase())
 }
 
 /// A JSON-RPC error answer reads as no value; only a failed exchange is unreachable.
@@ -172,7 +177,14 @@ mod tests {
 
     async fn check(chain: &str, url: &str, check_genesis: bool) -> Result<(), RpcChainCheckError> {
         let urls = ChainRpcUrls::from_entries(&[format!("{chain}={url}")]).unwrap();
-        verify_chain_rpc_url(&urls, chain, check_genesis).await
+        let expected = match chain {
+            "ethereum-mainnet" => 1,
+            "ethereum-sepolia" => 11_155_111,
+            "base-mainnet" => 8453,
+            "base-sepolia" => 84_532,
+            _ => unreachable!("{chain}"),
+        };
+        verify_chain_rpc_url(&urls, chain, expected, check_genesis).await
     }
 
     #[tokio::test]
@@ -189,8 +201,33 @@ mod tests {
             message.contains("expected chain id 1, observed 11155111"),
             "{message}"
         );
-        assert!(message.contains(SEPOLIA_GENESIS), "{message}");
         assert!(!message.contains("secret-key") && !message.contains("127.0.0.1"));
+    }
+
+    #[tokio::test]
+    async fn a_wrong_chain_id_is_refused_before_block_zero_is_asked_for() {
+        // Block 0 is never answered here, so asking for it would turn the refusal into a timeout.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut chunk = [0_u8; 4096];
+            let _ = socket.read(&mut chunk).await;
+            let payload = json!({"jsonrpc": "2.0", "id": 1, "result": "0xaa36a7"}).to_string();
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}",
+                payload.len()
+            );
+            socket.write_all(reply.as_bytes()).await.unwrap();
+            let _held = listener.accept().await;
+            std::future::pending::<()>().await;
+        });
+        let Err(RpcChainCheckError::Refused(message)) =
+            check("ethereum-mainnet", &format!("http://{address}/"), true).await
+        else {
+            panic!("a wrong chain id is a refusal, whatever block 0 does");
+        };
+        assert!(message.contains("observed 11155111"), "{message}");
     }
 
     #[tokio::test]
@@ -208,15 +245,20 @@ mod tests {
             Err(RpcChainCheckError::Refused(_))
         ));
         check("base-mainnet", &no_block_zero, false).await.unwrap();
+
+        let malformed = node("0x2105", Some("garbage")).await;
+        assert!(matches!(
+            check("base-mainnet", &malformed, true).await,
+            Err(RpcChainCheckError::Refused(_))
+        ));
+        let base = node("0x2105", Some(SEPOLIA_GENESIS)).await;
+        check("base-mainnet", &base, true).await.unwrap();
+        let base_sepolia = node("0x14a34", Some(SEPOLIA_GENESIS)).await;
+        check("base-sepolia", &base_sepolia, true).await.unwrap();
     }
 
     #[tokio::test]
-    async fn unknown_chains_are_refused_and_dead_endpoints_are_unreachable() {
-        let mainnet = node("0x1", None).await;
-        assert!(matches!(
-            check("base-sepolia", &mainnet, false).await,
-            Err(RpcChainCheckError::Refused(_))
-        ));
+    async fn dead_endpoints_are_unreachable_without_the_url() {
         let Err(RpcChainCheckError::Unreachable(message)) =
             check("ethereum-mainnet", "http://127.0.0.1:1/secret-key", false).await
         else {

@@ -3,18 +3,18 @@ set -uo pipefail
 
 # Keep the inventory counts and assignments together. Test-list changes should
 # require edits only in this block; the checks below reject every other drift.
-expected_total=100
-expected_runnable=97
+expected_total=101
+expected_runnable=98
 expected_ignored=3
 expected_shard_1_runnable=32
 expected_shard_1_ignored=1
-expected_shard_1_filtered=67
-expected_shard_2_runnable=32
+expected_shard_1_filtered=68
+expected_shard_2_runnable=33
 expected_shard_2_ignored=1
 expected_shard_2_filtered=67
 expected_shard_3_runnable=33
 expected_shard_3_ignored=1
-expected_shard_3_filtered=66
+expected_shard_3_filtered=67
 
 expected_ignored_tests=(
     "scenarios::provider_faults::pruned_get_code_fails_closed_then_uses_configured_fallback"
@@ -80,6 +80,7 @@ shard_2_tests=(
     "scenarios::lifecycle_divergence::transfer_without_reclaim_keeps_registry_owner_divergent"
     "scenarios::perturbations::rich_chain_rpc_ingest_normalized_events_match_upfront_facts"
     "scenarios::perturbations::rich_chain_successive_fixture_replays_match_single_pass"
+    "scenarios::provider_faults::an_endpoint_serving_another_chain_is_refused_before_ingest"
     "scenarios::provider_faults::transient_get_code_retries_primary_without_using_configured_fallback"
     "scenarios::provider_faults::transient_provider_faults_and_partial_receipts_recover_to_control"
     "scenarios::register_eth_name::register_eth_name_end_to_end"

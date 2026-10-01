@@ -27,12 +27,13 @@ impl RedoPhase {
         matches!(self, Self::Phase(PhaseName::Verify) | Self::All)
     }
 
-    /// Whether the redo reads from its sources' block providers. Interpret and Project redos
-    /// only compare source descriptors with the persisted cursors.
+    /// Whether the redo can read from its sources' block providers. An Interpret redo can, as
+    /// its discovery repair may run Ingest; a Project redo only compares source descriptors with
+    /// the persisted cursors.
     pub const fn reads_sources(self) -> bool {
         matches!(
             self,
-            Self::Phase(PhaseName::Ingest | PhaseName::Verify) | Self::All
+            Self::Phase(PhaseName::Ingest | PhaseName::Interpret | PhaseName::Verify) | Self::All
         )
     }
 }

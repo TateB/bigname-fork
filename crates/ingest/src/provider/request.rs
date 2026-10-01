@@ -15,19 +15,31 @@ pub(super) struct BatchCall {
     pub params: Vec<Value>,
 }
 
+/// Data attempts are sent only on a client the RPC chain check verified; the check's own probes
+/// are not.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Dispatch {
+    Data,
+    Probe,
+}
+
 impl JsonRpcProvider {
     pub(super) async fn request(&self, method: &str, params: Vec<Value>) -> Result<Option<Value>> {
-        self.ensure_chain().await?;
-        self.request_unchecked(method, params).await
+        self.request_with(method, params, Dispatch::Data).await
     }
 
-    pub(super) async fn request_unchecked(
+    pub(super) async fn probe(&self, method: &str, params: Vec<Value>) -> Result<Option<Value>> {
+        self.request_with(method, params, Dispatch::Probe).await
+    }
+
+    async fn request_with(
         &self,
         method: &str,
         params: Vec<Value>,
+        dispatch: Dispatch,
     ) -> Result<Option<Value>> {
         for attempt in 0..MAX_ATTEMPTS {
-            match self.request_once(method, params.clone()).await {
+            match self.request_once(method, params.clone(), dispatch).await {
                 Ok(value) => return Ok(value),
                 Err(error) if retryable(&error) && attempt + 1 < MAX_ATTEMPTS => {
                     warn!(
@@ -70,6 +82,9 @@ impl JsonRpcProvider {
                     );
                     backoff(attempt).await;
                 }
+                Err(error) if super::chain_check::chain_mismatch_in(&error).is_some() => {
+                    return Err(error);
+                }
                 Err(error) if !retryable(&error) => {
                     let mut values = Vec::with_capacity(calls.len());
                     for call in calls {
@@ -85,14 +100,22 @@ impl JsonRpcProvider {
         bail!("JSON-RPC batch retry loop exited unexpectedly")
     }
 
-    async fn request_once(&self, method: &str, params: Vec<Value>) -> Result<Option<Value>> {
+    async fn request_once(
+        &self,
+        method: &str,
+        params: Vec<Value>,
+        dispatch: Dispatch,
+    ) -> Result<Option<Value>> {
         let body = self
-            .send(json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": method,
-                "params": params,
-            }))
+            .send(
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": method,
+                    "params": params,
+                }),
+                dispatch,
+            )
             .await?;
         response_result(&body, method)
     }
@@ -112,7 +135,7 @@ impl JsonRpcProvider {
                 })
                 .collect(),
         );
-        let body = self.send(request).await?;
+        let body = self.send(request, Dispatch::Data).await?;
         let responses = body
             .as_array()
             .context("expected JSON-RPC batch response array")?;
@@ -138,13 +161,21 @@ impl JsonRpcProvider {
             .collect()
     }
 
-    async fn send(&self, request: Value) -> Result<Value> {
+    async fn send(&self, request: Value, dispatch: Dispatch) -> Result<Value> {
         // Bound actual HTTP work, including retries and standalone fallback calls.
         // Release the permit after the body is read, before any retry backoff.
-        let permit = self.in_flight.acquire().await?;
+        let (permit, client, client_id) = loop {
+            if dispatch == Dispatch::Data {
+                self.ensure_chain().await?;
+            }
+            let permit = self.in_flight.acquire().await?;
+            let (client, client_id) = self.client.snapshot();
+            if dispatch == Dispatch::Probe || self.chain_verified_for(client_id) {
+                break (permit, client, client_id);
+            }
+        };
         self.request_attempts
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let (client, client_id) = self.client.snapshot();
         let response = match client
             .post(self.endpoint.clone())
             .json(&request)

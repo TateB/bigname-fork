@@ -141,7 +141,9 @@ impl fmt::Display for RpcChainMismatch {
                 "an unreadable value"
             )
         )?;
-        if let Some(expected) = &self.expected_genesis_hash {
+        if let Some(expected) = &self.expected_genesis_hash
+            && self.observed_chain_id == Some(self.expected_chain_id)
+        {
             write!(
                 formatter,
                 "; expected genesis block hash {expected}, observed {}",
@@ -185,16 +187,24 @@ impl ChainGuard {
 impl JsonRpcProvider {
     /// Reads the endpoint's chain id and, in full mode, its block 0 hash, and fails with a
     /// [`RpcChainMismatch`] unless they match `expected`. A missing block 0 or an unreadable
-    /// chain id is a mismatch; a transport failure keeps its own (retried) error.
+    /// chain id is a mismatch; a transport failure keeps its own (retried) error. A wrong chain id
+    /// is refused before block 0 is asked for, so a later transport failure cannot mask it.
     pub async fn verify_chain(&self, expected: &ExpectedRpcChain) -> Result<ObservedRpcChain> {
         let chain_id = self
-            .request_unchecked("eth_chainId", Vec::new())
+            .probe("eth_chainId", Vec::new())
             .await?
             .and_then(|value| parse_chain_id(&value));
+        if chain_id != Some(expected.chain_id) {
+            let observed = ObservedRpcChain {
+                chain_id,
+                genesis_hash: None,
+            };
+            return Err(expected.mismatch(&observed).into());
+        }
         let genesis_hash = match expected.mode {
             RpcChainCheck::ChainIdOnly => None,
             RpcChainCheck::Full => self
-                .request_unchecked(
+                .probe(
                     "eth_getBlockByNumber",
                     vec![Value::String("0x0".to_owned()), Value::Bool(false)],
                 )
@@ -215,7 +225,7 @@ impl JsonRpcProvider {
             }
             (RpcChainCheck::Full, None) => observed.genesis_hash.is_some(),
         };
-        if observed.chain_id != Some(expected.chain_id) || !genesis_matches {
+        if !genesis_matches {
             return Err(expected.mismatch(&observed).into());
         }
         Ok(observed)
@@ -226,16 +236,34 @@ impl JsonRpcProvider {
             return Ok(());
         };
         let mut verified = guard.verified.lock().await;
-        let client_id = self.client.client_id();
-        if verified.is_some_and(|(at, id)| id == client_id && at.elapsed() < guard.recheck_after) {
-            return Ok(());
+        loop {
+            let client_id = self.client.client_id();
+            if verified
+                .is_some_and(|(at, id)| id == client_id && at.elapsed() < guard.recheck_after)
+            {
+                return Ok(());
+            }
+            *verified = None;
+            // Boxed: the probes go through `send`, which calls back into this check.
+            Box::pin(self.verify_chain(&guard.expected))
+                .await
+                .context("RPC chain check failed")?;
+            // A client rebuilt while the probes were out is not the one that answered them.
+            if self.client.client_id() == client_id {
+                *verified = Some((Instant::now(), client_id));
+            }
         }
-        *verified = None;
-        self.verify_chain(&guard.expected)
-            .await
-            .context("RPC chain check failed")?;
-        *verified = Some((Instant::now(), self.client.client_id()));
-        Ok(())
+    }
+
+    /// Whether the last completed check verified `client_id`. A check in progress counts as
+    /// unverified, so the caller waits for it in [`Self::ensure_chain`].
+    pub(super) fn chain_verified_for(&self, client_id: u64) -> bool {
+        self.chain_guard.as_ref().is_none_or(|guard| {
+            guard
+                .verified
+                .try_lock()
+                .is_ok_and(|verified| verified.is_some_and(|(_, id)| id == client_id))
+        })
     }
 }
 

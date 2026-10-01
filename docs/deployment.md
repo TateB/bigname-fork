@@ -556,29 +556,36 @@ of persisted source identity and will not trigger the runtime reset guard.
 Before `run` opens its database, before `redo` writes anything, and before
 `source-transport` connects, every RPC endpoint the runner is given must show
 that it serves the chain it is configured for. That covers each `BIGNAME_PHASE_RUNNER_SOURCES`
-entry with an RPC kind, whatever its role, and each
-`BIGNAME_PHASE_RUNNER_HYDRATION_RPC_URLS` entry. An Interpret or Project redo
-reads no source provider, so it checks only the hydration URLs. The endpoint must answer
-`eth_chainId` with the chain's EIP-155 id and, in the default `full` mode,
-return block 0. On `ethereum-mainnet` and `ethereum-sepolia` block 0's hash
+entry with an RPC kind and an http(s) endpoint, whatever its role, and each
+`BIGNAME_PHASE_RUNNER_HYDRATION_RPC_URLS` entry. A source whose endpoint is not
+an http(s) URL, such as a fixture placeholder, is not an RPC endpoint and no
+RPC provider accepts it. Replay and rebuild never hydrate, so `redo` checks no
+hydration URL, and a Project redo reads no source provider, so it checks
+nothing. An Interpret redo checks its sources, because its discovery repair can
+run Ingest. The endpoint must answer `eth_chainId` with the chain's EIP-155 id
+and, in the default `full` mode, return block 0; a wrong chain id is refused
+before block 0 is asked for. On `ethereum-mainnet` and `ethereum-sepolia` block 0's hash
 must be that chain's genesis hash (`crates/domain/src/chain_identity.rs`);
 `base-mainnet` has no pinned genesis hash, so it is checked by chain id plus a
 readable block 0. A chain slug with no known chain id is refused. A failure
 exits with code 1 and one error log naming the chain, source key, and expected
-and observed chain id and genesis hash, never the URL. An endpoint that still
+and observed chain id and genesis hash, never the URL's path, key or query. An endpoint that still
 does not answer after the provider's usual retries also refuses the start.
 
 `BIGNAME_PHASE_RUNNER_RPC_CHAIN_CHECK=chain-id-only` skips the block 0 read,
 for a local node that runs a production chain id on its own genesis, such as
 the end-to-end suite's Anvil chains. There is no mode that skips the check.
 
-Ingest, Live, Verify and `source-transport` readers repeat the check before
-their first request, again once five minutes have passed, and whenever the
-HTTP client is rebuilt after a timeout. A mismatch then stops that chain with a
-configuration error, which is not retried. On an Ingest or Live source it also
-sets `phase_runner_rpc_chain_mismatch` (see the
-[monitoring runbook](runbooks/pipeline-monitoring.md#alerts)); a Verify
-reference that fails pages through `BignamePhaseFailed`. Hydration URLs are
+Ingest, Live, Verify and `source-transport` readers repeat the check before their
+first request, again once five minutes have passed, and before any request on
+an HTTP client rebuilt after a timeout, including a retry. A mismatch then stops
+that chain with a configuration error, which is not retried. On an Ingest or
+Live source it also sets `phase_runner_rpc_chain_mismatch` (see the
+[monitoring runbook](runbooks/pipeline-monitoring.md#alerts)). That gauge pages
+only if Prometheus scrapes it before the process exits, so it covers runners
+that keep serving other chains; a single-chain runner exits on the mismatch and
+is caught by `BignamePhaseRunnerDown` and the refusal log. A Verify reference
+that fails pages through `BignamePhaseFailed`. Hydration URLs are
 checked at startup only.
 
 Each intake cursor records the chain id its endpoint reported and, once checked

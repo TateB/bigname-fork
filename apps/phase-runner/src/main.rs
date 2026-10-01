@@ -203,8 +203,13 @@ async fn main() -> Result<()> {
                     .filter(|_| phase.reads_sources())
                     .flat_map(|chain| chain.sources.iter());
                 let rpc_mode = rpc_chain_check::mode(&capacity);
-                let verified_rpc =
-                    rpc_chain_check::verify_all(sources, &hydration_rpc_urls, rpc_mode).await?;
+                // Replay and rebuild never hydrate, so a redo checks no hydration URL.
+                let verified_rpc = rpc_chain_check::verify_all(
+                    sources,
+                    &bigname_lookup::ChainRpcUrls::default(),
+                    rpc_mode,
+                )
+                .await?;
                 rpc_chain_check::record_on_chains(&mut chains, &verified_rpc)?;
                 let manifests = (manifest_repository, manifest_profile);
                 anyhow::Ok((database, chains, manifests, verified_rpc))

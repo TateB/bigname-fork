@@ -388,6 +388,7 @@ explicitly with issue #314.
   `perturbations::rich_chain_successive_fixture_replays_match_single_pass`;
   `pre_surface_resolver::owned_pre_surface_resolver_records_serve_after_late_renewal_without_reselection`;
   `pre_surface_resolver::ownerless_pre_surface_resolver_records_serve_after_late_renewal_without_reselection`;
+  `provider_faults::an_endpoint_serving_another_chain_is_refused_before_ingest`;
   `provider_faults::silently_short_logs_are_accepted_until_explicit_refetch_matches_control`;
   `provider_faults::transient_provider_faults_and_partial_receipts_recover_to_control`.
 - Registrations and record families:
