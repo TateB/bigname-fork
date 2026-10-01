@@ -377,14 +377,15 @@ pub async fn verify_rpc_chain(
         .await
         .map_err(|error| match provider_error(&context, error) {
             error if error.rpc_chain_mismatch().is_some() => error,
-            error => crate::IngestError::new(error.kind(), redact_endpoint(&error, endpoint)),
+            error => {
+                crate::IngestError::new(error.kind(), redact_endpoint(error.to_string(), endpoint))
+            }
         })
 }
 
-/// A provider's error body can echo the request URI; startup errors promise never to carry the
-/// endpoint's credentials, path or query.
-fn redact_endpoint(error: &crate::IngestError, endpoint: &str) -> String {
-    let mut rendered = error.to_string();
+/// A provider's error body can echo the request URI; startup errors and retry warnings never
+/// carry the endpoint's credentials, path or query.
+fn redact_endpoint(mut rendered: String, endpoint: &str) -> String {
     let Ok(url) = reqwest::Url::parse(endpoint) else {
         return rendered.replace(endpoint.trim(), "<redacted-endpoint>");
     };

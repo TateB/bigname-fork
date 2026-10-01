@@ -333,20 +333,43 @@ async fn an_unpinned_chain_is_held_to_its_recorded_genesis() -> Result<()> {
 
 #[tokio::test]
 async fn a_startup_check_error_never_repeats_the_endpoint_path_or_key() -> Result<()> {
+    #[derive(Clone, Default)]
+    struct Logs(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Logs {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let logs = Logs::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer({
+            let logs = logs.clone();
+            move || logs.clone()
+        })
+        .finish();
+    let _logs = tracing::subscriber::set_default(subscriber);
+
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let endpoint = format!(
         "http://{}/v1/secret-key?token=hunter2",
         listener.local_addr()?
     );
     tokio::spawn(async move {
+        let mut status = "503 Service Unavailable";
         while let Ok((mut socket, _)) = listener.accept().await {
             let _ = read_request_body(&mut socket).await;
             let body = "unknown key in POST /v1/secret-key?token=hunter2";
             let response = format!(
-                "HTTP/1.1 401 Unauthorized\r\ncontent-length: {}\r\n\r\n{body}",
+                "HTTP/1.1 {status}\r\ncontent-length: {}\r\n\r\n{body}",
                 body.len()
             );
             let _ = socket.write_all(response.as_bytes()).await;
+            status = "401 Unauthorized";
         }
     });
 
@@ -354,8 +377,11 @@ async fn a_startup_check_error_never_repeats_the_endpoint_path_or_key() -> Resul
     let error = verify_rpc_chain(&endpoint, &expected).await.unwrap_err();
     let rendered = format!("{error:#}");
     assert!(rendered.contains("401"), "{rendered}");
+    let logged = String::from_utf8(logs.0.lock().unwrap().clone())?;
+    assert!(logged.contains("503"), "{logged}");
     for secret in ["secret-key", "hunter2"] {
         assert!(!rendered.contains(secret), "{rendered}");
+        assert!(!logged.contains(secret), "{logged}");
     }
     Ok(())
 }

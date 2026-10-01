@@ -5,7 +5,7 @@ use reqwest::Url;
 use serde_json::{Value, json};
 use tracing::warn;
 
-use super::{JsonRpcProvider, provider_error_text};
+use super::{JsonRpcProvider, provider_error_text, redact_endpoint};
 
 const MAX_ATTEMPTS: usize = 5;
 
@@ -46,7 +46,7 @@ impl JsonRpcProvider {
                         component = "ingest_provider",
                         method,
                         attempt = attempt + 1,
-                        error = %provider_error_text(&error),
+                        error = %redact_endpoint(provider_error_text(&error), self.endpoint.as_str()),
                         "retrying transient JSON-RPC request"
                     );
                     backoff(attempt).await;
@@ -77,7 +77,7 @@ impl JsonRpcProvider {
                         component = "ingest_provider",
                         request_context = "batch",
                         attempt = attempt + 1,
-                        error = %provider_error_text(&error),
+                        error = %redact_endpoint(provider_error_text(&error), self.endpoint.as_str()),
                         "retrying transient JSON-RPC batch"
                     );
                     backoff(attempt).await;
