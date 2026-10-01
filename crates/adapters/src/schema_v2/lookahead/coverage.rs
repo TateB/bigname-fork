@@ -71,6 +71,12 @@ pub(super) fn checked<T>(
     result
 }
 
+/// Report a read of name-keyed state shared between the ENSv1-model and ENSv2 code
+/// (`known_surfaces`, `active_resources` and the restored surface counts) by its logical name.
+pub(in crate::schema_v2) fn observe_name(logical_name_id: &str) {
+    observe_node(&logical_name_id.to_ascii_lowercase());
+}
+
 pub(in crate::schema_v2) fn observe_node(key: &str) {
     COVERAGE.with_borrow_mut(|scope| {
         if let Some(scope) = scope

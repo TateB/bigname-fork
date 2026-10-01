@@ -1,6 +1,6 @@
-//! ENSv1-model per-batch working-set requests, for the ENSv1 families and the Basenames Base
-//! families the same protocol code interprets. Persistence and canonical selection stay in
-//! Interpret.
+//! Per-batch working-set requests. ENSv1-model state (the ENSv1 families and the Basenames Base
+//! families the same protocol code interprets) is requested per name; ENSv2 state is restored
+//! whole, from every retained ENSv2 event. Persistence and canonical selection stay in Interpret.
 use std::collections::BTreeSet;
 
 use anyhow::{Context, ensure};
@@ -70,7 +70,12 @@ impl V1BatchDependencies {
                 for (key, value) in fields {
                     if matches!(
                         key.as_str(),
-                        "node" | "namehash" | "child_node" | "reverse_node"
+                        "node"
+                            | "namehash"
+                            | "child_node"
+                            | "reverse_node"
+                            | "previous_namehash"
+                            | "current_namehash"
                     ) {
                         if let Some(node) = value.as_str() {
                             self.node(namespace, node)?;
@@ -125,6 +130,11 @@ fn supported_family(family: &str) -> bool {
             | "basenames_base_registrar"
             | "basenames_base_resolver"
             | "basenames_base_primary"
+            | "ens_v2_root_l1"
+            | "ens_v2_registry_l1"
+            | "ens_v2_registrar_l1"
+            | "ens_v2_resolver_l1"
+            | "ens_v2_migration_l1"
     ) || family.ends_with("_execution")
 }
 
@@ -162,7 +172,7 @@ pub fn collect_v1_batch_dependencies(
                 let Some(source) = catalog.source(manifest.manifest_id).filter(|source| {
                     matches!(
                         source.source_family.as_str(),
-                        "ens_v1_resolver_l1" | "basenames_base_resolver"
+                        "ens_v1_resolver_l1" | "basenames_base_resolver" | "ens_v2_resolver_l1"
                     )
                 }) else {
                     continue;
@@ -242,4 +252,4 @@ pub fn restore_schema_v2_lookahead_session(
     })
 }
 
-pub(super) use coverage::observe_node;
+pub(super) use coverage::{observe_name, observe_node};

@@ -344,6 +344,7 @@ impl State {
 
     fn prune_unbacked_surfaces(&mut self) {
         for surface in std::mem::take(&mut self.surface_removal_candidates) {
+            crate::schema_v2::lookahead::observe_name(&surface);
             if !self.restored_surface_counts.contains_key(&surface)
                 && !self.v2_current_surface_counts.contains_key(&surface)
             {

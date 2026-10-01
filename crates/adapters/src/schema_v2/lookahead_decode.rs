@@ -20,6 +20,11 @@ use crate::{
 sol! {
     event RawNameChanged(bytes32 indexed node, bytes name);
     event RawNameForAddrChanged(address indexed addr, bytes name);
+    event RawNamedResource(uint256 indexed resource, bytes name);
+    event RawNamedAddrResource(uint256 indexed resource, bytes name, uint256 indexed coinType);
+    event RawLinked(uint256 indexed recordId, bytes32 indexed node, bytes name);
+    event RawNamedTextResource(uint256 indexed resource, bytes name, bytes32 indexed keyHash, bytes key);
+    event RawBridgeNameRenewed(uint256 indexed tokenId, bytes label, uint64 duration, uint64 newExpiry, address paymentToken, bytes32 indexed referrer, uint256 amount);
 }
 
 fn topic(raw: &RawLogInput, index: usize) -> anyhow::Result<B256> {
@@ -103,8 +108,8 @@ pub(super) fn collect(
                 out.node(namespace, &registrar_namehash(selected, label))?;
             }
             "Transfer" => out.node(namespace, &registrar_namehash(selected, topic(raw, 3)?))?,
-            // The admitted V1 dispatcher only uses these for V2 migration correlation;
-            // active migration manifests are rejected by the caller before interpretation.
+            // ENSv2 migration correlation only: the controller set is emptied at the start of
+            // every transaction, and the correlation reads the batch, not prior state.
             "ControllerAdded" | "ControllerRemoved" => {}
             // A registrar proxy upgrade (the Basenames upgradeable controller declares one)
             // reads no name state.
@@ -194,6 +199,89 @@ pub(super) fn collect(
                         .map(<[u8]>::to_vec)
                         .collect::<Vec<_>>(),
                 )?;
+            }
+            _ => unsupported(out, selected),
+        },
+        // ENSv2 registry, registrar and resolver state is restored from every retained ENSv2
+        // event, so these logs need no per-name request of their own.
+        "ens_v2_root_l1" | "ens_v2_registry_l1" => match event {
+            "RegistryCreated" | "LabelRegistered" | "LabelReserved" | "LabelUnregistered"
+            | "ExpiryUpdated" | "SubregistryUpdated" | "ResolverUpdated" | "TokenResource"
+            | "TransferSingle" | "TransferBatch" | "EACRolesChanged" | "TokenRegenerated"
+            | "ParentUpdated" | "Upgraded" => {}
+            _ => unsupported(out, selected),
+        },
+        "ens_v2_registrar_l1" => match event {
+            "NameRegistered" | "NameRenewed" => {}
+            _ => unsupported(out, selected),
+        },
+        "ens_v2_resolver_l1" => match event {
+            // Node record events look the node's name up in ENSv1-model name state.
+            "ABIChanged" | "AddrChanged" | "AddressChanged" | "TextChanged"
+            | "ContenthashChanged" | "VersionChanged" => {
+                out.node(namespace, &format!("{:#x}", topic(raw, 1)?))?
+            }
+            "NameChanged" => {
+                out.node(namespace, &format!("{:#x}", topic(raw, 1)?))?;
+                let decoded = decode_event_log_data_as::<RawNameChanged>(
+                    &raw.topics,
+                    &raw.data,
+                    &selected.event.topic0,
+                    "NameChanged log is malformed",
+                )?;
+                labels(
+                    out,
+                    namespace,
+                    &decoded
+                        .name
+                        .split(|b| *b == b'.')
+                        .map(<[u8]>::to_vec)
+                        .collect::<Vec<_>>(),
+                )?;
+            }
+            "NamedResource" | "NamedAddrResource" | "NamedTextResource" | "Linked" => {
+                let (topics, data, topic0) = (&raw.topics, &raw.data, &selected.event.topic0);
+                let context = "named resolver log is malformed";
+                let name = match event {
+                    "NamedResource" => {
+                        decode_event_log_data_as::<RawNamedResource>(topics, data, topic0, context)?
+                            .name
+                    }
+                    "NamedAddrResource" => {
+                        decode_event_log_data_as::<RawNamedAddrResource>(
+                            topics, data, topic0, context,
+                        )?
+                        .name
+                    }
+                    "NamedTextResource" => {
+                        decode_event_log_data_as::<RawNamedTextResource>(
+                            topics, data, topic0, context,
+                        )?
+                        .name
+                    }
+                    _ => decode_event_log_data_as::<RawLinked>(topics, data, topic0, context)?.name,
+                };
+                if let Ok(raw_labels) = decode_dns_labels(&name)
+                    && !raw_labels.is_empty()
+                {
+                    labels(out, namespace, &raw_labels)?;
+                }
+            }
+            "ResolverCreated" | "AddressUpdated" | "ContenthashUpdated" | "ABIUpdated"
+            | "InterfaceUpdated" | "TextUpdated" | "DataUpdated" | "NameUpdated"
+            | "ResourceArgument" | "EACRolesChanged" | "Upgraded" => {}
+            _ => unsupported(out, selected),
+        },
+        "ens_v2_migration_l1" => match event {
+            "ProxyDeployed" => {}
+            "NameRenewed" => {
+                let decoded = decode_event_log_data_as::<RawBridgeNameRenewed>(
+                    &raw.topics,
+                    &raw.data,
+                    &selected.event.topic0,
+                    "migration bridge NameRenewed log is malformed",
+                )?;
+                labels(out, namespace, &[decoded.label.to_vec(), b"eth".to_vec()])?;
             }
             _ => unsupported(out, selected),
         },

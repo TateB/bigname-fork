@@ -80,9 +80,14 @@ pub(super) fn scoped_comparisons() -> usize {
     SCOPED_COMPARISONS.get()
 }
 
-/// The families whose retained events `events.sql` reads.
+/// The families whose retained events `events.sql` reads by name or resource.
 fn probed_family(family: &str) -> bool {
     family.starts_with("ens_v1_") || family.starts_with("basenames_base_")
+}
+
+/// The families whose retained events `v2_events.sql` reads whole, for every batch.
+fn whole_family(family: &str) -> bool {
+    family.starts_with("ens_v2_")
 }
 
 /// An input the lookahead loader would be chosen for: every manifest family is covered and
@@ -96,7 +101,7 @@ pub(super) fn is_lookahead_covered(input: &BatchInput) -> bool {
         && input
             .prior_events
             .iter()
-            .all(|event| probed_family(&event.source_family))
+            .all(|event| probed_family(&event.source_family) || whole_family(&event.source_family))
 }
 
 /// The name an event is filed under by `normalized_events_v1_direct_node_probe_idx` and
@@ -161,11 +166,12 @@ fn due_names(prior: &[PriorEventInput], predecessor: Option<i64>, last: i64) -> 
         .collect()
 }
 
-/// In-memory stand-in for the production selection in `events.sql`, run to the same closure
-/// as the Interpret loader. It files each event under exactly one name, as the index does,
-/// and reads an event by resource only when it has no name at all. Fixture history is already
-/// folded to the latest event per state key, so the SQL's per-key winner step has nothing
-/// left to choose; that step has its own database tests.
+/// In-memory stand-in for the production selection in `v2_events.sql` and `events.sql`, run
+/// to the same closure as the Interpret loader. Every ENSv2 event is read; otherwise it files
+/// each event under exactly one name, as the index does, and reads an event by resource only
+/// when it has no name at all. Fixture history is already folded to the latest event per
+/// state key, so the SQL's per-key winner step has nothing left to choose; that step has its
+/// own database tests.
 fn scope(
     mut deps: V1BatchDependencies,
     prior: &[PriorEventInput],
@@ -178,12 +184,15 @@ fn scope(
             .collect();
         let rows = prior
             .iter()
-            .filter(|event| probed_family(&event.source_family))
-            .filter(|event| match routed_name(event) {
-                Some(name) => names.contains(&name),
-                None => event
-                    .resource_id
-                    .is_some_and(|resource| deps.resource_ids.contains(&resource)),
+            .filter(|event| {
+                whole_family(&event.source_family)
+                    || probed_family(&event.source_family)
+                        && match routed_name(event) {
+                            Some(name) => names.contains(&name),
+                            None => event
+                                .resource_id
+                                .is_some_and(|resource| deps.resource_ids.contains(&resource)),
+                        }
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -410,24 +419,46 @@ fn known_absent_node_is_distinct_from_unloaded_node() -> anyhow::Result<()> {
 }
 
 #[test]
-fn quiet_v2_manifest_is_explicitly_unsupported() -> anyhow::Result<()> {
-    let input = input(
-        vec![manifest(
+fn v2_events_outside_the_collector_are_explicitly_unsupported() -> anyhow::Result<()> {
+    let manifest = |name, fragment| {
+        manifest(
             1,
             "ens_v2_registry_l1",
-            "RegistryCreated",
-            "event RegistryCreated()",
+            name,
+            fragment,
             &["registry"],
             &["RegistryCreated"],
-        )],
+        )
+    };
+    let covered = input(
+        vec![manifest("RegistryCreated", "event RegistryCreated()")],
         vec![],
         vec![],
     );
-    let deps = collect_v1_batch_dependencies(&input, &input.manifests)?;
+    assert!(
+        collect_v1_batch_dependencies(&covered, &covered.manifests)?
+            .unsupported
+            .is_empty()
+    );
+    let unknown = input(
+        vec![manifest("RegistryRetired", "event RegistryRetired()")],
+        vec![admission(1, "registry")],
+        vec![raw_at(
+            alloy_primitives::LogData::new_unchecked(
+                vec![keccak256("RegistryRetired()")],
+                Default::default(),
+            ),
+            1,
+            0,
+            CONTRACT,
+        )],
+    );
+    let deps = collect_v1_batch_dependencies(&unknown, &unknown.manifests)?;
     assert!(
         deps.unsupported
             .iter()
-            .any(|reason| reason.contains("ens_v2_registry_l1"))
+            .any(|reason| reason.contains("ens_v2_registry_l1:RegistryRetired()")),
+        "{deps:?}"
     );
     Ok(())
 }
@@ -885,9 +916,8 @@ fn resolver_changed_node_precedence_matches_restore() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Lookahead reads retained events of the `ens_v1_*` and `basenames_base_*` families only, yet
-/// it also covers these
-/// families. That is sound because they keep no state: a manifest of one of them cannot
+/// Lookahead reads retained events of the `ens_v1_*`, `basenames_base_*` and `ens_v2_*`
+/// families only, yet it also covers these families. That is sound because they keep no state: a manifest of one of them cannot
 /// declare an event, so no log is ever interpreted under it and no event of it is stored.
 #[test]
 fn covered_families_outside_ens_v1_cannot_interpret_a_log() {
@@ -906,5 +936,5 @@ fn covered_families_outside_ens_v1_cannot_interpret_a_log() {
             "{family}: {error:#}"
         );
     }
-    assert!(!v1_lookahead_supports_family("ens_v2_registry_l1"));
+    assert!(!v1_lookahead_supports_family("dns_l1"));
 }

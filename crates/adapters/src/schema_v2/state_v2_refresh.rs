@@ -254,6 +254,7 @@ impl State {
                 if let Some(previous) = previous.as_ref()
                     && token.registration.is_some()
                     && token.resource_id.is_some_and(|resource_id| {
+                        crate::schema_v2::lookahead::observe_name(&previous.logical_name_id);
                         self.active_resources.get(&previous.logical_name_id) == Some(&resource_id)
                     })
                 {
