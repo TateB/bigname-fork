@@ -378,8 +378,9 @@ pub(crate) async fn load_snapshot(
 
 /// The ENS [authority arms](../../../docs/glossary.md#authority-epoch) whose names the selected
 /// `ens_execution` entrypoint on `chain_id` may verify: the manifest's `verified_authority_arms`,
-/// defaulting to `["ens_v1"]`. Uses the same active-or-shadow entrypoint selection at the readable
-/// head that record and primary-name lookup use, so callers gate on exactly what would execute.
+/// defaulting to `["ens_v1"]`. Uses the active-or-shadow entrypoint selection at the readable head
+/// that primary-name lookup uses. Record lookup selects at its publication's block and refuses in
+/// band if that selection does not admit the name's arm.
 pub async fn admitted_verified_authority_arms(
     pool: &PgPool,
     chain_id: &str,

@@ -627,8 +627,8 @@ Rules:
   engine returns both positions, and `meta.as_of`/`meta.as_of_token` expose
   those actual lookup positions rather than implying execution at the newer
   marker. The engine independently requires a live
-  [family publication](glossary.md#family-marker) within the publication lag
-  tolerance of the stored head before executing, and that publication is the
+  [family publication](glossary.md#family-marker) within the
+  [publication lag tolerance](glossary.md#publication-lag-tolerance) of the stored head before executing, and that publication is the
   authoritative position: calls on its chain run at its block. After the live calls it revalidates the
   exact project generation, projected name topology, selected manifest
   declarations, and canonical positions. A concurrent replacement returns the
@@ -807,7 +807,7 @@ same-height incompatible position makes the verified answer stale before any
 provider call or ledger write. The current
 lookup engine does not replay historical `at`, `safe`, or `finalized`
 authoritative execution: if the selected product snapshot does not admit the
-engine's current readable authoritative position, the verified section is
+engine's authoritative position, the captured family publication, the verified section is
 `stale` rather than being executed at a different authoritative position.
 Provider connect, DNS, TLS, connection-reset, and other transport failures
 abort a verified name or record request with `500 internal_error`; they are not
@@ -861,8 +861,8 @@ require both answers to fit the reported `meta.as_of` position. Verified calls
 on the publication's chain execute at the publication's block, which is the
 position `meta.as_of` reports, so a publication trailing the stored head within
 the publication lag tolerance serves both answers. A selection that is not the
-publication, such as an older `at`, `safe` or `finalized` position, still
-reports the verified section `stale`.
+publication, such as an older `safe` or `finalized` position or an `at` before
+or after the publication's block, still reports the verified section `stale`.
 
 Indexed snapshot selection uses the [family marker](glossary.md#family-marker).
 It must be `live`, carry this build's interpreter content hash, sit on readable
