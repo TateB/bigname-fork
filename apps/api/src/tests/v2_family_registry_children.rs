@@ -248,6 +248,7 @@ async fn v2_registry_children_are_listed_for_their_registry_owner() -> Result<()
             "name",
             "display_name",
             "owner",
+            "manager",
             "registration_status",
             "authority",
         ] {
@@ -257,6 +258,7 @@ async fn v2_registry_children_are_listed_for_their_registry_owner() -> Result<()
             );
         }
         assert_eq!(row["owner"], json!(RC_OWNER), "{row:#}");
+        assert_eq!(row["manager"], json!(RC_OWNER), "{row:#}");
         assert_eq!(
             row["permission_resource_id"],
             json!(resource.to_string()),
