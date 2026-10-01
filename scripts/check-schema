@@ -5347,12 +5347,15 @@ BEGIN
     JOIN pg_class index ON index.oid = indexed.indexrelid
     JOIN pg_am access_method ON access_method.oid = index.relam
     WHERE access_method.amname = 'btree'
-      -- A partial predicate that bounds the column keeps every entry under the btree limit.
-      AND COALESCE(
-          pg_get_expr(indexed.indpred, indexed.indrelid)
-              NOT LIKE format('%%(octet_length(%s) <= 2000)%%', input.column_name),
-          true
-      );
+      -- A reviewed partial index whose predicate bounds the column keeps every entry under
+      -- the btree limit; any other predicate must match exactly to be exempt.
+      AND (index.relname, COALESCE(pg_get_expr(indexed.indpred, indexed.indrelid), ''))
+          NOT IN (
+              (
+                  'name_surfaces_name_order_idx',
+                  '((visibility_state = ''active''::text) AND (canonicality_state = ANY (ARRAY[''canonical''::canonicality_state, ''safe''::canonicality_state, ''finalized''::canonicality_state])) AND (octet_length(raw_name) <= 2000))'
+              )
+          );
 
     IF unbounded_btree_columns IS NOT NULL THEN
         RAISE EXCEPTION
