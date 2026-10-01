@@ -18,6 +18,15 @@ pub(super) struct CapacityArgs {
     /// Concurrent HTTP requests per Ingest/Live RPC provider (1..=32).
     #[arg(long, env = "BIGNAME_INGEST_RPC_MAX_IN_FLIGHT", default_value_t = 8)]
     ingest_rpc_max_in_flight: usize,
+    /// What the RPC chain check compares on every RPC endpoint: full (chain id, and block 0
+    /// where the chain pins a genesis) or chain-id-only, for local nodes run under a production
+    /// chain's id.
+    #[arg(
+        long,
+        env = "BIGNAME_PHASE_RUNNER_RPC_CHAIN_CHECK",
+        default_value = "full"
+    )]
+    rpc_chain_check: bigname_ingest::RpcChainCheck,
     /// Always restore Interpret's prior state with the full-state loader instead of
     /// letting each chain choose the per-batch ENSv1 lookahead loader automatically.
     #[arg(long, env = "BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER")]
@@ -72,7 +81,8 @@ pub(super) fn resolve_capacity(args: CapacityArgs) -> RunnerResult<CapacityConfi
         args.ingest_rpc_batch_size,
         args.ingest_rpc_max_in_flight,
     )
-    .map_err(|error| RunnerError::new(ErrorKind::Configuration, error.to_string()))?;
+    .map_err(|error| RunnerError::new(ErrorKind::Configuration, error.to_string()))?
+    .with_rpc_chain_check(args.rpc_chain_check);
     Ok(CapacityConfig {
         ingest,
         interpret_blocks_per_batch: args.interpret_blocks_per_batch,

@@ -209,7 +209,7 @@ latency still require production-scale qualification before activation.
 
 | Family | Writer | Meaning |
 | --- | --- | --- |
-| `chain_lineage`, `chain_header_audit`, `chain_heads`, ingest cursors | Ingest and head publication | Block ancestry, readable heads, source progress, and explicit canonicality. |
+| `chain_lineage`, `chain_header_audit`, `chain_heads`, ingest cursors | Ingest and head publication; the phase runner's startup [RPC chain check](deployment.md#rpc-chain-check) fills `ingest_cursors.verified_chain_id` and `verified_genesis_hash` | Block ancestry, readable heads, source progress, explicit canonicality, and the chain each intake source's endpoint reported when it passed the check. |
 | selected `raw_*` | Ingest | Immutable transaction, receipt, and log interpretation inputs. |
 | `manifest_*` | manifest synchronization | Authored source declarations and admitted capability versions. |
 | `discovery_*` | Interpret | Canonical discovered edges and admission evidence. |

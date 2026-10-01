@@ -163,6 +163,7 @@ is `bigname-phase-runner`, so a later import updates the same dashboard.
 | Repair and reinterpretation state | The active marker and progress for unfinished repair work, plus whether Interpret still needs a repair run because its stored [interpreter content hash](../glossary.md#interpreter-content-hash) differs. Starting the required repair adopts the new hash and clears the requirement gauge; `phase_runner_redo_in_progress` stays at `1` until that work finishes. |
 | Phase cursor non-progress | Committed [work-bearing batches](../glossary.md#work-bearing-batch) confirmed at the next resume to have left the [durable composite cursor](../glossary.md#durable-composite-cursor) unchanged, and the age of that sequence. Normal, redo, and recompute-flags work remain separate. |
 | Exporter health | Whether Prometheus can scrape the runner and whether the latest read of PostgreSQL state succeeded. |
+| RPC chain check | `phase_runner_rpc_chain_id{chain,source}` is the chain id each RPC endpoint reported to its latest [RPC chain check](../deployment.md#rpc-chain-check), or `-1` when none could be read; hydration URLs use `source="hydration"`. `phase_runner_rpc_chain_mismatch{chain,source}` is `1` once an endpoint failed the check during the run. |
 
 ## Served lag
 
@@ -308,6 +309,7 @@ or rebuild.
 | Alert | Threshold | Plain-language meaning |
 | --- | --- | --- |
 | `BignamePhaseFailed` | A phase reports `failed` on one rule evaluation. | This intentionally trades pages during retryable transient backoff for guaranteed visibility of terminal errors and crash loops. Use the logs and subsequent state to distinguish them. |
+| `BignamePhaseRunnerRpcChainMismatch` | `phase_runner_rpc_chain_mismatch` reads `1` on any scrape within 10 minutes. | The named source's RPC endpoint now serves another chain than configured, so that chain stopped. The window keeps the page after the runner exits on it; a restart refuses to start until the endpoint is fixed. The startup log names the expected and observed chain id and genesis hash. |
 | `BignamePhaseRunnerDown` | The target reports `up=0`, or no `up` series exists for the job, continuously for 2 minutes. | The runner process, metrics listener, or Prometheus target definition stayed unavailable. A successful scrape resets the timer, so this rule does not catch a flapping crash loop. The absent-target branch has only the `job` label because no target exists to supply an `instance`. |
 | `BignamePhaseRunnerCapacityPaused` | A phase remains continuously `paused` for 15 minutes. | Storage capacity has stopped pipeline work for the named chain phase. Short capacity waits do not page, while the runner continues refreshing its liveness signals during the wait. |
 | `BignamePhaseRunnerContainerRestarting` | The runner's process-start value changes at least 3 times within 10 minutes. | The container is crash-looping, including fresh-deployment failures that happen before a phase failure can be stored. Prometheus must successfully scrape each start that it counts. |

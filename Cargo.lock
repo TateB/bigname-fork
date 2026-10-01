@@ -1691,6 +1691,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "anyhow",
  "base64 0.22.1",
+ "bigname-domain",
  "bigname-manifests",
  "bigname-test-support",
  "futures-util",

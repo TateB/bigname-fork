@@ -65,6 +65,14 @@ impl IngestError {
     pub const fn kind(&self) -> ErrorKind {
         self.kind
     }
+
+    /// The RPC chain check failure behind this error, if that is what it is.
+    pub fn rpc_chain_mismatch(&self) -> Option<&crate::RpcChainMismatch> {
+        self.source
+            .as_ref()?
+            .chain()
+            .find_map(|cause| cause.downcast_ref())
+    }
 }
 
 fn database_error_kind(error: &sqlx::Error) -> ErrorKind {

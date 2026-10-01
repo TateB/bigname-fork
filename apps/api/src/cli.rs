@@ -6,6 +6,14 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::ApiBoundsConfig;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+pub(crate) enum RpcChainCheck {
+    /// `eth_chainId` and the block 0 hash.
+    Full,
+    /// `eth_chainId` only, for local nodes that run under a production chain's id.
+    ChainIdOnly,
+}
+
 const DEFAULT_RPC_CONNECT_TIMEOUT_MS: u64 = 2_000;
 const DEFAULT_RPC_TOTAL_TIMEOUT_MS: u64 = 8_000;
 
@@ -49,6 +57,14 @@ pub(crate) struct ServeArgs {
         default_value_t = DEFAULT_RPC_TOTAL_TIMEOUT_MS
     )]
     pub(crate) rpc_timeout_ms: u64,
+    /// What the startup RPC chain check compares; there is no mode that skips it.
+    #[arg(
+        long,
+        env = "BIGNAME_API_RPC_CHAIN_CHECK",
+        value_enum,
+        default_value = "full"
+    )]
+    pub(crate) rpc_chain_check: RpcChainCheck,
     #[command(flatten)]
     pub(crate) bounds: ApiBoundsConfig,
     #[arg(

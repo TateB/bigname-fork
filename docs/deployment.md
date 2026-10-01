@@ -323,6 +323,7 @@ The implemented phases use:
 - `BIGNAME_PHASE_RUNNER_CHAINS`
 - `BIGNAME_PHASE_RUNNER_SOURCES`
 - `BIGNAME_PHASE_RUNNER_HYDRATION_RPC_URLS`
+- `BIGNAME_PHASE_RUNNER_RPC_CHAIN_CHECK` — `full` (default) or `chain-id-only`; see [RPC chain check](#rpc-chain-check)
 - `BIGNAME_PHASE_RUNNER_INSTANCE_ID`
 - `BIGNAME_PHASE_RUNNER_INTERPRETER_STATE_CACHE_ENTRIES`
 - `BIGNAME_PHASE_RUNNER_MINIMUM_FREE_DISK_BYTES` — required server-Compose floor
@@ -549,6 +550,42 @@ from the source, followed by a [full source
 re-walk](glossary.md#re-derivation-boundary); never relabel the row in place.
 Changing only the provider endpoint is allowed because endpoints are not part
 of persisted source identity and will not trigger the runtime reset guard.
+
+### RPC chain check
+
+Before `run` or `redo` opens its database, and before `source-transport`
+connects, every RPC endpoint the runner is given must show that it serves the
+chain it is configured for. That covers each `BIGNAME_PHASE_RUNNER_SOURCES`
+entry with an RPC kind, whatever its role, and each
+`BIGNAME_PHASE_RUNNER_HYDRATION_RPC_URLS` entry. The endpoint must answer
+`eth_chainId` with the chain's EIP-155 id and, in the default `full` mode,
+return block 0. On `ethereum-mainnet` and `ethereum-sepolia` block 0's hash
+must be that chain's genesis hash (`crates/domain/src/chain_identity.rs`);
+`base-mainnet` has no pinned genesis hash, so it is checked by chain id plus a
+readable block 0. A chain slug with no known chain id is refused. A failure
+exits with code 1 and one error log naming the chain, source key, and expected
+and observed chain id and genesis hash, never the URL. An endpoint that still
+does not answer after the provider's usual retries also refuses the start.
+
+`BIGNAME_PHASE_RUNNER_RPC_CHAIN_CHECK=chain-id-only` skips the block 0 read,
+for a local node that runs a production chain id on its own genesis, such as
+the end-to-end suite's Anvil chains. There is no mode that skips the check.
+
+Ingest, Live, Verify and `source-transport` readers repeat the check before
+their first request, again once five minutes have passed, and whenever the
+HTTP client is rebuilt after a timeout. A mismatch then stops that chain with a
+configuration error, which is not retried, and sets
+`phase_runner_rpc_chain_mismatch` (see the
+[monitoring runbook](runbooks/pipeline-monitoring.md#alerts)). Hydration URLs
+are checked at startup only.
+
+Each intake cursor records the chain id its endpoint reported and, once checked
+in `full` mode, its genesis hash (`ingest_cursors.verified_chain_id` and
+`verified_genesis_hash`). A later start whose endpoint reports another chain
+id, or another genesis hash when both are known, is refused as a
+data-integrity error before any phase runs. These columns are not source
+identity: a cursor created before them fills them in on its next start, and
+moving a source to another node on the same chain stays allowed.
 
 Each chain must have exactly one block-provider intake source that Live follows; the Coinbase SQL historical source is not a block provider.
 Adding a second such source is not failover configuration: before configuring
@@ -1786,3 +1823,19 @@ rows without the key to the other end of the list:
 
 A client walking one of these sorts across the change restarts from the first
 page.
+
+### RPC chain check at startup
+
+The build that adds the [RPC chain check](#rpc-chain-check) edits no file the
+[interpreter content hash](glossary.md#interpreter-content-hash) covers, so it
+needs no redo and no historical ingest fetch. Schema-migration
+`20261001120000_ingest_cursor_verified_chain.sql` adds the nullable
+`verified_chain_id` and `verified_genesis_hash` columns to `ingest_cursors` on
+an existing phase schema, and `init-schema` installs them on a fresh one. An
+existing deployment applies the schema-migration, then starts the new runner,
+which fills both columns on every cursor whose endpoint passes. Before
+upgrading, confirm each configured RPC endpoint answers `eth_chainId` and
+returns block 0: a provider that cannot serve block 0 refuses the start in the
+default `full` mode. The API gains `BIGNAME_API_RPC_CHAIN_CHECK` with the same
+two values ([production environment](production.md#api-request-bounds)). Load
+the new `BignamePhaseRunnerRpcChainMismatch` rule with the runner.

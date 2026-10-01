@@ -1,5 +1,6 @@
 //! Narrow shared domain primitives for the repo.
 
+mod chain_identity;
 pub mod normalization;
 pub mod resolution_topology;
 pub mod resolver_read;

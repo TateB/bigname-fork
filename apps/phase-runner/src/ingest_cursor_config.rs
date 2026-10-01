@@ -197,12 +197,14 @@ async fn initialize(pool: &PgPool, source: &SourceConfig) -> RunnerResult<Stored
             source.source_key, source.chain_id
         )));
     }
+    let (verified_chain_id, verified_genesis_hash) = verified_identity(source)?;
     sqlx::query(
         "INSERT INTO ingest_cursors (
              chain_id, source_key, source_kind, seed_basis,
-             start_block_number, next_block_number
+             start_block_number, next_block_number,
+             verified_chain_id, verified_genesis_hash
          )
-         VALUES ($1, $2, $3, $4, $5, $5)
+         VALUES ($1, $2, $3, $4, $5, $5, $6, $7)
          ON CONFLICT (chain_id, source_key) DO NOTHING",
     )
     .bind(&source.chain_id)
@@ -210,6 +212,8 @@ async fn initialize(pool: &PgPool, source: &SourceConfig) -> RunnerResult<Stored
     .bind(normalized_source_kind(&source.source_kind))
     .bind(source.seed_basis.as_str())
     .bind(source.start_block_number)
+    .bind(verified_chain_id)
+    .bind(verified_genesis_hash)
     .execute(pool)
     .await
     .map_err(|error| {
@@ -298,4 +302,100 @@ fn validate_kind(source: &SourceConfig, stored: &StoredSourceConfig) -> RunnerRe
         )));
     }
     Ok(())
+}
+
+type VerifiedIdentity = (Option<i64>, Option<String>);
+
+fn verified_identity(source: &SourceConfig) -> RunnerResult<VerifiedIdentity> {
+    let Some(observed) = &source.verified_rpc_chain else {
+        return Ok((None, None));
+    };
+    let chain_id = observed
+        .chain_id
+        .map(i64::try_from)
+        .transpose()
+        .map_err(|_| {
+            RunnerError::data_integrity(format!(
+                "verified chain id of source {} on chain {} exceeds the stored range",
+                source.source_key, source.chain_id
+            ))
+        })?;
+    Ok((chain_id, observed.genesis_hash.clone()))
+}
+
+/// Records the identity this start's RPC chain check observed on the source's cursor where the
+/// cursor has none yet, and refuses when the cursor recorded a different chain id, or a
+/// different genesis hash when both are known. A cursor not created yet gets the identity when
+/// it is created.
+pub(crate) async fn record_verified_rpc_chain(
+    pool: &PgPool,
+    source: &SourceConfig,
+) -> RunnerResult<()> {
+    let observed = verified_identity(source)?;
+    if observed.0.is_none() {
+        return Ok(());
+    }
+    let label = format!(
+        "ingest cursor {} for chain {}",
+        source.source_key, source.chain_id
+    );
+    let mut transaction = pool.begin().await.map_err(|error| {
+        RunnerError::database(format!("failed to begin recording {label}"), error)
+    })?;
+    let stored = sqlx::query_as::<_, VerifiedIdentity>(
+        "SELECT verified_chain_id, verified_genesis_hash
+         FROM ingest_cursors
+         WHERE chain_id = $1 AND source_key = $2
+         FOR UPDATE",
+    )
+    .bind(&source.chain_id)
+    .bind(&source.source_key)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|error| RunnerError::database(format!("failed to load {label}"), error))?;
+    let Some(stored) = stored else {
+        return Ok(());
+    };
+    let genesis_differs = matches!(
+        (&stored.1, &observed.1),
+        (Some(recorded), Some(reported)) if recorded != reported
+    );
+    if stored
+        .0
+        .is_some_and(|recorded| Some(recorded) != observed.0)
+        || genesis_differs
+    {
+        return Err(RunnerError::data_integrity(format!(
+            "{label} recorded RPC chain id {} and genesis block hash {}, but its endpoint now \
+             reports chain id {} and genesis block hash {}; a cursor cannot continue on another \
+             chain",
+            describe(stored.0),
+            stored.1.as_deref().unwrap_or("none"),
+            describe(observed.0),
+            observed.1.as_deref().unwrap_or("not checked"),
+        )));
+    }
+    if stored.0.is_none() || (stored.1.is_none() && observed.1.is_some()) {
+        sqlx::query(
+            "UPDATE ingest_cursors
+             SET verified_chain_id = $3,
+                 verified_genesis_hash = COALESCE(verified_genesis_hash, $4)
+             WHERE chain_id = $1 AND source_key = $2",
+        )
+        .bind(&source.chain_id)
+        .bind(&source.source_key)
+        .bind(observed.0)
+        .bind(&observed.1)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| RunnerError::database(format!("failed to record {label}"), error))?;
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|error| RunnerError::database(format!("failed to commit {label}"), error))
+}
+
+fn describe(chain_id: Option<i64>) -> String {
+    chain_id.map_or_else(|| "none".to_owned(), |id| id.to_string())
 }

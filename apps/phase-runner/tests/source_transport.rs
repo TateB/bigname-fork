@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use anyhow::Result;
 use axum::{Json, Router, extract::State, routing::post};
-use bigname_ingest::VerificationProvider;
+use bigname_ingest::{RpcChainCheck, VerificationProvider};
 use phase_runner::{
     config::{SeedBasis, SourceConfig, SourceRole},
     phase::{PhaseName, RunMode},
@@ -29,7 +29,9 @@ async fn active_writer_refuses_transport_change_before_provider_access() -> Resu
     let new = source("reth_db", "/missing/reth")?;
     for phase in PhaseName::ALL {
         let lock = PhaseLock::acquire(db.writer_connect_options(), SEPOLIA, phase).await?;
-        let error = transition(&db.runner(), &old, &new).await.unwrap_err();
+        let error = transition(&db.runner(), &old, &new, RpcChainCheck::ChainIdOnly)
+            .await
+            .unwrap_err();
         assert!(
             error.to_string().contains("stop all phase writers"),
             "{error:#}"
@@ -57,6 +59,7 @@ async fn direct_reader_without_a_datadir_is_refused_and_changes_nothing() -> Res
         &db.runner(),
         &source("drpc", &rpc)?,
         &source("reth_db", datadir.to_str().expect("utf-8 temp path"))?,
+        RpcChainCheck::ChainIdOnly,
     )
     .await
     .expect_err("an empty directory is not a Reth datadir");
@@ -1092,6 +1095,7 @@ impl NodeDouble {
             i64::from_str_radix(quantity.trim_start_matches("0x"), 16).expect("block number")
         };
         let result = match request["method"].as_str().unwrap_or_default() {
+            "eth_chainId" => json!("0xaa36a7"),
             "eth_getBlockByNumber" => {
                 let head = || self.hashes.keys().next_back().copied();
                 let number = match request["params"][0].as_str() {

@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS ingest_cursors (
     last_processed_block_number bigint,
     last_processed_block_hash text,
     updated_at timestamptz NOT NULL DEFAULT now(),
+    verified_chain_id bigint,
+    verified_genesis_hash text,
     PRIMARY KEY (chain_id, source_key),
     CHECK (btrim(chain_id) <> ''),
     CHECK (btrim(source_key) <> ''),

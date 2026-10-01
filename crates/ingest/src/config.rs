@@ -1,4 +1,4 @@
-use crate::{IngestError, Result};
+use crate::{IngestError, Result, RpcChainCheck};
 
 /// Bounded work sizes for RPC ingestion. These settings do not change fact selection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -6,6 +6,7 @@ pub struct IngestConfig {
     blocks_per_batch: u32,
     rpc_batch_size: usize,
     rpc_max_in_flight: usize,
+    rpc_chain_check: Option<RpcChainCheck>,
 }
 
 impl Default for IngestConfig {
@@ -14,6 +15,7 @@ impl Default for IngestConfig {
             blocks_per_batch: 256,
             rpc_batch_size: 32,
             rpc_max_in_flight: 8,
+            rpc_chain_check: None,
         }
     }
 }
@@ -43,7 +45,15 @@ impl IngestConfig {
             blocks_per_batch,
             rpc_batch_size,
             rpc_max_in_flight,
+            rpc_chain_check: None,
         })
+    }
+
+    /// Guards every RPC provider built from this configuration with the RPC chain check.
+    #[must_use]
+    pub const fn with_rpc_chain_check(mut self, mode: RpcChainCheck) -> Self {
+        self.rpc_chain_check = Some(mode);
+        self
     }
 
     /// Normal RPC Ingest window and shared redo window, in whole blocks.
@@ -60,6 +70,10 @@ impl IngestConfig {
     /// Concurrent HTTP requests across all users of one configured provider.
     pub const fn rpc_max_in_flight(self) -> usize {
         self.rpc_max_in_flight
+    }
+
+    pub const fn rpc_chain_check(self) -> Option<RpcChainCheck> {
+        self.rpc_chain_check
     }
 }
 

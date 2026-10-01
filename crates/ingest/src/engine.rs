@@ -469,14 +469,20 @@ impl Engine {
             return Ok(provider);
         }
         let provider = Arc::new(
-            ChainProvider::with_config(chain_id, &source.kind, &source.endpoint, self.config)
-                .map_err(|error| {
-                    IngestError::with_source(
-                        crate::ErrorKind::Configuration,
-                        format!("failed to configure source {}", source.key),
-                        error,
-                    )
-                })?,
+            ChainProvider::with_config(
+                chain_id,
+                &source.key,
+                &source.kind,
+                &source.endpoint,
+                self.config,
+            )
+            .map_err(|error| {
+                IngestError::with_source(
+                    crate::ErrorKind::Configuration,
+                    format!("failed to configure source {}", source.key),
+                    error,
+                )
+            })?,
         );
         providers.insert(key, provider.clone());
         Ok(provider)

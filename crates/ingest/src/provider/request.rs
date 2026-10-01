@@ -17,6 +17,15 @@ pub(super) struct BatchCall {
 
 impl JsonRpcProvider {
     pub(super) async fn request(&self, method: &str, params: Vec<Value>) -> Result<Option<Value>> {
+        self.ensure_chain().await?;
+        self.request_unchecked(method, params).await
+    }
+
+    pub(super) async fn request_unchecked(
+        &self,
+        method: &str,
+        params: Vec<Value>,
+    ) -> Result<Option<Value>> {
         for attempt in 0..MAX_ATTEMPTS {
             match self.request_once(method, params.clone()).await {
                 Ok(value) => return Ok(value),
@@ -40,6 +49,7 @@ impl JsonRpcProvider {
         if calls.is_empty() {
             return Ok(Vec::new());
         }
+        self.ensure_chain().await?;
         if self.config.rpc_batch_size() == 1 {
             let mut values = Vec::with_capacity(calls.len());
             for call in calls {
@@ -181,6 +191,9 @@ fn response_result(response: &Value, method: &str) -> Result<Option<Value>> {
 }
 
 pub(super) fn retryable(error: &anyhow::Error) -> bool {
+    if super::chain_check::chain_mismatch_in(error).is_some() {
+        return false;
+    }
     if error.chain().any(|cause| {
         cause
             .downcast_ref::<reqwest::Error>()
@@ -247,8 +260,7 @@ async fn backoff(attempt: usize) {
 }
 
 pub(super) fn validate_endpoint(endpoint: &str) -> Result<Url> {
-    let endpoint =
-        Url::parse(endpoint).with_context(|| format!("failed to parse RPC endpoint {endpoint}"))?;
+    let endpoint = Url::parse(endpoint).context("failed to parse RPC endpoint URL")?;
     if !matches!(endpoint.scheme(), "http" | "https") {
         bail!("RPC endpoint must use http:// or https://");
     }

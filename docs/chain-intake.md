@@ -168,7 +168,12 @@ output that may have come from that source, followed by a [full source
 re-walk](glossary.md#re-derivation-boundary); it is never an implicit in-place cursor update. The narrow same-node RPC/direct-DB
 transport exception below preserves that physical source and its retained extent. Changing only the provider endpoint is allowed because endpoints are
 not persisted source identity and therefore do not trip the runtime identity
-guard. An independent level attests only that the current verification-only
+guard. Every RPC endpoint must still pass the
+[RPC chain check](deployment.md#rpc-chain-check): its `eth_chainId`, and in
+`full` mode its block 0 hash, must match the configured chain at startup and
+again during the run, and a cursor refuses an endpoint that reports another
+chain than the one recorded in its `verified_chain_id` and
+`verified_genesis_hash`. An independent level attests only that the current verification-only
 endpoint was excluded from intake for all facts retained since the last full
 source re-walk under that endpoint-and-role configuration; it does not prove
 independence across earlier endpoint values. Never assign an endpoint that

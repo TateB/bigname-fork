@@ -96,6 +96,8 @@ impl Fixture {
             .env("RUST_LOG", "phase_runner=info")
             .env("REDO554_RPC_URL", &self.rpc.endpoint);
         if matches!(operation, "run" | "redo") {
+            // The fixture's block 0 is not the pinned Sepolia genesis.
+            command.env("BIGNAME_PHASE_RUNNER_RPC_CHAIN_CHECK", "chain-id-only");
             command.args([
                 "--chain",
                 CHAIN,

@@ -8,6 +8,7 @@ use sqlx::PgPool;
 use crate::{
     error::{ErrorKind, RunnerError, RunnerResult},
     heads::{BlockMarker, HeadMarkers},
+    metrics::RunnerMetricsFeed,
     phase::{
         Phase, PhaseBatchOutcome, PhaseContext, PhaseFuture, PhaseName, PhaseProgress, RunMode,
         SourceProgress,
@@ -16,6 +17,7 @@ use crate::{
 
 pub struct IngestPhase {
     engine: Arc<Engine>,
+    metrics_feed: Option<RunnerMetricsFeed>,
 }
 
 impl IngestPhase {
@@ -24,7 +26,24 @@ impl IngestPhase {
     }
 
     pub fn with_engine(engine: Arc<Engine>) -> Self {
-        Self { engine }
+        Self {
+            engine,
+            metrics_feed: None,
+        }
+    }
+
+    /// Reports an RPC chain check failure to `feed` before the phase fails on it.
+    #[must_use]
+    pub fn with_metrics(mut self, feed: RunnerMetricsFeed) -> Self {
+        self.metrics_feed = Some(feed);
+        self
+    }
+
+    fn runner_error(&self, error: bigname_ingest::IngestError) -> RunnerError {
+        if let Some(feed) = &self.metrics_feed {
+            feed.observe_ingest_error(&error);
+        }
+        runner_error(error)
     }
 }
 
@@ -92,7 +111,7 @@ impl Phase for IngestPhase {
                 }
                 None => self.engine.run_batch(request).await,
             }
-            .map_err(runner_error)?;
+            .map_err(|error| self.runner_error(error))?;
             let progress = PhaseProgress {
                 current: Some(runner_marker(outcome.current)?),
                 target: Some(runner_marker(outcome.target)?),

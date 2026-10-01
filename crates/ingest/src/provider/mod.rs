@@ -13,6 +13,9 @@ use tokio::sync::Semaphore;
 use crate::IngestConfig;
 
 mod bloom;
+mod chain_check;
+#[cfg(test)]
+mod chain_check_tests;
 mod decode;
 mod http_client;
 mod request;
@@ -23,10 +26,14 @@ mod tuning_tests;
 mod types;
 
 pub use bloom::bloom_contains;
+pub use chain_check::{
+    ExpectedRpcChain, ObservedRpcChain, RPC_CHAIN_RECHECK_INTERVAL, RpcChainCheck, RpcChainMismatch,
+};
 pub use types::{
     Block, BlockBundle, HeadSnapshot, Log, Receipt, ResolvedBlock, Transaction, TransactionPayload,
 };
 
+use chain_check::{ChainGuard, chain_mismatch_in};
 use http_client::RecoveringHttpClient;
 use request::validate_endpoint;
 pub use reth_db::RETH_DB_OPENED_STORAGE_CHILDREN;
@@ -57,6 +64,7 @@ pub struct JsonRpcProvider {
     request_attempts: Arc<AtomicUsize>,
     config: IngestConfig,
     in_flight: Arc<Semaphore>,
+    chain_guard: Option<Arc<ChainGuard>>,
 }
 
 impl JsonRpcProvider {
@@ -71,7 +79,20 @@ impl JsonRpcProvider {
             request_attempts: Arc::new(AtomicUsize::new(0)),
             config,
             in_flight: Arc::new(Semaphore::new(config.rpc_max_in_flight())),
+            chain_guard: None,
         })
+    }
+
+    /// Checks the endpoint against `expected` before its first request, and again once the
+    /// last check is older than [`RPC_CHAIN_RECHECK_INTERVAL`] or the HTTP client was rebuilt.
+    #[must_use]
+    pub fn with_chain_check(self, expected: ExpectedRpcChain) -> Self {
+        self.with_chain_check_every(expected, RPC_CHAIN_RECHECK_INTERVAL)
+    }
+
+    fn with_chain_check_every(mut self, expected: ExpectedRpcChain, interval: Duration) -> Self {
+        self.chain_guard = Some(Arc::new(ChainGuard::new(expected, interval)));
+        self
     }
 
     pub(super) fn request_attempts(&self) -> usize {
@@ -88,17 +109,34 @@ impl ChainProvider {
         }
     }
 
+    /// A provider for one configured source. An RPC endpoint is guarded by the RPC chain check
+    /// when `config` carries a mode.
     pub(crate) fn with_config(
         chain_id: &str,
+        source_key: &str,
         kind: &str,
         endpoint: &str,
         config: IngestConfig,
     ) -> Result<Self> {
         match normalized_kind(kind) {
-            ProviderKind::Rpc => Ok(Self::JsonRpc(JsonRpcProvider::with_config(
-                endpoint, config,
-            )?)),
+            ProviderKind::Rpc => {
+                let provider = JsonRpcProvider::with_config(endpoint, config)?;
+                let provider = match config.rpc_chain_check() {
+                    Some(mode) => provider
+                        .with_chain_check(ExpectedRpcChain::new(chain_id, source_key, mode)?),
+                    None => provider,
+                };
+                Ok(Self::JsonRpc(provider))
+            }
             _ => Self::new(chain_id, kind, endpoint),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn with_chain_check(self, expected: ExpectedRpcChain) -> Self {
+        match self {
+            Self::JsonRpc(provider) => Self::JsonRpc(provider.with_chain_check(expected)),
+            Self::RethDb(provider) => Self::RethDb(provider),
         }
     }
 
@@ -309,9 +347,36 @@ fn provider_error_text(error: &anyhow::Error) -> String {
     rendered
 }
 
+/// Runs the RPC chain check once against `endpoint`. Transport failures are retried with the
+/// provider's usual backoff before they are returned.
+pub async fn verify_rpc_chain(
+    endpoint: &str,
+    expected: &ExpectedRpcChain,
+) -> crate::Result<ObservedRpcChain> {
+    let context = format!(
+        "RPC chain check for chain {} source {}",
+        expected.chain(),
+        expected.source_key()
+    );
+    let provider = JsonRpcProvider::new(endpoint).map_err(|error| {
+        crate::IngestError::with_source(crate::ErrorKind::Configuration, context.as_str(), error)
+    })?;
+    provider
+        .verify_chain(expected)
+        .await
+        .map_err(|error| provider_error(&context, error))
+}
+
 pub type SharedProvider = Arc<ChainProvider>;
 
 pub fn provider_error(context: &str, error: anyhow::Error) -> crate::IngestError {
+    if let Some(mismatch) = chain_mismatch_in(&error) {
+        return crate::IngestError::with_source(
+            crate::ErrorKind::Configuration,
+            context,
+            mismatch.clone(),
+        );
+    }
     let kind = if is_retryable(&error) {
         crate::ErrorKind::Transient
     } else {
