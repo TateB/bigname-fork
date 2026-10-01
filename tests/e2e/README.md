@@ -53,9 +53,9 @@ scripts/test-db -- cargo test --manifest-path tests/e2e/Cargo.toml --locked -- -
 ```
 
 The default gate requires the exact library-test summary `97 passed; 0 failed;
-3 ignored; 0 filtered out`. CI shards 1 and 2 each require `32 passed; 0 failed; 1
-ignored; 67 filtered out`, and shard 3 requires `33 passed; 0 failed; 1 ignored; 66
-filtered out`. The gate checks both Cargo's exit status and every
+3 ignored; 0 filtered out`. Each of the six CI shards requires the runnable and
+ignored counts listed for it at the top of `run-gate`, with every other test
+filtered out. The gate checks both Cargo's exit status and every
 summary count, so a prematurely successful process or an incorrectly filtered
 suite cannot satisfy CI.
 
@@ -248,8 +248,7 @@ Together with the two [pre-surface](../../docs/glossary.md#pre-surface) resolver
 scenarios, the two zero-address resolver scenarios, registry-operator lifecycle,
 API shutdown scenario, eleven-log migration scenario, and subregistry-replacement
 scenario, these three connected scenarios produce 98 tests: 95 runnable and 3
-ignored, split as 32 runnable plus 1 ignored on each of shards 1 and 2, and
-31 runnable plus 1 ignored on shard 3. This coverage changes no production rollout,
+ignored, split across the six CI shards listed in `run-gate`. This coverage changes no production rollout,
 deployment file, Docker configuration, environment file, checked-in manifest,
 or interpreter source.
 
@@ -260,7 +259,7 @@ runnable e2e scenario claims deleted checkpoint or completeness semantics.
 ## CI shape
 
 The e2e builder in `.github/workflows/ci.yml` builds one shared
-`phase-runner` artifact. Three scenario shards independently provision
+`phase-runner` artifact. Six scenario shards independently provision
 PostgreSQL and Foundry, verify that artifact, and run `tests/e2e/run-gate` with
 eight test threads. A result-only `test (e2e)` job rejects any builder or shard
 result other than success, and the aggregate `test` job continues to require
@@ -268,9 +267,9 @@ that result.
 
 ## Shard assignment and refresh
 
-`tests/e2e/run-gate` checks in three balanced lists of full test names.
+`tests/e2e/run-gate` checks in six balanced lists of full test names.
 Before executing scenarios, each shard discovers the complete library-test set
-and ignored subset, then proves that the three lists have no duplicates or
+and ignored subset, then proves that the lists have no duplicates or
 intersection and that their union exactly equals discovery. Any added, removed,
 renamed, or newly ignored test therefore fails closed before scenario execution.
 
@@ -302,22 +301,23 @@ scripts/test-db -- bash -euo pipefail -c '
 Sort durations descending and assign each name to the shard with the lowest
 accumulated duration, breaking ties by shard number and full test name. Keep
 runnable counts within one test of each other and put one of the three ignored
-tests on each shard. Update the lists, expected ignored-name set, and counts
-together at the top of `run-gate`, then run its default and all three shard
-modes. The explicit root-workspace build above removes a one-time canonical
+tests on each of shards 1 to 3. Update the lists, expected ignored-name set, and
+counts together at the top of `run-gate`, then run its default mode and every
+shard mode. The explicit root-workspace build above removes a one-time canonical
 `phase-runner` compile from the first measured scenario while leaving
 scenario-specific generated builds in the timing sample.
 
-The current assignment uses run `36642410569` as a starting point. For its 34
-long tests, elapsed estimates come from libtest's 60-second warning and completion
-timestamps. Short scenarios receive a 30-second balancing weight and harness
-unit tests a one-second weight. These are assignment weights, not predictions
+The current six-shard assignment uses run `36891397536`'s three shards. Each
+test's weight is its elapsed time there, reconstructed from the completion
+timestamps: libtest starts tests in name order as each of its eight threads
+frees up, so a test's start is the completion that freed its thread. The one
+test without a timestamp gets a one-second weight. These are assignment weights, not predictions
 of a shard's elapsed time: tests run concurrently and may share build work.
 Actual shard timings remain in each job's `e2e gate timing` output and summary.
 
-The API suite runs separately in two Nextest hash partitions, each with its own
+The API suite runs separately in five Nextest hash partitions, each with its own
 PostgreSQL service and the existing API JIT setting. `test (api)` succeeds only
-when both partitions succeed, and the final `test` job requires that aggregate
+when every partition succeeds, and the final `test` job requires that aggregate
 alongside `test (e2e)`. Nextest discovers new API tests automatically; hash
 partitioning assigns every discovered test to exactly one API job.
 
