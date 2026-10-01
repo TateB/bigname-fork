@@ -307,11 +307,15 @@ shard mode. The explicit root-workspace build above removes a one-time canonical
 `phase-runner` compile from the first measured scenario while leaving
 scenario-specific generated builds in the timing sample.
 
-The current six-shard assignment uses run `36891397536`'s three shards. Each
+The current six-shard assignment uses run `36899853923`'s six shards. Each
 test's weight is its elapsed time there, reconstructed from the completion
 timestamps: libtest starts tests in name order as each of its eight threads
 frees up, so a test's start is the completion that freed its thread. The one
-test without a timestamp gets a one-second weight. These are assignment weights, not predictions
+test without a timestamp gets a one-second weight. The slowest scenario,
+`registry_operator_approval_serving_lifecycle` at about 400 seconds, sets the
+floor for its shard on its own, so it is placed first with 1.6 times its weight;
+its shard then takes lighter companions and the scenario competes less for the
+runner's four cores. These are assignment weights, not predictions
 of a shard's elapsed time: tests run concurrently and may share build work.
 Actual shard timings remain in each job's `e2e gate timing` output and summary.
 
