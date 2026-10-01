@@ -922,3 +922,6 @@ async fn retained_history_of_an_uncovered_family_requires_full_state() -> TestRe
     }
     Ok(())
 }
+
+#[path = "redo_session_tests.rs"]
+mod redo_session;
