@@ -2672,7 +2672,8 @@ introduces it rebuilds Project from full history before serving the option; see
   scopes share that order. The account key is
   `account:{chain_id}:{authority_kind}:{authority_contract}:{owner}`. The
   opaque cursor binds the exact normalized collection anchor: normalized
-  `address`, normalized `name` when supplied, and an explicitly requested public
+  `address`, the node a `name` names when supplied (so equivalent
+  [name inputs](api-v1.md#name-inputs) share a cursor), and an explicitly requested public
   `registration_id`. It also binds the namespace when explicit or implied by a
   name (and namespace absence for an address-only request, matching its
   all-namespace result set), `include=lineage`, the fixed sort and the last

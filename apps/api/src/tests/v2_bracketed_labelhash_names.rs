@@ -249,3 +249,44 @@ async fn v2_bracketed_labelhash_reads_like_the_plain_spelling_at_every_position(
 
     database.cleanup().await
 }
+
+#[tokio::test]
+async fn v2_bracketed_and_plain_spellings_share_a_cursor() -> Result<()> {
+    let database = TestDatabase::new_migrated().await?;
+    seed_family_permissions_fixture(&database).await?;
+    seed_v2_history_fixture(&database).await?;
+
+    for (route, label) in [
+        ("/v1/permissions?page_size=1&name=", "alpha"),
+        ("/v1/events?page_size=1&name=", "history"),
+    ] {
+        let plain = format!("{route}{label}.eth");
+        let expected = read_family_pages(&database, &plain).await?;
+        assert!(expected.len() > 1, "{plain}: {expected:#?}");
+        let expected: Vec<Value> = expected
+            .iter()
+            .flat_map(|page| page["data"].as_array().cloned().unwrap_or_default())
+            .collect();
+
+        // Alternate spellings page by page; each continuation carries the other's cursor.
+        let spellings = [format!("{route}{}.eth", bracketed(label)), plain.clone()];
+        let mut rows = Vec::new();
+        let mut cursor: Option<String> = None;
+        for page in 0.. {
+            let uri = match &cursor {
+                None => spellings[0].clone(),
+                Some(cursor) => format!("{}&cursor={cursor}", spellings[page % 2]),
+            };
+            let (status, body) = read_family_response(&database, &uri).await?;
+            assert_eq!(status, StatusCode::OK, "{uri}: {body:#}");
+            rows.extend(body["data"].as_array().cloned().unwrap_or_default());
+            match body["page"]["next_cursor"].as_str() {
+                Some(next) => cursor = Some(next.to_owned()),
+                None => break,
+            }
+        }
+        assert_eq!(rows, expected, "{route}");
+    }
+
+    database.cleanup().await
+}
