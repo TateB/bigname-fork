@@ -60,22 +60,18 @@ pub(crate) const fn wrapper_lifecycle_matches_fuses(
     }
 }
 
-/// The served `manager` (docs/api-v1.md, Manager): a name with no NameWrapper state serves its
-/// owner; a wrapped name serves its token holder, the registrant, while PARENT_CANNOT_CONTROL is
-/// unburned (`wrapped`), and nothing once it is burned (`emancipated`, `locked`).
+/// The served `manager` (docs/api-v1.md, Manager): the account that can change the name's
+/// records, the owner of a name with no NameWrapper state and the token holder, the registrant, of
+/// a wrapped name in any state.
 pub(crate) fn served_manager(
     declared_summary: &Value,
     owner: Option<&String>,
     registrant: Option<&String>,
 ) -> Option<String> {
-    match declared_summary
-        .get("wrapper_state")
-        .and_then(Value::as_str)
-    {
-        None => owner.cloned(),
-        Some(state) => registrant
-            .filter(|_| WrapperState::from_wire(state) == Some(WrapperState::Wrapped))
-            .cloned(),
+    if declared_summary.get("wrapper_state").is_some() {
+        registrant.cloned()
+    } else {
+        owner.cloned()
     }
 }
 
@@ -90,15 +86,14 @@ mod tests {
     use super::served_manager;
 
     #[test]
-    fn manager_is_the_owner_unwrapped_the_holder_while_parent_controlled_and_absent_after() {
+    fn manager_is_the_owner_unwrapped_and_the_holder_in_every_wrapper_state() {
         let owner = "0xowner".to_owned();
         let holder = "0xholder".to_owned();
         for (summary, expected) in [
             (json!({}), Some(&owner)),
             (json!({"wrapper_state": "wrapped"}), Some(&holder)),
-            (json!({"wrapper_state": "emancipated"}), None),
-            (json!({"wrapper_state": "locked"}), None),
-            (json!({"wrapper_state": "unknown"}), None),
+            (json!({"wrapper_state": "emancipated"}), Some(&holder)),
+            (json!({"wrapper_state": "locked"}), Some(&holder)),
         ] {
             assert_eq!(
                 served_manager(&summary, Some(&owner), Some(&holder)).as_ref(),
@@ -107,7 +102,7 @@ mod tests {
             );
         }
         assert_eq!(
-            served_manager(&json!({"wrapper_state": "wrapped"}), Some(&owner), None),
+            served_manager(&json!({"wrapper_state": "locked"}), Some(&owner), None),
             None
         );
     }

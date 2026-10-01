@@ -810,8 +810,8 @@ collection route carry neither header.
   lookup records, `GET /v1/names` and search rows, subname rows and
   address-name rows by the rule in
   [Manager](api-v1.md#manager): the `owner` of a name with no NameWrapper
-  state, the `registrant` (the NameWrapper token holder) of a `wrapped` name,
-  and absent on an `emancipated` or `locked` name. It is also absent wherever
+  state and the `registrant` (the NameWrapper token holder) of a wrapped name
+  in any `wrapper_state`. It is absent wherever
   the address it copies is absent, and on `profile=feed` lookup records, which
   carry no registration fields. No null placeholder is emitted. `authority` names where the chain
   reads the current registration fields from: `ens_v2` or `ens_v1`, read from

@@ -6300,7 +6300,7 @@
           },
           "manager": {
             "type": "string",
-            "description": "Address that manages the name (see Manager): the owner of a name with no NameWrapper state, the token holder of a wrapped name whose parent can still control it; omitted when the parent cannot control it and wherever the address it copies is omitted."
+            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted."
           },
           "registrant": {
             "type": "string",
@@ -6704,7 +6704,7 @@
           },
           "manager": {
             "type": "string",
-            "description": "Address that manages the name (see Manager): the owner of a name with no NameWrapper state, the token holder of a wrapped name whose parent can still control it; omitted when the parent cannot control it and wherever the address it copies is omitted."
+            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted."
           },
           "registrant": {
             "type": "string",
@@ -7000,7 +7000,7 @@
           },
           "manager": {
             "type": "string",
-            "description": "Address that manages the name (see Manager): the owner of a name with no NameWrapper state, the token holder of a wrapped name whose parent can still control it; omitted when the parent cannot control it and wherever the address it copies is omitted."
+            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted."
           },
           "registrant": {
             "type": "string",
@@ -7081,7 +7081,7 @@
           },
           "manager": {
             "type": "string",
-            "description": "Address that manages the name (see Manager): the owner of a name with no NameWrapper state, the token holder of a wrapped name whose parent can still control it; omitted when the parent cannot control it and wherever the address it copies is omitted."
+            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted."
           },
           "registrant": {
             "type": "string",
@@ -7165,7 +7165,7 @@
           },
           "manager": {
             "type": "string",
-            "description": "Address that manages the name (see Manager): the owner of a name with no NameWrapper state, the token holder of a wrapped name whose parent can still control it; omitted when the parent cannot control it and wherever the address it copies is omitted."
+            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted."
           },
           "registrant": {
             "type": "string",
@@ -8175,7 +8175,7 @@
           },
           "manager": {
             "type": "string",
-            "description": "Address that manages the name (see Manager): the owner of a name with no NameWrapper state, the token holder of a wrapped name whose parent can still control it; omitted when the parent cannot control it and wherever the address it copies is omitted."
+            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted."
           },
           "registrant": {
             "type": "string",

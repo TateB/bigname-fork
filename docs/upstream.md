@@ -221,6 +221,19 @@ under [ENSv1 mirror ancestor gate](deployment.md#ensv1-mirror-ancestor-gate).
 > interpreter does not do. The delegate row is served as still granted.
 > **Since**: `2026-09-13`
 
+> **A wrapped `.eth` name in registrar grace serves its holder as `manager`** —
+> NameWrapper refuses every holder change to the name's registry record while a
+> wrapped `.eth` name is inside its registrar grace period, but the served
+> `manager` field still names the token holder then.
+> **Upstream**: (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L214-L222 @ ens_v1@91c966f)
+> (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L1082-L1089 @ ens_v1@91c966f)
+> **Our rule**: `docs/api-v1.md` § Manager.
+> **Why**: the field is decided from the composed name row, which carries no
+> grace state, and the API reads it with no clock. The `manager` address
+> relation, evaluated at publication time, omits the holder in grace, so the
+> two disagree inside that window until the composed row carries it.
+> **Since**: `2026-10-01`
+
 
 
 
