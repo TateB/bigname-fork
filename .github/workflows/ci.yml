@@ -43,8 +43,9 @@ env:
 # A pull request cannot enter the queue until the full suite has passed on it.
 # The queue's merge_group run then repeats only the fast gates on the merged
 # result: static, schema v2, the core and site tests, and artifacts-and-smoke.
-# The API, phase-runner and e2e suites are skipped there, and `test` accepts
-# their aggregates as skipped on merge_group only.
+# The API, phase-runner and e2e suites are skipped there, `test` accepts their
+# aggregates as skipped on merge_group only, and queue_skipped_shards reports
+# the skipped matrix shards' check names.
 jobs:
   static:
     runs-on: ubuntu-latest
@@ -1212,6 +1213,28 @@ jobs:
             echo "e2e shards:   ${{ needs.e2e_shard.result }}"
             exit 1
           fi
+
+  # GitHub requires the same checks on merge_group as on pull requests. A
+  # non-matrix job skipped by its `if` reports its own name as skipped, which
+  # satisfies a required check, but a skipped matrix job reports one check under
+  # its unexpanded name, so the shard names would never report. This stands in
+  # for the matrix shards that the queue skips.
+  queue_skipped_shards:
+    if: github.event_name == 'merge_group'
+    name: ${{ matrix.check }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        check:
+          - test (api shard 1/2)
+          - test (api shard 2/2)
+          - test (e2e shard 1/3)
+          - test (e2e shard 2/3)
+          - test (e2e shard 3/3)
+    steps:
+      - name: Skipped in the merge queue
+        run: echo "${{ matrix.check }} passed on the pull request and is not repeated in the merge queue."
 
   test:
     name: test
