@@ -363,7 +363,7 @@ async fn a_startup_check_error_never_repeats_the_endpoint_path_or_key() -> Resul
         let mut status = "503 Service Unavailable";
         while let Ok((mut socket, _)) = listener.accept().await {
             let _ = read_request_body(&mut socket).await;
-            let body = "unknown key in POST /v1/secret-key?token=hunter2";
+            let body = "unknown key in POST /v1/secret-key?token=hunter2, token hunter2";
             let response = format!(
                 "HTTP/1.1 {status}\r\ncontent-length: {}\r\n\r\n{body}",
                 body.len()

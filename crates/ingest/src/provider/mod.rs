@@ -372,20 +372,28 @@ pub async fn verify_rpc_chain(
     let provider = JsonRpcProvider::new(endpoint).map_err(|error| {
         crate::IngestError::with_source(crate::ErrorKind::Configuration, context.as_str(), error)
     })?;
-    provider
-        .verify_chain(expected)
-        .await
-        .map_err(|error| match provider_error(&context, error) {
+    provider.verify_chain(expected).await.map_err(|error| {
+        let redacted = redacted_text(&error, endpoint);
+        match provider_error(&context, error) {
             error if error.rpc_chain_mismatch().is_some() => error,
-            error => {
-                crate::IngestError::new(error.kind(), redact_endpoint(error.to_string(), endpoint))
-            }
-        })
+            error => crate::IngestError::with_source(
+                error.kind(),
+                context.as_str(),
+                anyhow::anyhow!(redacted),
+            ),
+        }
+    })
 }
 
-/// A provider's error body can echo the request URI; startup errors and retry warnings never
-/// carry the endpoint's credentials, path or query.
-fn redact_endpoint(mut rendered: String, endpoint: &str) -> String {
+/// Startup errors and retry warnings never carry the endpoint's credentials, path or query: a
+/// provider's HTTP error body, which can echo any of them, is left out.
+fn redacted_text(error: &anyhow::Error, endpoint: &str) -> String {
+    let mut rendered = provider_error_text(error);
+    for cause in error.chain() {
+        if let Some(http) = cause.downcast_ref::<request::HttpStatusError>() {
+            rendered = rendered.replace(&http.to_string(), &http.without_body());
+        }
+    }
     let Ok(url) = reqwest::Url::parse(endpoint) else {
         return rendered.replace(endpoint.trim(), "<redacted-endpoint>");
     };

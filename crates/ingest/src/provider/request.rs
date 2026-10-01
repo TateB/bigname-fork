@@ -5,7 +5,7 @@ use reqwest::Url;
 use serde_json::{Value, json};
 use tracing::warn;
 
-use super::{JsonRpcProvider, provider_error_text, redact_endpoint};
+use super::{JsonRpcProvider, redacted_text};
 
 const MAX_ATTEMPTS: usize = 5;
 
@@ -46,7 +46,7 @@ impl JsonRpcProvider {
                         component = "ingest_provider",
                         method,
                         attempt = attempt + 1,
-                        error = %redact_endpoint(provider_error_text(&error), self.endpoint.as_str()),
+                        error = %redacted_text(&error, self.endpoint.as_str()),
                         "retrying transient JSON-RPC request"
                     );
                     backoff(attempt).await;
@@ -77,7 +77,7 @@ impl JsonRpcProvider {
                         component = "ingest_provider",
                         request_context = "batch",
                         attempt = attempt + 1,
-                        error = %redact_endpoint(provider_error_text(&error), self.endpoint.as_str()),
+                        error = %redacted_text(&error, self.endpoint.as_str()),
                         "retrying transient JSON-RPC batch"
                     );
                     backoff(attempt).await;
@@ -197,10 +197,11 @@ impl JsonRpcProvider {
             .context("failed to read JSON-RPC response")?;
         drop(permit);
         if !status.is_success() {
-            bail!(
-                "provider request failed with HTTP {status}: {}",
-                truncate(&body)
-            );
+            return Err(HttpStatusError {
+                status,
+                body: truncate(&body).to_owned(),
+            }
+            .into());
         }
         serde_json::from_str(&body).context("failed to decode JSON-RPC response")
     }
@@ -276,6 +277,28 @@ fn redact_url(error: &mut reqwest::Error) {
     url.set_query(None);
     url.set_fragment(None);
 }
+
+/// A non-success HTTP answer. Its body can echo the request URI or a key taken from it, so
+/// redacted renderings leave the body out.
+#[derive(Debug)]
+pub(super) struct HttpStatusError {
+    status: reqwest::StatusCode,
+    body: String,
+}
+
+impl HttpStatusError {
+    pub(super) fn without_body(&self) -> String {
+        format!("provider request failed with HTTP {}", self.status)
+    }
+}
+
+impl std::fmt::Display for HttpStatusError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}: {}", self.without_body(), self.body)
+    }
+}
+
+impl std::error::Error for HttpStatusError {}
 
 fn truncate(body: &str) -> &str {
     let end = body
