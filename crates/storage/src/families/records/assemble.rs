@@ -455,8 +455,10 @@ pub(crate) fn unsupported_mirror_row(
     chain_id: &str,
     serving: &ServingPointer,
     mirror: &MirrorSelection,
-    stamps: &BTreeMap<i64, BlockStamp>,
+    reads: &AssemblyReads,
+    attributed: bool,
 ) -> Result<(RecordInventoryCurrentRow, String)> {
+    let stamps = &reads.stamps;
     let reason = mirror.unsupported_reason();
     let position = chain_position(stamps, chain_id, serving.block_number);
     let boundary = json!({
@@ -466,7 +468,7 @@ pub(crate) fn unsupported_mirror_row(
         "event_kind": null,
         "chain_position": position,
     });
-    let provenance = json!({
+    let mut provenance = json!({
         "chain_id": chain_id,
         "logical_name_id": serving.logical_name_id,
         "resolver_address": serving.resolver_address,
@@ -478,6 +480,9 @@ pub(crate) fn unsupported_mirror_row(
         "coverage": {"status": "projected", "exhaustiveness": "not_asserted"},
         "mirror": mirror.provenance(serving),
     });
+    if !attributed && let Some(object) = provenance.as_object_mut() {
+        object.remove("attributed_event_ids");
+    }
     let chain_positions = payload::strip_nulls(json!({
         "block_number": serving.block_number,
         "block_hash": stamps.get(&serving.block_number).map(|stamp| stamp.block_hash.clone()),

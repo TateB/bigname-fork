@@ -336,7 +336,7 @@ listed by search or a resolver's `bound_names` ([routes](api-v1-routes.md#get-v1
 reverse lookup still lists them. Cursors issued before the change continue.
 
 The record inventory reads behind `GET /v1/names/{name}`, `GET /v1/names/{name}/records`,
-`POST /v1/lookup` and verified lookup no longer evaluate the history record attribution, which
+`POST /v1/lookup`, verified lookup and `GET /v1/diagnostics/names/{name}/records` no longer evaluate the history record attribution, which
 none of them serves or checks ([storage](storage.md#table-ownership)); a name on a resolver with
 many writes no longer holds a database connection for seconds on each read. Responses do not
 change. The edit is in `crates/storage/src/families`, so it rotates the [interpreter content

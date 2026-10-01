@@ -1089,7 +1089,8 @@ selection within each retained resolver-pointer interval. Each selected record
 contributes writes before that selection ends, including writes made before the
 link; writes made only after the name stopped selecting that record are excluded.
 Current record values still use only the latest selection. Historical attribution
-and its selecting link IDs remain in `provenance.attributed_event_ids`, so removing
+and its selecting link IDs remain in `provenance.attributed_event_ids` wherever a
+reader fills that field (serving reads leave it out, `docs/storage.md`), so removing
 a link or write during redo rebuilds its former consumers. Link IDs are rebuild
 dependencies; they do not add a new public history event type. Exact links and
 the zero-node fallback select persistent record storage.
@@ -1163,7 +1164,8 @@ supported `ens_v1_resolver_l1` from an applicable exact declaration and the
 classifying manifest's namespace matches the pointer's namespace. The family reader applies the same guarded exception. Every `RecordChanged` or
 `RecordVersionChanged` event that joins without a logical name of its own is
 listed in the row's `provenance.attributed_event_ids`, whether or not it is
-the current value for its record key. `registration`- and `both`-scope name
+the current value for its record key, when the reader fills that field; the
+serving reads leave it out (`docs/storage.md`). `registration`- and `both`-scope name
 history list the same node-keyed writes by evaluating this attribution from the
 pointer evidence at or below the read's published block (`docs/storage.md`); a
 Project test checks that the two agree at the current publication. Retracted events leave the readable attribution set. Attribution spans every resolver
@@ -1181,8 +1183,8 @@ independently: the boundary anchors on the clearing `ResolverChanged`, `support_
 is `unsupported` with `resolver_pointer_cleared`, there are no selectors, no
 entries, and no `resolver_address`, and `provenance.record_serving` is `false` so
 every record-serving read excludes the row and a cleared name answers exactly as
-it does with no row at all. Only history reads it, for the
-`attributed_event_ids` it carries. A `basenames_base_resolver` event
+it does with no row at all. Only history needs its
+attribution, which history evaluates from the pointer evidence itself (`docs/storage.md`). A `basenames_base_resolver` event
 with no logical-name attribution may join only when the selected pointer is
 `basenames_base_registry`, with the same chain, node-to-namehash, and resolver
 emitter match. Basenames keeps the current resolver by node, permits its
@@ -1373,8 +1375,8 @@ declaration that is not itself a mirror and the selection is the exact node,
 the mirrored resource is re-pointed at that resolver for the queried node and
 the ordinary node-keyed attribution above computes its `selectors`, `entries`,
 `unsupported_families`, `last_change`, record version boundary,
-`provenance.record_event_ids`, `provenance.attributed_event_ids`,
-`provenance.read_rules`, and `exact_nonempty_not_found_record_keys` exactly as
+`provenance.record_event_ids`, `provenance.attributed_event_ids` (when the
+reader fills it), `provenance.read_rules`, and `exact_nonempty_not_found_record_keys` exactly as
 for an ENSv1 name served by that resolver. An ancestor selection is never
 derived through, so the queried name never serves the ancestor's records or the
 ancestor resolver's storage for the queried node.

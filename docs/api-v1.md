@@ -1522,8 +1522,7 @@ continue normally.
 A `record` row may also come from a node-keyed resolver observation that carries
 no logical name or resource of its own, such as an exact direct
 `public_resolver_v2` write. Project attributes that observation to a registration
-through its selected resolver pointer, and the family record inventory loader
-can report the attributed event ids (serving reads do not compute them); `registration` and `both` scope name history
+through its selected resolver pointer; `registration` and `both` scope name history
 derive the same attribution from the pointer evidence at or below the read's
 published block, so history lists the writes the name's records serve, while
 `name` scope does not because the observation has no surface link. The row's

@@ -473,11 +473,14 @@ resolver is a supported, manifest-declared ENSv1, `public_resolver_v2`, or mirro
 from its `project_resolver_classification` row, and the read refuses when a chain the pointer
 walk reaches has no servable [family publication](glossary.md#family-marker). The record
 inventory's `provenance.attributed_event_ids` is this same reader evaluated at the current
-publication, so the two cannot drift. Only the family inventory loader
-(`load_family_record_inventory`, `FamilyAttribution::Load`) fills that field. The inventory reads
-behind `GET /v1/names/{name}`, `GET /v1/names/{name}/records`, `POST /v1/lookup` and verified
-lookup leave it out (`FamilyAttribution::Omit`): no response, guard or comparison reads it, and
-on a resolver with many writes the reader costs seconds per resource. Reads without publication bounds (the unbounded storage loaders and diagnostics reads
+publication, so the two cannot drift. The family inventory reader takes the field from
+its caller's mode: `FamilyAttribution::Load` computes it with this reader, as
+`load_family_record_inventory` does; `FamilyAttribution::Given` supplies a caller's set, and the
+topology, resolves-to and record-count reads pass an empty one; `FamilyAttribution::Omit` leaves
+the field out. The inventory reads behind `GET /v1/names/{name}`, `GET /v1/names/{name}/records`,
+`POST /v1/lookup`, verified lookup and `GET /v1/diagnostics/names/{name}/records` use `Omit`. An
+unsupported mirror row attributes nothing, so under `Load` and `Given` it carries an empty list. No response, guard or comparison reads the field, and on a resolver with
+many writes the reader costs seconds per resource. Reads without publication bounds (the unbounded storage loaders and diagnostics reads
 that pass none) evaluate every readable pointer and write. The ENSv1 and Basenames node-keyed arms
 use the node and resolver expression indexes on `normalized_events`. Two paths have no
 supporting index and read through the broad `normalized_events_projection_idx` or a block-range

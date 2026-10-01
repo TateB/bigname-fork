@@ -578,9 +578,10 @@ pub async fn load_family_record_inventories_on(
             },
         );
     }
+    let attributing = attributed.is_some();
     for (serving, mirror) in unsupported {
         let (row, record_version_boundary_key) =
-            assemble::unsupported_mirror_row(chain_id, &serving, &mirror, &reads.stamps)?;
+            assemble::unsupported_mirror_row(chain_id, &serving, &mirror, &reads, attributing)?;
         out.insert(
             serving.resource_id,
             FamilyRecordInventory {
