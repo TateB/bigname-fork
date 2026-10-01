@@ -1667,11 +1667,33 @@ to the product and record-diagnostic routes; a family outside it is rejected as
 - Response shape: `data` is an array of dedicated subname rows in dictionary
   vocabulary: `name`, `display_name`, `namespace`, `namehash`, `labelhash`,
   `owner`, `registrant`, `registration_status`, `registered_at`,
-  `created_at`, and `expires_at`, and the `ens_v1` object while the child's
-  authority is `ens_v1` or `ens_v0`: a subname has no lease, so its
+  `created_at`, `expires_at`, and `authority`, and the `ens_v1` object while the
+  child's `authority` is `ens_v1` or `ens_v0`: a subname has no lease, so its
   `ens_v1.expires_at` is `null`, and a wrapped one carries its NameWrapper
-  state there. An ENSv1 or Basenames registry child with no
-  current name row serves its node's current registry owner, `owner(node)`: the
+  state there. An ENSv1 registry child with no current name row serves
+  `authority` from the registry that holds its record, `ens_v1`, or `ens_v0`
+  while only the 2017 registry does: the current registry answers `owner(node)`
+  and `resolver(node)` from the 2017 registry while `recordExists(node)` is false,
+  that is while its own stored owner is zero, and it stores a zero owner as its
+  own address, so a record once written stays
+  (upstream: .refs/ens_v1/contracts/registry/ENSRegistryWithFallback.sol:L18-L35 @ ens_v1@91c966f)
+  (upstream: .refs/ens_v1/contracts/registry/ENSRegistryWithFallback.sol:L48-L55 @ ens_v1@91c966f)
+  (upstream: .refs/ens_v1/contracts/registry/ENSRegistry.sol:L153-L157 @ ens_v1@91c966f)
+  ([registry generation](glossary.md#registry-generation)); a Basenames child
+  and one whose owner is the zero address serve none. Such an ENSv1 child's
+  `ens_v1` object holds only a null `expires_at`, as the registry records no
+  lease, unless a NameWrapper or registrar event named it under a label that
+  fails ENSIP-15 normalization, which those contracts accept
+  (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L565-L585 @ ens_v1@91c966f)
+  (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L596-L630 @ ens_v1@91c966f)
+  (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L865-L876 @ ens_v1@91c966f)
+  (upstream: .refs/ens_v1/contracts/ethregistrar/ETHRegistrarController.sol:L191-L193 @ ens_v1@91c966f).
+  bigname keeps such a name out of name reads, so its lease and NameWrapper
+  state are projected without a name row; the child still serves `authority`,
+  but its `ens_v1` object carries no lifecycle fields: no `expires_at` and no
+  wrapper fields. An ENSv1 or Basenames
+  registry child with no current name row serves its node's current registry
+  owner, `owner(node)`: the
   owner of its latest `NewOwner` or `Transfer`, so a transfer after the
   `NewOwner` moves it. A child whose registry owner is the zero address, one
   the registry reads as zero, or one the admitted Graveyard holds has no
@@ -2874,7 +2896,7 @@ introduces it rebuilds Project from full history before serving the option; see
 | `coin_type` | query | string | no | none | Decimal coin type or evm, only with relation=resolves_to; omission defaults to 60 on that relation. evm matches all EVM coin types. |
 | `expires_after` | query | string | no | none | Inclusive expiry lower bound, only with relation=former_registrant. |
 | `expires_before` | query | string | no | none | Exclusive expiry upper bound, only with relation=former_registrant. |
-| `authority` | query | array of enum Authority | no | none | Comma-separated selected authority arms. Rows without an authority arm do not match. Not accepted with relation=former_registrant. |
+| `authority` | query | array of enum Authority | no | none | Comma-separated served `authority` values; a row matches when the `authority` it serves is any listed value, including an ENSv1 registry child with no name row by its registry's value. Rows that serve no `authority` match no set. Not accepted with relation=former_registrant. |
 | `is_migrated` | query | boolean | no | none | Whether the current name has a selected ENSv2 arm and a retained activated migration time; not accepted with relation=resolves_to or relation=former_registrant. |
 | `q` | query | string | no | none | Name search text; normalization, prefix and label-boundary rules are specified in the route prose. Not accepted with relation=former_registrant. |
 | `match` | query | enum NameMatch | no | `prefix` | Prefix or substring matching for q. |
@@ -2909,19 +2931,21 @@ introduces it rebuilds Project from full history before serving the option; see
   `dedupe=name|registration`, `include=role_summary`, `cursor`, `page_size`,
   and optional `finality=latest`. `at` and historical `finality` values are
   rejected by the shared latest-state collection rule.
-  `authority` keeps only rows whose current name row would serve one of the
-  listed `authority` values, so `ens_v1` alone no longer matches a name served
+  `authority` keeps only rows that serve one of the listed `authority` values,
+  from the current name row or, for an ENSv1 registry child with no name row,
+  from the registry that holds its record, so `ens_v1` alone no longer matches a name served
   as `ens_v0`, whose record the current registry does not hold yet
   (upstream: .refs/ens_v1/contracts/registry/ENSRegistryWithFallback.sol:L18-L46 @ ens_v1@91c966f);
   `authority=ens_v0,ens_v1` returns both in one collection, each row keeping its
-  own `authority`. It is a primary-key probe of the name row per candidate
-  relation row, applied before grouping, sorting, pagination and
-  `page.total_count`. The set is comma-separated and unordered: blank segments
+  own `authority`. For an ordinary row it is a primary-key probe of the name
+  row per candidate relation row; a registry-child row, which has no name row,
+  compares the `authority` it serves directly. Both apply before grouping,
+  sorting, pagination and `page.total_count`. The set is comma-separated and unordered: blank segments
   are skipped and repeats collapse, as for `relation`, and a single value is
   the one-value set. A whitespace-only value is treated as absent. A value that
   names no authority (`authority=,`), any other value, or a repeated
-  `authority` parameter returns `400 invalid_input`. Rows with no selected arm
-  (Basenames) and ownerless registry rows match no set, including all three
+  `authority` parameter returns `400 invalid_input`. Rows that serve no
+  `authority` (Basenames rows and ownerless registry rows) match no set, including all three
   values, so `authority=ens_v0,ens_v1,ens_v2` is narrower than omitting the
   filter.
   `is_migrated` concerns the ENSv1→ENSv2 migration only and is unrelated to
@@ -3260,11 +3284,23 @@ introduces it rebuilds Project from full history before serving the option; see
   `namehash` is the child node, `owner` the registry owner, and
   `permission_resource_id` the node's registry-only resource. The registry
   records no lease for it, so `registrant`, `registered_at`, `created_at`,
-  `expires_at`, `authority`, `ens_v1`, and `migrated_at` are absent,
+  `expires_at`, and `migrated_at` are absent,
   `registration_status` is the value the subnames route serves for a child with
-  no name row, and `is_primary` is `false`. `relation=owner` and
-  `relation=registrant` never list it; any `authority` value and
-  `is_migrated=true` omit it and `is_migrated=false` keeps it; `q` matches its
+  no name row, and `is_primary` is `false`. `authority` is the registry
+  generation that owns the node: `ens_v1`, or `ens_v0` while only the 2017
+  registry holds its record, because the current registry's `owner(node)` and
+  `resolver(node)` read the 2017 registry until its own `recordExists(node)`
+  turns true
+  (upstream: .refs/ens_v1/contracts/registry/ENSRegistryWithFallback.sol:L18-L35 @ ens_v1@91c966f)
+  (upstream: .refs/ens_v1/contracts/registry/ENSRegistry.sol:L153-L157 @ ens_v1@91c966f)
+  ([registry generation](glossary.md#registry-generation));
+  its `ens_v1` object carries only a null `expires_at`, as it holds no lease,
+  except for a child a NameWrapper or registrar event named under a label that
+  fails ENSIP-15 normalization: its lease and NameWrapper state are projected
+  without a name row, so, as the subnames route serves it, its `ens_v1` object
+  carries no lifecycle fields, no `expires_at` and no wrapper fields.
+  `relation=owner` and `relation=registrant` never list it; `authority` matches
+  it by that value, `is_migrated=true` omits it and `is_migrated=false` keeps it; `q` matches its
   served text; the timestamp sorts place it among the rows without that
   timestamp; `dedupe=registration` keys it by its registry-only resource. A
   registry `Transfer` moves the row to the new owner. Once a surface names the
