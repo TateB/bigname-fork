@@ -20,7 +20,7 @@ pub(crate) async fn persist_comparisons(
     if snapshot.route == LookupRoute::EnsUniversalResolverDiscovery {
         revalidate_lookup_state(
             &mut transaction,
-            &snapshot.authoritative_position,
+            &snapshot.head,
             &snapshot.revalidation_positions,
             &snapshot.execution_authority,
             None,
@@ -37,7 +37,7 @@ pub(crate) async fn persist_comparisons(
         .any(|result| !result.ccip_read && result.status.is_comparable());
     revalidate_lookup_state(
         &mut transaction,
-        &snapshot.authoritative_position,
+        &snapshot.head,
         &snapshot.revalidation_positions,
         &snapshot.execution_authority,
         snapshot.comparison.as_ref(),
@@ -107,7 +107,7 @@ async fn revalidation_transaction(
 
 async fn revalidate_lookup_state(
     transaction: &mut Transaction<'_, Postgres>,
-    authoritative_position: &LookupPosition,
+    head: &LookupPosition,
     observed_positions: &Value,
     execution_authority: &Value,
     comparison: Option<&IndexedComparison>,
@@ -121,9 +121,9 @@ async fn revalidate_lookup_state(
         "SELECT revalidate_resolution_lookup_state_read_only($1, $2, $3, $4, $5, $6::uuid, $7, $8)"
     };
     let status: String = sqlx::query_scalar(query)
-        .bind(&authoritative_position.chain_id)
-        .bind(authoritative_position.block_number)
-        .bind(&authoritative_position.block_hash)
+        .bind(&head.chain_id)
+        .bind(head.block_number)
+        .bind(&head.block_hash)
         .bind(observed_positions)
         .bind(execution_authority)
         .bind(comparison.map(|comparison| comparison.resource_id.as_str()))
@@ -189,9 +189,9 @@ async fn persist_result(
     .bind(&comparison.resource_id)
     .bind(&comparison.boundary_key)
     .bind(&comparison.row_xmin)
-    .bind(&snapshot.authoritative_position.chain_id)
-    .bind(snapshot.authoritative_position.block_number)
-    .bind(&snapshot.authoritative_position.block_hash)
+    .bind(&snapshot.head.chain_id)
+    .bind(snapshot.head.block_number)
+    .bind(&snapshot.head.block_hash)
     .bind(&snapshot.execution_authority)
     .bind(&snapshot.logical_name_id)
     .bind(&snapshot.resolver_chain_id)

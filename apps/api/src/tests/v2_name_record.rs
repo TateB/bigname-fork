@@ -627,6 +627,68 @@ async fn v2_get_name_verified_source_accepts_event_linked_ownerless_registry_ser
     Ok(())
 }
 
+/// Live-follow stores a head before Project publishes for it. While the publication trails the
+/// head within the lag tolerance, the verified answer executes at the publication's block and is
+/// reported at that `as_of`, the same position the indexed snapshot reports.
+#[tokio::test]
+async fn v2_verified_records_execute_at_a_publication_behind_the_head() -> Result<()> {
+    let database = TestDatabase::new_with_schemas(false, true).await?;
+    seed_alice_verified_inputs(
+        &database,
+        AliceInputState::Ownerless,
+        &[family_fixture_record_write(
+            "addr:60",
+            Some(json!("0x0000000000000000000000000000000000000def")),
+        )],
+    )
+    .await?;
+    const PUBLICATION_HASH: &str =
+        "0x1111111111111111111111111111111111111111111111111111111111111111";
+    seed_schema_v2_ens_lookup_head(
+        &database.pool,
+        21_000_005,
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "2026-04-17T00:00:05Z",
+    )
+    .await?;
+    let executed_address = "0x0000000000000000000000000000000000000e0e";
+    let (rpc_url, rpc_handle) = spawn_primary_name_mock_rpc(vec![
+        resolution_universal_resolver_addr60_response(executed_address),
+    ])
+    .await?;
+    let chain_rpc_urls =
+        bigname_lookup::ChainRpcUrls::from_entries(&[format!("ethereum-mainnet={rpc_url}")])?;
+    let state = database
+        .app_state_with_lookup_chain_rpc_urls(chain_rpc_urls)
+        .await?;
+
+    let response = app_router(state)
+        .oneshot(
+            Request::builder()
+                .uri("/v1/names/Alice.eth/records?source=verified&keys=addr:60")
+                .body(Body::empty())
+                .expect("request must build"),
+        )
+        .await
+        .context("verified records request behind the head failed")?;
+    let status = response.status();
+    let payload: Value = read_json(response).await?;
+    assert_eq!(status, StatusCode::OK, "unexpected response: {payload}");
+    assert_eq!(
+        payload["data"]["records"]["addr:60"],
+        json!({"status": "ok", "value": executed_address}),
+        "{payload}"
+    );
+    assert_eq!(payload["meta"]["as_of"]["1"]["block_number"], json!(21_000_004));
+    assert_eq!(payload["meta"]["as_of"]["1"]["block_hash"], json!(PUBLICATION_HASH));
+    let requests = join_primary_name_mock_rpc_requests(rpc_handle).await?;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["params"][1]["blockHash"], json!(PUBLICATION_HASH));
+
+    database.cleanup().await?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn v2_get_name_verified_source_executes_without_legacy_persistence_and_aborts_transport_failure()
 -> Result<()> {
