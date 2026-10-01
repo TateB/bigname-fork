@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use bigname_ingest::{
-    ExpectedRpcChain, ObservedRpcChain, ProviderKind, RpcChainCheck, is_rpc_endpoint,
+    ExpectedRpcChain, ObservedRpcChain, ProviderKind, RpcChainCheck, names_another_transport,
     normalized_kind, verify_rpc_chain,
 };
 use bigname_lookup::ChainRpcUrls;
@@ -35,8 +35,8 @@ pub struct VerifiedRpcEndpoint {
 
 /// Checks every RPC source of every chain, whatever its role, and every hydration URL. Direct
 /// Reth DB sources compare their stored genesis when they open, and Coinbase SQL is not an RPC
-/// endpoint; nor is a source whose endpoint the RPC provider would not accept, such as a fixture
-/// placeholder. Any failure refuses the start; the error and log name the chain, source and both
+/// endpoint; nor is a source whose endpoint is a URL for another transport, such as a fixture
+/// placeholder. A malformed endpoint is checked, so it refuses the start. Any failure refuses the start; the error and log name the chain, source and both
 /// identities, never the URL.
 pub async fn verify_all<'a>(
     sources: impl IntoIterator<Item = &'a SourceConfig>,
@@ -48,7 +48,7 @@ pub async fn verify_all<'a>(
         .into_iter()
         .filter(|source| {
             normalized_kind(&source.source_kind) == ProviderKind::Rpc
-                && is_rpc_endpoint(source.endpoint())
+                && !names_another_transport(source.endpoint())
         })
         .map(|source| {
             (
@@ -198,7 +198,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_endpoint_the_provider_accepts_is_checked_however_it_is_spelled() {
+    async fn every_http_or_malformed_endpoint_is_checked() {
         let app = axum::Router::new().fallback(axum::routing::post(
             |axum::Json(request): axum::Json<serde_json::Value>| async move {
                 axum::Json(
@@ -223,6 +223,7 @@ mod tests {
         };
         let placeholder = source("fixture://upfront".to_owned());
         let noncanonical = source(format!(" HTTP:/127.0.0.1:{port}/"));
+        let malformed = source("https://bad host".to_owned());
 
         let none = ChainRpcUrls::default();
         let skipped = verify_all([&placeholder], &none, RpcChainCheck::Full).await;
@@ -231,6 +232,9 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("chain id"), "{error}");
+        verify_all([&malformed], &none, RpcChainCheck::Full)
+            .await
+            .unwrap_err();
     }
 
     #[test]

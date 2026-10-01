@@ -563,11 +563,11 @@ of persisted source identity and will not trigger the runtime reset guard.
 Before `run` opens its database, before `redo` writes anything, and before
 `source-transport` connects, every RPC endpoint the runner is given must show
 that it serves the chain it is configured for. That covers each `BIGNAME_PHASE_RUNNER_SOURCES`
-entry with an RPC kind and an http(s) endpoint, whatever its role, and each
+entry with an RPC kind, whatever its role, and each
 `BIGNAME_PHASE_RUNNER_HYDRATION_RPC_URLS` entry; hydration URLs are checked and
-reported under the source key `hydration`, which no configured source may use. A source whose endpoint is not
-an http(s) URL, such as a fixture placeholder, is not an RPC endpoint and no
-RPC provider accepts it. Replay and rebuild never hydrate, so `redo` checks no
+reported under the source key `hydration`, which no configured source may use.
+Only a source whose endpoint is a well-formed URL for another scheme, such as a
+fixture placeholder, is skipped; a malformed endpoint refuses the start. Replay and rebuild never hydrate, so `redo` checks no
 hydration URL, and a Project redo reads no source provider, so it checks
 nothing. An Interpret redo checks its sources, because its discovery repair can
 run Ingest. The endpoint must answer `eth_chainId` with the chain's EIP-155 id
@@ -576,8 +576,9 @@ before block 0 is asked for. On `ethereum-mainnet` and `ethereum-sepolia` block 
 must be that chain's genesis hash (`crates/domain/src/chain_identity.rs`);
 `base-mainnet` has no pinned genesis hash, so it is checked by chain id plus a
 readable block 0. A chain slug with no known chain id is refused. A mismatch
-exits with code 1 and one error log naming the chain, source key, and expected
-and observed chain id, plus both genesis hashes when the chain id matched. An
+exits with code 1 and one error log naming the chain, source key, expected
+and observed chain id, the expected genesis hash where one is pinned, and the
+observed genesis hash when the chain id matched. An
 endpoint that cannot be read, including one that still does not answer after
 the provider's usual retries, also exits with code 1, and its error log names
 the chain, source key and the error only. Neither log carries the URL's path,

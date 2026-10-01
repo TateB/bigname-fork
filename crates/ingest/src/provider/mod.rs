@@ -322,9 +322,10 @@ pub enum ProviderKind {
     Coinbase,
 }
 
-/// Whether `endpoint` is a URL the JSON-RPC provider accepts.
-pub fn is_rpc_endpoint(endpoint: &str) -> bool {
-    validate_endpoint(endpoint).is_ok()
+/// Whether `endpoint` is a well-formed URL for a transport other than HTTP(S), such as a
+/// fixture placeholder. A malformed URL is not: the JSON-RPC provider refuses it.
+pub fn names_another_transport(endpoint: &str) -> bool {
+    reqwest::Url::parse(endpoint).is_ok_and(|url| !matches!(url.scheme(), "http" | "https"))
 }
 
 pub fn normalized_kind(kind: &str) -> ProviderKind {

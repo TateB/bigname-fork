@@ -354,6 +354,39 @@ async fn a_retry_on_a_client_rebuilt_after_a_timeout_is_checked_first() -> Resul
 }
 
 #[tokio::test]
+async fn a_request_that_waited_out_the_interval_for_its_permit_is_checked_again() -> Result<()> {
+    let node = Node::stalling(
+        "0x1",
+        Some(MAINNET_GENESIS),
+        Some(("0x9", Duration::from_millis(400))),
+    )
+    .await?;
+    let provider = JsonRpcProvider::with_config(&node.endpoint, IngestConfig::new(1, 1, 1)?)?
+        .with_chain_check_every(
+            ExpectedRpcChain::new("ethereum-mainnet", "primary", RpcChainCheck::Full)?,
+            Duration::from_millis(300),
+        );
+
+    let (stalled, waited) = tokio::join!(provider.resolve(&[9]), provider.resolve(&[9]));
+    stalled?;
+    waited?;
+
+    assert_eq!(
+        node.methods.lock().unwrap()[..],
+        [
+            "eth_chainId",
+            "eth_getBlockByNumber",
+            "eth_getBlockByNumber",
+            "eth_chainId",
+            "eth_getBlockByNumber",
+            "eth_getBlockByNumber",
+        ],
+        "the second read waited past the interval behind the stalled one, so it was checked again"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_client_rebuilt_while_the_check_runs_is_checked_again() -> Result<()> {
     let node = Node::stalling(
         "0x1",
