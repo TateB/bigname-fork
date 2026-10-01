@@ -132,7 +132,8 @@ describes, because the file no longer builds two obsolete label indexes.
 
 Interpret's per-batch [lookahead loader](glossary.md#lookahead-loader) reads
 `normalized_events` through two partial expression indexes for the ENSv1
-families and two for the Basenames Base families. Follow their
+families, two for the Basenames Base families and one partial index for the
+ENSv2 families. Follow their
 [online index runbook](../ops/v1-lookahead-indexes/README.md) before applying
 the matching schema-migrations on a large initialized database, and before
 starting a release whose loader covers the chain.
@@ -370,16 +371,22 @@ the chain belongs to a source family the
 [lookahead loader](glossary.md#lookahead-loader) covers (the five `ens_v1_*`
 families, the four `basenames_base_*` families, plus `basenames_l1_compat` and
 the `*_execution` families, whose only log, a Universal Resolver proxy's
-`Upgraded`, reads no prior state), and the chain retains no `normalized_events` history of an
-uncovered family whose manifest has moved to `draft` or `shadow`, Interpret
-uses the lookahead loader: it reads the names and
-resources the batch's logs mention plus the registrations falling due in the
-batch, restores only their history, and keeps no
-[interpreter session](glossary.md#interpreter-session) between batches.
+`Upgraded`, reads no prior state, and the five `ens_v2_*` families), and the
+chain retains no `normalized_events` history of an uncovered family whose
+manifest has moved to `draft` or `shadow`, Interpret uses the lookahead loader:
+it reads the names and resources the batch's logs mention plus the
+registrations falling due in the batch, restores only their history, and keeps
+no [interpreter session](glossary.md#interpreter-session) between batches. On a
+chain with an ENSv2 manifest it also restores every retained ENSv2 event, so
+ENSv2 registry, resolver and permission state is complete in every batch, and
+then the ENSv1 history of every name those events mention. ENSv2 interpretation
+can reach a name no log or ENSv2 event mentions, such as the ENSv1 predecessor
+of a name being migrated; when it does, Interpret adds that name, reads its
+history and interprets the batch again inside the same read snapshot, until an
+attempt reads only loaded names. Only that attempt's output is published.
 Otherwise it uses the full-state loader, which restores all retained history
-once and then carries the session. Ethereum mainnet and Base use the lookahead
-loader; Ethereum Sepolia has active ENSv2 manifests, so it always uses the
-full-state loader. On a lookahead chain a reorg costs one redo batch read for
+once and then carries the session. Ethereum mainnet, Ethereum Sepolia and Base
+all use the lookahead loader. On a lookahead chain a reorg costs one redo batch read for
 the names it touches and a runner restart costs nothing, where the full-state
 loader restores the chain's history again after each. Both loaders must produce identical stored output and share one
 [interpreter content hash](glossary.md#interpreter-content-hash), so a change
@@ -396,14 +403,16 @@ rollout status of its manifest, that required the full-state loader.
 `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true`
 (`--interpret-force-full-state-loader`) is the one operator override: it makes
 every chain use the full-state loader. It defaults to false. The lookahead
-loader depends on all four: the two `normalized_events_v1_*_probe_idx` and the
-two `normalized_events_basenames_*_probe_idx` indexes. Both chains run the same
+loader depends on all five: the two `normalized_events_v1_*_probe_idx`, the
+two `normalized_events_basenames_*_probe_idx` indexes and
+`normalized_events_v2_lookahead_probe_idx`. Every chain runs the same name
 probe queries, each with an ENSv1 arm and a Basenames arm, so a missing pair
-slows every lookahead chain, not only the chain whose events it holds. Build
-all four on an initialized database as described in
+slows every lookahead chain, not only the chain whose events it holds; only a
+chain with an ENSv2 manifest reads the ENSv2 index. Build all five on an
+initialized database as described in
 [`ops/v1-lookahead-indexes/README.md`](../ops/v1-lookahead-indexes/README.md)
 before starting a release that contains the loader. If interpretation reads a
-name the loader did not restore, the batch stops before publication; it never
+name the loader did not restore, that attempt is discarded; Interpret never
 publishes output from partial state.
 
 Ingest throughput can be tuned at process startup for both `run` and `redo`:
@@ -1800,7 +1809,8 @@ The build that extends the [lookahead loader](glossary.md#lookahead-loader) to
 the four Basenames Base families makes `base-mainnet` choose it: Interpret no
 longer restores Base's retained history when the runner starts or after a
 reorg, and keeps no Base [interpreter session](glossary.md#interpreter-session)
-in memory. Ethereum Sepolia keeps the full-state loader. Both loaders produce
+in memory. Ethereum Sepolia keeps the full-state loader until the build in
+[Lookahead loader on Sepolia](#lookahead-loader-on-sepolia). Both loaders produce
 identical stored output, so no interpreted or projected row changes. The build
 changes `crates/adapters/src`, so it still rotates the
 [interpreter content hash](glossary.md#interpreter-content-hash) for every
@@ -1823,3 +1833,34 @@ requested name. `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true`
 keeps the full-state loader on every chain while they build. Before the release
 is recorded, confirm the runner logged `interpret chose its prior-state loader`
 with `lookahead` for `base-mainnet`.
+
+### Lookahead loader on Sepolia
+
+The build that extends the [lookahead loader](glossary.md#lookahead-loader) to
+the five ENSv2 families makes `ethereum-sepolia` choose it: Interpret no longer
+restores Sepolia's retained history when the runner starts or after a reorg,
+and keeps no Sepolia [interpreter session](glossary.md#interpreter-session) in
+memory. Each Sepolia batch instead reads every retained ENSv2 event of the
+chain, then the ENSv1 history of the names the batch and those events touch, so
+its per-batch read grows with Sepolia's ENSv2 history rather than with the
+whole chain. Both loaders produce identical stored output, so no interpreted or
+projected row changes. The build changes `crates/adapters/src`, so it rotates
+the [interpreter content hash](glossary.md#interpreter-content-hash) for every
+chain: finish the full-history Interpret redo and the Project redo it installs
+before the matching API serves, as for any rotation, or ship it in a release
+whose redos already run. It needs no manifest change and no historical ingest
+fetch.
+
+Schema-migration `20261001130000_normalized_events_v2_lookahead_probe_idx.sql`
+adds `normalized_events_v2_lookahead_probe_idx`. On a large initialized
+database, rerun
+[`ops/v1-lookahead-indexes/install.sql`](../ops/v1-lookahead-indexes/README.md)
+before applying the schema-migrations and starting the release: it accepts the
+existing four indexes and builds the ENSv2 one concurrently. Then run
+`ANALYZE bigname_phase.normalized_events`. Ethereum mainnet and Base have no
+ENSv2 manifest, so they never read the index, but the schema-migration still
+builds it without `CONCURRENTLY` by scanning `normalized_events`, so prebuild it
+on every large database. `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true` keeps the full-state loader on
+every chain while it builds. Before the release is recorded, confirm the runner
+logged `interpret chose its prior-state loader` with `lookahead` for
+`ethereum-sepolia`.

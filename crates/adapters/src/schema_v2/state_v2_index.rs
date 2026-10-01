@@ -18,6 +18,21 @@ pub(in crate::schema_v2) fn v2_lookup_visits() -> usize {
 }
 
 impl State {
+    /// Reads of name-keyed maps an ENSv2 event can reach for a name the lookahead loader
+    /// restores per name, so they report the name to its loaded-names check.
+    pub(in crate::schema_v2) fn observed_active_resource(
+        &self,
+        logical_name_id: &str,
+    ) -> Option<uuid::Uuid> {
+        crate::schema_v2::lookahead::observe_name(logical_name_id);
+        self.active_resources.get(logical_name_id).copied()
+    }
+
+    pub(in crate::schema_v2) fn observed_known_surface(&self, logical_name_id: &str) -> bool {
+        crate::schema_v2::lookahead::observe_name(logical_name_id);
+        self.known_surfaces.contains(logical_name_id)
+    }
+
     pub(in crate::schema_v2) fn rebuild_v2_token_indexes(&mut self) {
         self.v2_token_by_upstream_resource_index.clear();
         self.v2_token_by_name_index.clear();

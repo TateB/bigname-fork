@@ -17,7 +17,8 @@ SET statement_timeout = '6h';
 -- the recovery.
 -- The definition check matches the one in the schema-migrations
 -- 20260917150000_normalized_events_v1_lookahead_indexes.sql (ENSv1) and
--- 20261001120000_normalized_events_basenames_lookahead_indexes.sql (Basenames Base). PostgreSQL always
+-- 20261001120000_normalized_events_basenames_lookahead_indexes.sql (Basenames Base) and
+-- 20261001130000_normalized_events_v2_lookahead_probe_idx.sql (ENSv2). PostgreSQL always
 -- prints the table's schema name, and a type's schema name only when the
 -- session search_path does not include it. The printed text is not rewritten to
 -- even that out, because a text replacement would also change a string literal
@@ -71,7 +72,9 @@ CASE
     ELSE NULL::numeric
 END), block_number) WHERE ((canonicality_state = ANY (ARRAY['canonical'::bigname_phase.canonicality_state, 'safe'::bigname_phase.canonicality_state, 'finalized'::bigname_phase.canonicality_state])) AND (source_family = 'basenames_base_registrar'::text) AND (event_kind = ANY (ARRAY['RegistrationGranted'::text, 'RegistrationRenewed'::text, 'TokenControlTransferred'::text])))$def$),
             ('normalized_events_basenames_direct_node_probe_idx',
-             $def$CREATE INDEX normalized_events_basenames_direct_node_probe_idx ON bigname_phase.normalized_events USING btree (chain_id, COALESCE(((namespace || ':'::text) || lower(COALESCE((after_state ->> 'child_node'::text), (after_state ->> 'namehash'::text), (after_state ->> 'node'::text), (after_state #>> '{grant_source,node}'::text[]), (after_state #>> '{revocation_source,node}'::text[])))), logical_name_id), block_number) WHERE ((canonicality_state = ANY (ARRAY['canonical'::bigname_phase.canonicality_state, 'safe'::bigname_phase.canonicality_state, 'finalized'::bigname_phase.canonicality_state])) AND (source_family ~~ 'basenames\_base\_%'::text))$def$)
+             $def$CREATE INDEX normalized_events_basenames_direct_node_probe_idx ON bigname_phase.normalized_events USING btree (chain_id, COALESCE(((namespace || ':'::text) || lower(COALESCE((after_state ->> 'child_node'::text), (after_state ->> 'namehash'::text), (after_state ->> 'node'::text), (after_state #>> '{grant_source,node}'::text[]), (after_state #>> '{revocation_source,node}'::text[])))), logical_name_id), block_number) WHERE ((canonicality_state = ANY (ARRAY['canonical'::bigname_phase.canonicality_state, 'safe'::bigname_phase.canonicality_state, 'finalized'::bigname_phase.canonicality_state])) AND (source_family ~~ 'basenames\_base\_%'::text))$def$),
+            ('normalized_events_v2_lookahead_probe_idx',
+             $def$CREATE INDEX normalized_events_v2_lookahead_probe_idx ON bigname_phase.normalized_events USING btree (chain_id, block_number) WHERE ((canonicality_state = ANY (ARRAY['canonical'::bigname_phase.canonicality_state, 'safe'::bigname_phase.canonicality_state, 'finalized'::bigname_phase.canonicality_state])) AND (source_family ~~ 'ens\_v2\_%'::text))$def$)
         ) AS reviewed(index_name, definition)
     LOOP
         SELECT CASE relkind
@@ -187,6 +190,11 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS normalized_events_basenames_direct_node_
     WHERE canonicality_state IN ('canonical','safe','finalized')
       AND source_family LIKE 'basenames\_base\_%';
 
+CREATE INDEX CONCURRENTLY IF NOT EXISTS normalized_events_v2_lookahead_probe_idx
+    ON bigname_phase.normalized_events (chain_id, block_number)
+    WHERE canonicality_state IN ('canonical','safe','finalized')
+      AND source_family LIKE 'ens\_v2\_%';
+
 -- Printed first so the receipt shows the flags even when the check below fails.
 SELECT indexrelid::regclass AS index_name, indisvalid, indisready,
        pg_size_pretty(pg_relation_size(indexrelid)) AS index_size,
@@ -196,9 +204,10 @@ WHERE indexrelid IN (
     to_regclass('bigname_phase.normalized_events_v1_due_probe_idx'),
     to_regclass('bigname_phase.normalized_events_v1_direct_node_probe_idx'),
     to_regclass('bigname_phase.normalized_events_basenames_due_probe_idx'),
-    to_regclass('bigname_phase.normalized_events_basenames_direct_node_probe_idx')
+    to_regclass('bigname_phase.normalized_events_basenames_direct_node_probe_idx'),
+    to_regclass('bigname_phase.normalized_events_v2_lookahead_probe_idx')
 ) ORDER BY index_name;
 
--- All four must now exist, belong to bigname_phase.normalized_events, be valid
+-- All five must now exist, belong to bigname_phase.normalized_events, be valid
 -- and ready, and have the reviewed definition.
 DO $$ BEGIN PERFORM pg_temp.check_v1_lookahead_indexes(true); END $$;

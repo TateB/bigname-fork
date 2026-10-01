@@ -482,30 +482,32 @@ fn index_names(plan: &Value, names: &mut Vec<String>) {
 
 /// The fixture database holds only the checked-in baseline schema, so this proves the
 /// baseline defines indexes whose expressions the two lookahead queries can use, for the
-/// ENSv1 and the Basenames Base families alike. A drifted expression or family predicate in
-/// either place would fall back to scanning `normalized_events`.
+/// ENSv1, Basenames Base and ENSv2 families alike. A drifted expression or family predicate
+/// in either place would fall back to scanning `normalized_events`.
 #[tokio::test]
 async fn lookahead_sql_uses_baseline_indexes() -> Result {
     let db = database().await?;
-    for (namespace, family) in [
-        ("ens", "ens_v1_registrar_l1"),
-        ("basenames", "basenames_base_registrar"),
+    for (namespace, family, rows) in [
+        ("ens", "ens_v1_registrar_l1", 5000),
+        ("basenames", "basenames_base_registrar", 5000),
+        ("ens", "ens_v2_registry_l1", 500),
     ] {
         sqlx::query(
             "INSERT INTO normalized_events
              (event_identity,namespace,event_kind,source_family,manifest_version,chain_id,
               block_number,block_hash,transaction_hash,raw_fact_ref,derivation_kind,
               canonicality_state,after_state)
-             SELECT 'plan-'||$3||'-'||n,$3,'RegistrationGranted',$4,1,$1,
+             SELECT 'plan-'||$4||'-'||n,$3,'RegistrationGranted',$4,1,$1,
                     1,'block-1','tx',jsonb_build_object($2::text,'key-'||$3||'-'||n),
                     'ens_v1_unwrapped_authority','canonical',
                     jsonb_build_object('namehash','node-'||n,'expiry',n)
-             FROM generate_series(1,5000) n",
+             FROM generate_series(1,$5) n",
         )
         .bind(CHAIN)
         .bind(INTERPRETER_STATE_KEY)
         .bind(namespace)
         .bind(family)
+        .bind(rows)
         .execute(db.pool())
         .await?;
     }
@@ -523,12 +525,13 @@ async fn lookahead_sql_uses_baseline_indexes() -> Result {
         (
             "events",
             events_sql.as_str(),
-            "text,bigint,text[],uuid[]",
-            format!("'{CHAIN}',3,ARRAY['ens:node-7','basenames:node-4000'],ARRAY[]::uuid[]"),
-            [
+            "text,bigint,text[],uuid[],boolean",
+            format!("'{CHAIN}',3,ARRAY['ens:node-7','basenames:node-4000'],ARRAY[]::uuid[],true"),
+            &[
                 "normalized_events_v1_direct_node_probe_idx",
                 "normalized_events_basenames_direct_node_probe_idx",
-            ],
+                "normalized_events_v2_lookahead_probe_idx",
+            ][..],
         ),
         (
             "due_names",
@@ -539,10 +542,10 @@ async fn lookahead_sql_uses_baseline_indexes() -> Result {
                 ENS_GRACE_PERIOD_SECS + 100,
                 ENS_GRACE_PERIOD_SECS + 110
             ),
-            [
+            &[
                 "normalized_events_v1_due_probe_idx",
                 "normalized_events_basenames_due_probe_idx",
-            ],
+            ][..],
         ),
     ] {
         // Both plan kinds matter: sqlx prepares the statement, and PostgreSQL may switch a

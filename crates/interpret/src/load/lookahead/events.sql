@@ -58,6 +58,24 @@ WITH candidates AS MATERIALIZED (
           AND lineage.canonicality_state IN ('canonical','safe','finalized')
         LIMIT 1
     ) readable ON TRUE
+    UNION ALL
+    -- ENSv2 state is restored whole: every retained ENSv2 event, when $5 asks for it.
+    SELECT event.normalized_event_id,
+           event.raw_fact_ref ? '{state_key}',
+           COALESCE(event.raw_fact_ref ->> '{state_key}', event.event_identity),
+           event.after_state ? '{clear_marker}'
+    FROM normalized_events event
+    JOIN LATERAL (
+        SELECT 1 FROM chain_lineage lineage
+        WHERE lineage.chain_id = event.chain_id
+          AND lineage.block_number = event.block_number AND lineage.block_hash = event.block_hash
+          AND lineage.canonicality_state IN ('canonical','safe','finalized')
+        LIMIT 1
+    ) readable ON TRUE
+    WHERE $5
+      AND event.chain_id = $1 AND event.block_number < $2
+      AND event.source_family LIKE 'ens\_v2\_%'
+      AND event.canonicality_state IN ('canonical','safe','finalized')
 ), keys AS MATERIALIZED (
     SELECT DISTINCT has_key, state_key, clear_marker FROM candidates
 ), winners AS MATERIALIZED (
@@ -124,7 +142,8 @@ CROSS JOIN LATERAL (
         'emitting_address', event.raw_fact_ref ->> 'emitting_address',
         '{state_key}', event.raw_fact_ref ->> '{state_key}',
         'event_identity', event.event_identity, '{state_scope}', event.raw_fact_ref ->> '{state_scope}',
-        'block_number', event.block_number, '{transaction_index}', event.transaction_index,
+        'block_number', event.block_number, 'normalized_event_id', event.normalized_event_id,
+        '{transaction_index}', event.transaction_index,
         '{log_index}', event.log_index,
         'after_state', event.after_state
     ) AS body

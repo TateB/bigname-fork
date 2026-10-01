@@ -733,6 +733,15 @@ CREATE INDEX IF NOT EXISTS normalized_events_basenames_direct_node_probe_idx
     WHERE canonicality_state IN ('canonical','safe','finalized')
       AND source_family LIKE 'basenames\_base\_%';
 
+-- The lookahead loader restores ENSv2 state whole, so it reads every ENSv2 event of a chain
+-- before a batch through this index. Keep it identical to the ENSv2 arm of
+-- crates/interpret/src/load/lookahead/events.sql, ops/v1-lookahead-indexes/install.sql and
+-- migrations/20261001130000_normalized_events_v2_lookahead_probe_idx.sql.
+CREATE INDEX IF NOT EXISTS normalized_events_v2_lookahead_probe_idx
+    ON normalized_events (chain_id, block_number)
+    WHERE canonicality_state IN ('canonical','safe','finalized')
+      AND source_family LIKE 'ens\_v2\_%';
+
 -- The address history read finds the names and resources an address held in the past from
 -- three kinds of events: a registration granted to it, a token transferred to it, and a
 -- registry ownership transfer to it. Each partial index keys one kind by the lowercased new

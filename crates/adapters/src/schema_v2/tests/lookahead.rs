@@ -258,27 +258,44 @@ pub(super) fn assert_scoped_matches(mut input: BatchInput) -> anyhow::Result<Ada
             last.block_timestamp.unix_timestamp(),
         ));
     }
-    let (dependencies, rows) = scope(dependencies, &prior)?;
-    assert!(dependencies.unsupported.is_empty());
-    let session = restore_schema_v2_lookahead_session(
-        begin_schema_v2_adapter_restore(
-            input.chain_id.clone(),
-            input.manifests.clone(),
-            input.discovery_rules.clone(),
-            input.admissions.clone(),
-            StateCacheCapacity::Unlimited,
-        )?,
-        rows,
-        predecessor,
-        &dependencies.nodes,
-    )?;
-    let prepared = prepare_schema_v2_batch_lookahead(
-        input.clone(),
-        provenance,
-        session,
-        &dependencies.nodes,
-        StateCacheCapacity::Unlimited,
-    )?;
+    // Mirrors the Interpret loader: an attempt that reads a name outside the loaded set is
+    // discarded, and the next attempt loads that name too.
+    let prepared = loop {
+        let (scoped, rows) = scope(dependencies.clone(), &prior)?;
+        assert!(scoped.unsupported.is_empty());
+        let attempt = restore_schema_v2_lookahead_session(
+            begin_schema_v2_adapter_restore(
+                input.chain_id.clone(),
+                input.manifests.clone(),
+                input.discovery_rules.clone(),
+                input.admissions.clone(),
+                StateCacheCapacity::Unlimited,
+            )?,
+            rows,
+            predecessor,
+            &scoped.nodes,
+        )
+        .and_then(|session| {
+            prepare_schema_v2_batch_lookahead(
+                input.clone(),
+                provenance.clone(),
+                session,
+                &scoped.nodes,
+                StateCacheCapacity::Unlimited,
+            )
+        });
+        match attempt {
+            Ok(prepared) => break prepared,
+            Err(error) => {
+                let Some(UnloadedNames(names)) = error.downcast_ref::<UnloadedNames>() else {
+                    return Err(error);
+                };
+                assert!(names.is_disjoint(&scoped.nodes));
+                dependencies = scoped;
+                dependencies.nodes.extend(names.iter().cloned());
+            }
+        }
+    };
     let (actual, session) = complete(prepared, &prior)?;
     assert_eq!(actual, expected, "complete scoped suffix output differs");
     SCOPED_COMPARISONS.set(SCOPED_COMPARISONS.get() + 1);
@@ -419,47 +436,21 @@ fn known_absent_node_is_distinct_from_unloaded_node() -> anyhow::Result<()> {
 }
 
 #[test]
-fn v2_events_outside_the_collector_are_explicitly_unsupported() -> anyhow::Result<()> {
-    let manifest = |name, fragment| {
-        manifest(
+fn quiet_v2_manifest_is_covered() -> anyhow::Result<()> {
+    let input = input(
+        vec![manifest(
             1,
             "ens_v2_registry_l1",
-            name,
-            fragment,
+            "RegistryCreated",
+            "event RegistryCreated()",
             &["registry"],
             &["RegistryCreated"],
-        )
-    };
-    let covered = input(
-        vec![manifest("RegistryCreated", "event RegistryCreated()")],
-        vec![],
-        vec![],
-    );
-    assert!(
-        collect_v1_batch_dependencies(&covered, &covered.manifests)?
-            .unsupported
-            .is_empty()
-    );
-    let unknown = input(
-        vec![manifest("RegistryRetired", "event RegistryRetired()")],
-        vec![admission(1, "registry")],
-        vec![raw_at(
-            alloy_primitives::LogData::new_unchecked(
-                vec![keccak256("RegistryRetired()")],
-                Default::default(),
-            ),
-            1,
-            0,
-            CONTRACT,
         )],
+        vec![],
+        vec![],
     );
-    let deps = collect_v1_batch_dependencies(&unknown, &unknown.manifests)?;
-    assert!(
-        deps.unsupported
-            .iter()
-            .any(|reason| reason.contains("ens_v2_registry_l1:RegistryRetired()")),
-        "{deps:?}"
-    );
+    let deps = collect_v1_batch_dependencies(&input, &input.manifests)?;
+    assert!(deps.unsupported.is_empty(), "{deps:?}");
     Ok(())
 }
 
@@ -644,7 +635,7 @@ fn quiet_due_node_requires_a_loaded_certificate_before_publication() -> anyhow::
     )
     .err()
     .expect("a quiet expiry outside certified nodes must reject publication");
-    assert!(error.to_string().contains("accessed unloaded nodes"));
+    assert!(error.downcast_ref::<UnloadedNames>().is_some(), "{error:#}");
     let mut deps = V1BatchDependencies::default();
     deps.include_prior_events(&prior)?;
     let output = complete(
@@ -840,8 +831,9 @@ fn restore_reads_outside_loaded_nodes_fail() -> anyhow::Result<()> {
     let error = restore_schema_v2_lookahead_session(begin()?, prior, None, &alice_only)
         .expect_err("restore outside the loaded names must fail");
     assert!(
-        error.to_string().contains("accessed unloaded nodes")
-            && error.to_string().contains(&node("bob").node),
+        error
+            .downcast_ref::<UnloadedNames>()
+            .is_some_and(|UnloadedNames(names)| names.contains(&node("bob"))),
         "{error:#}"
     );
     Ok(())

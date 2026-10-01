@@ -1,9 +1,12 @@
 use super::V1NodeRequest;
 use std::{cell::RefCell, collections::BTreeSet};
 
-// The adapter restore and prepare calls are synchronous. This scope is only a rejection
-// backstop for the explicit collector: it never discovers a successful scope by repeatedly
-// interpreting.
+// The adapter restore and prepare calls are synchronous. A restore or batch that reads a name
+// outside the loaded set fails with `UnloadedNames`, and its output is discarded. The loader
+// may load those names as well and try again: the collector cannot know every name in
+// advance, because ENSv2 derives a token's name from registry state during the batch. Only
+// an attempt that read no unloaded name is used, so the certificate below is the same however
+// many attempts it took.
 //
 // A read of per-name ENSv1-model state (the ENSv1 families and the Basenames Base families,
 // which share that state) is reported here when its key is built by `v1_key` or
@@ -29,8 +32,13 @@ use std::{cell::RefCell, collections::BTreeSet};
 // - `surface_removal_candidates` (state_incremental.rs) is iterated whole; it holds only
 //   names the current batch or restore touched through the functions above. The wholesale
 //   map replacement in the same file moves a session's state, it reads no name.
-// - `name_link_by_namehash` (state_v2.rs) and the other ENSv2 writers of the shared maps
-//   run only for ENSv2 source families, for which lookahead is never chosen.
+// - ENSv2 state (`v2_*` in state.rs) is restored from every retained ENSv2 event, so it is
+//   complete and its reads need no report. Where ENSv2 code reads the name-keyed state it
+//   shares with ENSv1-model names (`known_surfaces`, `active_resources` and the restored
+//   surface counts: `name_link_by_namehash`, `v2_resolver_hint`, `remove_v2_active_resource`
+//   in state_v2.rs, the active-resource check in state_v2_refresh.rs, and
+//   `prune_unbacked_surfaces` in state_incremental.rs), it reports the name with
+//   `observe_name`. Its writes there insert or overwrite a value regardless of the prior one.
 thread_local! {
     static COVERAGE: RefCell<Option<Coverage>> = const { RefCell::new(None) };
 }
@@ -64,12 +72,36 @@ pub(super) fn checked<T>(
     let result = operation();
     let missing =
         COVERAGE.with_borrow_mut(|scope| std::mem::take(&mut scope.as_mut().unwrap().missing));
-    anyhow::ensure!(
-        missing.is_empty(),
-        "V1 lookahead accessed unloaded nodes: {missing:?}"
-    );
-    result
+    if missing.is_empty() {
+        return result;
+    }
+    let names = missing
+        .into_iter()
+        .map(|key| {
+            let (namespace, node) = key
+                .split_once(':')
+                .ok_or_else(|| anyhow::anyhow!("lookahead name key {key} has no namespace"))?;
+            Ok(V1NodeRequest {
+                namespace: namespace.to_owned(),
+                node: node.to_owned(),
+            })
+        })
+        .collect::<anyhow::Result<_>>()?;
+    Err(UnloadedNames(names).into())
 }
+
+/// The names a lookahead restore or batch read without their history being loaded. The
+/// attempt's output is discarded; the caller may load these names too and try again.
+#[derive(Debug)]
+pub struct UnloadedNames(pub BTreeSet<V1NodeRequest>);
+
+impl std::fmt::Display for UnloadedNames {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "lookahead accessed unloaded names: {:?}", self.0)
+    }
+}
+
+impl std::error::Error for UnloadedNames {}
 
 /// Report a read of name-keyed state shared between the ENSv1-model and ENSv2 code
 /// (`known_surfaces`, `active_resources` and the restored surface counts) by its logical name.

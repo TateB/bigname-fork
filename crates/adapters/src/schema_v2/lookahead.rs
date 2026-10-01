@@ -44,7 +44,10 @@ impl V1BatchDependencies {
 
     /// Expand stored explicit links before interpreting. The caller must fetch new requests
     /// to closure; an empty complete query certifies absence, a query not run does not.
-    pub fn include_prior_events(&mut self, events: &[PriorEventInput]) -> anyhow::Result<()> {
+    pub fn include_prior_events<'a>(
+        &mut self,
+        events: impl IntoIterator<Item = &'a PriorEventInput>,
+    ) -> anyhow::Result<()> {
         for event in events {
             if !supported_family(&event.source_family) {
                 self.unsupported
@@ -252,4 +255,5 @@ pub fn restore_schema_v2_lookahead_session(
     })
 }
 
+pub use coverage::UnloadedNames;
 pub(super) use coverage::{observe_name, observe_node};

@@ -1625,7 +1625,7 @@ the adapter advances time-derived protocol state to that timestamp. Exact
 cold-restore reconstruction therefore depends on the predecessor remaining
 readable in the same input snapshot.
 
-On a chain whose manifests all belong to ENSv1 or Basenames Base source
+On a chain whose manifests all belong to ENSv1, ENSv2 or Basenames Base source
 families (or to the families that interpret no logs), Interpret instead
 restores state for each batch with the [lookahead loader](glossary.md#lookahead-loader).
 The Basenames Base families are interpreted by the ENSv1 protocol code, so they
@@ -1648,20 +1648,32 @@ snapshot, the latest readable event per interpreter state key among the events
 of those names and resources, adds the names and resources those events
 reference, and repeats until a round adds nothing. There is no round limit: each
 continuing round adds a name or resource from the chain's finite stored history,
-so the repetition ends. Interpret restores a fresh adapter state from exactly those events under the
-same canonical-lineage and pre-batch boundary rules as a cold restore. The
+so the repetition ends. On a chain with an ENSv2 manifest the first round also
+reads every readable ENSv2 event before the batch, so ENSv2 registry, resolver
+and permission state is restored whole, and the names and resources those
+events mention join the set. Interpret restores a fresh adapter state from exactly those events under the
+same canonical-lineage and pre-batch boundary rules as a cold restore, and
+interprets the batch against it in the same input snapshot. ENSv2
+interpretation derives names from registry state, such as the ENSv1 predecessor
+a migration retires, so the collector cannot list them all in advance: when
+restore or interpretation reads a name that was not loaded, Interpret discards
+that attempt, adds the name, repeats the rounds above and interprets again.
+Every attempt that continues adds a name from the chain's finite stored
+history, so the attempts end, and only an attempt that read no unloaded name
+is published. The
 session is discarded after the batch. Two partial expression indexes on
 `normalized_events` serve these reads for the ENSv1 families:
 `normalized_events_v1_direct_node_probe_idx` (events of one name) and
 `normalized_events_v1_due_probe_idx` (registrar expiry ranges); two more with the
 same expressions, `normalized_events_basenames_direct_node_probe_idx` and
 `normalized_events_basenames_due_probe_idx`, serve them for the Basenames Base
-families. The loader is an access path, not a semantic: it must produce the same
+families, and `normalized_events_v2_lookahead_probe_idx`, keyed by chain and
+block, serves the read of every ENSv2 event. The loader is an access path, not a semantic: it must produce the same
 normalized events, identity rows and discovery edges as the full-state loader,
 and it is covered by the same interpreter content hash. The loader choice
 therefore looks past the manifests the batch interprets: the full-state loader
 restores every retained row regardless of family and lookahead reads only the
-ENSv1 and Basenames Base families, so `normalized_events` history of a family lookahead does not cover,
+ENSv1, ENSv2 and Basenames Base families, so `normalized_events` history of a family lookahead does not cover,
 written while that family's manifest was `active` and still retained after the
 manifest moved to `draft` or `shadow`, would be restored by one loader and not
 the other. Before choosing lookahead, Interpret lists the chain's manifests in
@@ -1673,8 +1685,7 @@ ever moved between rollout states, never deleted. No index leads with
 `source_family`, so each probed family costs one scan of the chain's retained
 events, stopping at the first match; a chain with no uncovered manifest in those
 states runs no probe.
-It fails the batch, rather than publishing, if interpretation reads a name that
-was not loaded.
+It never publishes an attempt that read a name that was not loaded.
 
 For ENSv2, a retained registry/root `PreimageObserved` event for a canonical
 [name surface](glossary.md#surface-name-surface)

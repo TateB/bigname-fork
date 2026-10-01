@@ -434,10 +434,9 @@ impl State {
             resolver.to_ascii_lowercase(),
             upstream_resource.to_ascii_lowercase(),
         ))?;
-        super::super::lookahead::observe_name(logical_name_id);
         Some((
             logical_name_id.clone(),
-            self.active_resources.get(logical_name_id).copied(),
+            self.observed_active_resource(logical_name_id),
             selector.clone(),
         ))
     }
@@ -532,8 +531,7 @@ impl State {
         namehash: &str,
     ) -> Option<(String, Option<Uuid>)> {
         let logical_name_id = format!("{namespace}:{}", namehash.to_ascii_lowercase());
-        super::super::lookahead::observe_name(&logical_name_id);
-        self.known_surfaces.contains(&logical_name_id).then(|| {
+        self.observed_known_surface(&logical_name_id).then(|| {
             let resource_id = self.active_resources.get(&logical_name_id).copied();
             (logical_name_id, resource_id)
         })
@@ -586,10 +584,7 @@ impl State {
             .as_ref()
             .map(|name| name.logical_name_id.as_str());
         if let (Some(logical_name_id), Some(resource_id)) = (logical_name_id, token.resource_id)
-            && {
-                super::super::lookahead::observe_name(logical_name_id);
-                self.active_resources.get(logical_name_id) == Some(&resource_id)
-            }
+            && self.observed_active_resource(logical_name_id) == Some(resource_id)
         {
             self.active_resources.remove(logical_name_id);
         }

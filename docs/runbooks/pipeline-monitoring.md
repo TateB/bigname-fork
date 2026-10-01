@@ -335,6 +335,18 @@ longer, each outage lasts less than two minutes, and no phase failure has yet
 been stored; one concrete case is a fresh deployment that is OOM-killed several
 minutes into every startup.
 
+A restart no longer costs Interpret a restore of a chain's whole retained
+history: Ethereum mainnet, Ethereum Sepolia and Base all use the
+[lookahead loader](../glossary.md#lookahead-loader), which reads only the
+history each batch touches, plus, on Sepolia, every retained ENSv2 event. A
+runner that is OOM-killed or slow right after every start on such a chain points
+at a large batch rather than at restart cost; lower
+`BIGNAME_INTERPRET_BLOCKS_PER_BATCH`. A chain that logs
+`interpret chose its prior-state loader` with a full-state reason, or a runner
+started with `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true`, still restores
+all retained history on start and after each reorg, with the memory that
+implies.
+
 ## Phase cursor non-progress response
 
 `phase_runner_phase_batches_since_cursor_advance` counts consecutive successful

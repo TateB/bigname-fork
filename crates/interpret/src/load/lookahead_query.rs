@@ -23,6 +23,13 @@ const RETAINED_FAMILIES: &str = include_str!("lookahead/retained_families.sql");
 
 type EventRow = (Value, Option<OffsetDateTime>);
 
+/// A loaded event with the position the restore must apply it in.
+pub(super) struct OrderedEvent {
+    pub(super) order: (i64, i64),
+    pub(super) event: PriorEventInput,
+}
+
+#[cfg(test)]
 pub(super) async fn events(
     connection: &mut PgConnection,
     chain: &str,
@@ -30,7 +37,26 @@ pub(super) async fn events(
     names: &[String],
     resources: &[Uuid],
 ) -> Result<Vec<PriorEventInput>> {
-    if names.is_empty() && resources.is_empty() {
+    Ok(
+        ordered_events(connection, chain, before, names, resources, false)
+            .await?
+            .into_iter()
+            .map(|ordered| ordered.event)
+            .collect(),
+    )
+}
+
+/// The latest event of every state key among the ENSv1-model events of `names` and
+/// `resources`, and, when `whole_v2` is set, among every ENSv2 event, in restore order.
+pub(super) async fn ordered_events(
+    connection: &mut PgConnection,
+    chain: &str,
+    before: i64,
+    names: &[String],
+    resources: &[Uuid],
+    whole_v2: bool,
+) -> Result<Vec<OrderedEvent>> {
+    if names.is_empty() && resources.is_empty() && !whole_v2 {
         return Ok(Vec::new());
     }
     let query = EVENTS
@@ -44,14 +70,27 @@ pub(super) async fn events(
         .bind(before)
         .bind(names)
         .bind(resources)
+        .bind(whole_v2)
         .fetch(connection);
     let mut result = Vec::new();
-    while let Some((body, timestamp)) = rows
+    while let Some((mut body, timestamp)) = rows
         .try_next()
         .await
         .map_err(|error| InterpretError::database("failed to load lookahead prior events", error))?
     {
-        result.push(decode_event(body, timestamp)?);
+        let normalized_event_id = body["normalized_event_id"].as_i64().ok_or_else(|| {
+            InterpretError::data_integrity("lookahead prior event has no normalized event id")
+        })?;
+        let block_number = body["block_number"].as_i64().ok_or_else(|| {
+            InterpretError::data_integrity("lookahead prior event has no block number")
+        })?;
+        if let Some(fields) = body.as_object_mut() {
+            fields.remove("normalized_event_id");
+        }
+        result.push(OrderedEvent {
+            order: (block_number, normalized_event_id),
+            event: decode_event(body, timestamp)?,
+        });
     }
     Ok(result)
 }
