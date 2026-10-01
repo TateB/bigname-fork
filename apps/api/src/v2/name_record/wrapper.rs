@@ -60,9 +60,14 @@ pub(crate) const fn wrapper_lifecycle_matches_fuses(
     }
 }
 
-/// The served `manager` (docs/api-v1.md, Manager): the account that can change the name's
-/// records, the owner of a name with no NameWrapper state and the token holder, the registrant, of
-/// a wrapped name in any state.
+/// The served `manager` (docs/api-v1.md, Manager): the owner of a name with no NameWrapper state,
+/// and the token holder, the registrant, of a wrapped name in any wrapper state, because
+/// NameWrapper authorizes record changes by token holder or approved operator with no wrapper-state
+/// condition (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L202-L222 @ ens_v1@91c966f).
+/// Burned fuses can still forbid a particular change, and a wrapped `.eth` name in registrar grace
+/// still serves its holder although NameWrapper refuses it then
+/// (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L1082-L1089 @ ens_v1@91c966f); see
+/// docs/upstream.md, Known divergences.
 pub(crate) fn served_manager(
     declared_summary: &Value,
     owner: Option<&String>,
