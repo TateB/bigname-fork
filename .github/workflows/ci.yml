@@ -126,9 +126,7 @@ jobs:
 
       - name: Install ripgrep
         if: github.event_name != 'push'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ripgrep
+        run: scripts/ci-apt-install ripgrep
 
       - name: API/storage query ownership
         if: github.event_name != 'push'
@@ -141,9 +139,7 @@ jobs:
         run: ./scripts/check-migration-versions
 
       - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang libclang-dev
+        run: scripts/ci-apt-install clang libclang-dev
 
       # Exercise the test helpers without enabling the optional direct Reth reader.
       - name: cargo check
@@ -256,9 +252,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install PostgreSQL client
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends postgresql-client
+        run: scripts/ci-apt-install postgresql-client
 
       - name: Apply and verify schema v2
         run: ./scripts/check-schema
@@ -306,9 +300,7 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
 
       - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang libclang-dev
+        run: scripts/ci-apt-install clang libclang-dev
 
       # Only main saves this cache (see the cache note at the top). Pull requests
       # and merge queue runs restore main's entry, falling back to main's entry
@@ -370,9 +362,7 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
 
       - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang libclang-dev
+        run: scripts/ci-apt-install clang libclang-dev
 
       # Only main saves this cache (see the cache note at the top). Pull requests
       # and merge queue runs restore main's entry, falling back to main's entry
@@ -452,9 +442,7 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
 
       - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang libclang-dev
+        run: scripts/ci-apt-install clang libclang-dev
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -568,9 +556,7 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
 
       - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang libclang-dev
+        run: scripts/ci-apt-install clang libclang-dev
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -670,9 +656,7 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
 
       - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang libclang-dev
+        run: scripts/ci-apt-install clang libclang-dev
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -776,9 +760,7 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
 
       - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang libclang-dev binutils
+        run: scripts/ci-apt-install clang libclang-dev binutils
 
       - name: Compute phase-runner dependency-cache key
         id: phase_runner_cache_key
@@ -957,9 +939,7 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
 
       - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang libclang-dev
+        run: scripts/ci-apt-install clang libclang-dev
 
       - name: Compute phase-runner dependency-cache key
         id: phase_runner_cache_key
@@ -1089,9 +1069,7 @@ jobs:
           version: ${{ env.FOUNDRY_VERSION }}
       - name: Install native build dependencies
         if: github.event_name != 'push'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang libclang-dev
+        run: scripts/ci-apt-install clang libclang-dev
       - name: Sync pinned references
         if: github.event_name != 'push'
         run: |
