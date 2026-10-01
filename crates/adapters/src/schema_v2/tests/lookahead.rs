@@ -909,10 +909,12 @@ fn resolver_changed_node_precedence_matches_restore() -> anyhow::Result<()> {
 }
 
 /// Lookahead reads retained events of the `ens_v1_*`, `basenames_base_*` and `ens_v2_*`
-/// families only, yet it also covers these families. That is sound because they keep no state: a manifest of one of them cannot
-/// declare an event, so no log is ever interpreted under it and no event of it is stored.
+/// families only, yet it also covers these families. That is sound because nothing they
+/// interpret depends on prior name state: `ens_execution` admits only the universal resolver
+/// proxy's `Upgraded`, which names no name or resource, and a name-state event such as a
+/// registrar's is refused under any of them.
 #[test]
-fn covered_families_outside_ens_v1_cannot_interpret_a_log() {
+fn covered_families_outside_the_name_families_refuse_registrar_events() {
     for family in [
         "basenames_l1_compat",
         "basenames_execution",
