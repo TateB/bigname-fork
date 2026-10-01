@@ -1810,7 +1810,7 @@ default of one block. It changes only API, lookup and status read paths and the
 verified lookup's database guard, none of them hashed sources, so the
 [interpreter content hash](glossary.md#interpreter-content-hash) does not
 rotate and no redo is needed. It needs
-`20261001120000_lookup_guard_configured_publication_lag.sql`, which replaces
+`20261001150000_lookup_guard_configured_publication_lag.sql`, which replaces
 `bigname_phase.revalidate_resolution_lookup_state` so the guard no longer fixes
 its own one-block bound: it still requires the head the lookup pinned and the
 exact publication the lookup captured, and the lookup applied the configured

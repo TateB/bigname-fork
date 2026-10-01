@@ -1122,7 +1122,7 @@ async fn lookup_publication_migration_preserves_guard_writer_and_privileges() ->
         include_str!("../../../migrations/20260930100000_read_only_lookup_guard.sql"),
         include_str!("../../../migrations/20260930230000_project_redo_execution_extent.sql"),
         include_str!(
-            "../../../migrations/20261001120000_lookup_guard_configured_publication_lag.sql"
+            "../../../migrations/20261001150000_lookup_guard_configured_publication_lag.sql"
         ),
     ] {
         raw_sql(migration).execute(fixture.pool()).await?;
