@@ -1649,8 +1649,8 @@ readable in the same input snapshot.
 On a chain whose manifests all belong to ENSv1, ENSv2 or Basenames Base source
 families (or to the families that interpret no logs), Interpret instead
 restores state for each batch with the [lookahead loader](glossary.md#lookahead-loader).
-The Basenames Base families are interpreted by the ENSv1 protocol code, so they
-share its name model and dependency rules. Before
+Interpret's adapter handles the Basenames Base families with its ENSv1 protocol
+code, so the loader applies the same name model and dependency rules to them. Before
 interpreting, the adapter decodes the batch's logs without interpreting them
 and lists every name (by namehash) and resource the logs can touch.
 Interpret adds the names whose registrar expiry plus the 90-day grace period
@@ -2046,11 +2046,14 @@ spelling is not stale state. This is a serving-boundary compatibility rule and
 does not change which stored projection rows are authoritative or when they are
 rebuilt.
 
-Every selection also requires the current Project generation to be complete at
-the newest stored head with the API's compiled interpreter content hash. The
-API reads only projections eligible for the selected positions and revalidates
-the Project generation before returning. A concurrent head or generation
-change returns `409 stale`.
+Every selection also requires the current Project generation to be complete,
+within the one-block publication lag tolerance of the newest stored head, with
+the API's compiled interpreter content hash. The API reads only projections
+eligible for the selected positions and revalidates the Project generation
+before returning; a current-state collection checks it instead on its one read
+snapshot, before its first read. A head that advances within that tolerance
+leaves the publication servable; a replaced publication, or one that stops being
+servable, before that check returns `409 stale`.
 
 ### History page order
 

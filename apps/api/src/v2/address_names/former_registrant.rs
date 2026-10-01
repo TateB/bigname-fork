@@ -85,7 +85,7 @@ pub(super) async fn get_address_former_registrants(
         .read(params.cursor.as_deref(), &POSITION_KEYS)?
         .map(|position| storage_cursor(&position))
         .transpose()?;
-    let snapshot =
+    let mut snapshot =
         CollectionSnapshot::capture_for_namespace(state, None, params.namespace.as_deref()).await?;
     let filter = FormerRegistrantFilter {
         address: normalized_address,
@@ -94,7 +94,7 @@ pub(super) async fn get_address_former_registrants(
         expires_before: params.expires_before,
     };
     let page = load_family_former_registrant_page(
-        &state.pool,
+        snapshot.conn().await?,
         &filter,
         match order {
             SortOrder::Asc => NameCurrentListOrder::Asc,
@@ -113,7 +113,7 @@ pub(super) async fn get_address_former_registrants(
         },
     ))?;
     let primary_names = load_primary_names_by_namespace(
-        &state.pool,
+        snapshot.conn().await?,
         normalized_address,
         page.rows.iter().map(|row| row.namespace.as_str()),
     )
@@ -124,7 +124,8 @@ pub(super) async fn get_address_former_registrants(
         .filter(|row| Authority::from_provenance(&row.provenance) == Some(Authority::EnsV2))
         .map(|row| row.logical_name_id.clone())
         .collect::<Vec<_>>();
-    let migrated_at_by_name = load_migrated_at(&state.pool, &migrated_logical_name_ids).await?;
+    let migrated_at_by_name =
+        load_migrated_at(snapshot.conn().await?, &migrated_logical_name_ids).await?;
     let data = page
         .rows
         .iter()

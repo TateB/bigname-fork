@@ -14,7 +14,7 @@
 
 use anyhow::Result;
 use bigname_domain::resolver_read::{ENSIP19_DEFAULT_COIN_TYPE, ETH_COIN_TYPE};
-use sqlx::{PgConnection, PgPool, Postgres, QueryBuilder, postgres::PgRow};
+use sqlx::{PgConnection, Postgres, QueryBuilder, postgres::PgRow};
 
 use super::{
     resolves_to::{
@@ -72,7 +72,7 @@ pub struct AddressRecordsCurrentEvmPage {
 /// [`super::load_address_records_current_page`], including the switch branch.
 #[allow(clippy::too_many_arguments)]
 pub async fn load_address_records_current_evm_page(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     address: &str,
     namespaces: Option<&[String]>,
     dedupe_by: AddressNamesCurrentDedupe,
@@ -84,7 +84,7 @@ pub async fn load_address_records_current_evm_page(
     page_size: u64,
 ) -> Result<AddressRecordsCurrentEvmPage> {
     crate::families::records::load_family_resolves_to_evm_page(
-        pool, address, namespaces, dedupe_by, q, authority, sort, order, cursor, page_size,
+        db, address, namespaces, dedupe_by, q, authority, sort, order, cursor, page_size,
     )
     .await
 }

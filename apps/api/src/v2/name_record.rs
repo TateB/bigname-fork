@@ -148,7 +148,7 @@ pub(crate) async fn get_name_record(
         .unwrap_or_else(|| normalized.namespace.to_owned());
     let route_source = route_source(params.source)?;
     let include_counts = counts::include_counts(&params.include)?;
-    let count_snapshot = if include_counts {
+    let mut count_snapshot = if include_counts {
         Some(CollectionSnapshot::capture_for_namespace(&state, None, Some(&namespace)).await?)
     } else {
         None
@@ -241,7 +241,7 @@ pub(crate) async fn get_name_record(
         &state,
         &row,
         &selected_snapshot,
-        count_snapshot.as_ref(),
+        count_snapshot.as_mut(),
         &mut record,
     )
     .await?;
@@ -258,11 +258,11 @@ pub(crate) async fn get_name_record(
 /// Decimal Unix-second `migrated_at` per logical name for names whose current ENSv2 authority was proven by
 /// an ENSv1→ENSv2 migration transition; other names are absent.
 pub(crate) async fn load_migrated_at(
-    pool: &sqlx::PgPool,
+    db: impl Into<bigname_storage::ReadDb<'_>>,
     logical_name_ids: &[String],
 ) -> V2Result<BTreeMap<String, String>> {
     let transitions =
-        bigname_storage::load_name_migration_transition_timestamps(pool, logical_name_ids)
+        bigname_storage::load_name_migration_transition_timestamps(db, logical_name_ids)
             .await
             .map_err(|_| V2Error::internal_error("failed to load name migration transitions"))?;
     Ok(transitions

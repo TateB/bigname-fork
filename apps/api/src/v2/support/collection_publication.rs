@@ -30,33 +30,45 @@ impl PublicNamespaceSet {
             .collect();
         Self::new(deployments, request_scope, manifests)
     }
+
+    /// Whether `conn` still serves every captured publication: each chain's family marker is
+    /// the same generation at the same position. A read on `conn` then reads the captured
+    /// publications.
+    pub(crate) async fn served_on(&self, conn: &mut sqlx::PgConnection) -> ApiResult<bool> {
+        for token in self
+            .deployments
+            .iter()
+            .filter_map(|deployment| deployment.read_token.as_ref())
+        {
+            let current = load_selected_project_generations_on(&mut *conn, &token.selected, true)
+                .await
+                .map_err(|_| {
+                    ApiError::internal_error("failed to validate public namespace data")
+                })?;
+            if current.as_ref() != Some(&token.project_generations) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
 }
 
-pub(crate) async fn revalidate_collection_namespace_set(
+/// The namespace authority the request was admitted under is still the configured one. The
+/// publications need no recheck: the page read them on one snapshot that served them. That
+/// snapshot commits before the first token statement here, so a change between the token
+/// statements lands after the read.
+pub(crate) async fn revalidate_collection_manifests(
     state: &AppState,
     expected: &PublicNamespaceSet,
     namespace: Option<&str>,
 ) -> ApiResult<()> {
-    let current = if state.public_namespaces_override().is_some() {
-        derive_public_namespace_set(state)
-            .await?
-            .for_namespace(namespace)
-    } else {
-        let mut tokens = load_public_namespace_manifest_tokens(&state.pool).await?;
-        tokens.retain(|token| namespace.is_none_or(|namespace| token.namespace == namespace));
-        if expected.manifest_tokens.as_ref() != tokens.as_slice() {
-            return Err(public_namespace_manifest_conflict());
-        }
-        let current = derive_public_namespace_set_from_manifests(state, tokens.clone()).await?;
-        let mut reloaded = load_public_namespace_manifest_tokens(&state.pool).await?;
-        reloaded.retain(|token| namespace.is_none_or(|namespace| token.namespace == namespace));
-        if tokens != reloaded {
-            return Err(public_namespace_manifest_conflict());
-        }
-        current
-    };
-    if expected.shares_read_view(&current) {
+    if state.public_namespaces_override().is_some() {
         return Ok(());
     }
-    Err(public_namespace_manifest_conflict())
+    let mut tokens = load_public_namespace_manifest_tokens(&state.pool).await?;
+    tokens.retain(|token| namespace.is_none_or(|namespace| token.namespace == namespace));
+    if expected.manifest_tokens.as_ref() != tokens.as_slice() {
+        return Err(public_namespace_manifest_conflict());
+    }
+    Ok(())
 }

@@ -9,7 +9,7 @@
 //! them.
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
-use sqlx::{PgConnection, PgPool, Row};
+use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
 use crate::families::{
@@ -17,7 +17,7 @@ use crate::families::{
         lifecycle::Clock,
         permissions::{ResourceInput, load_shadow_permissions_on, resolver_grant_evidence},
     },
-    name::{FamilyPublication, FamilyPublicationUnavailable, publication_on, read_snapshot},
+    name::{FamilyPublication, FamilyPublicationUnavailable, publication_on},
 };
 
 /// One page of a resolver collection: `(key1, key2, item)` rows in key order, and the total.
@@ -45,7 +45,7 @@ async fn marker(conn: &mut PgConnection, chain_id: &str) -> Result<FamilyPublica
 /// .refs/ens_v2/contracts/src/resolver/PermissionedResolver.sol:L363-L367 @ ens_v2@a971bd64).
 /// `storage_model` is an annotation and plays no part (see `load_family_link_selection`).
 pub async fn load_resolver_links_shadow(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     chain_id: &str,
     resolver_address: &str,
     namespace: &str,
@@ -96,7 +96,7 @@ pub async fn load_resolver_links_shadow(
               AND link.record_id <> '0'
         )";
     let address = resolver_address.to_ascii_lowercase();
-    let mut snapshot = read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     marker(&mut snapshot, chain_id).await?;
     let page = page(
         &mut snapshot,
@@ -107,7 +107,7 @@ pub async fn load_resolver_links_shadow(
         &Value::Null,
     )
     .await?;
-    snapshot.commit().await?;
+    snapshot.close().await?;
     Ok(page)
 }
 
@@ -120,7 +120,7 @@ pub async fn load_resolver_links_shadow(
 /// `normalized_events` (`resolver_grant_evidence`), from which the route picks the `grant_event`
 /// it attaches.
 pub async fn load_resolver_roles_shadow(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     chain_id: &str,
     resolver_address: &str,
     after: Option<&(String, String)>,
@@ -128,7 +128,7 @@ pub async fn load_resolver_roles_shadow(
 ) -> Result<FamilyCollectionPage> {
     let address = resolver_address.to_ascii_lowercase();
     let scope = format!("resolver:{chain_id}:{address}");
-    let mut snapshot = read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     let publication = marker(&mut snapshot, chain_id).await?;
     let resources: Vec<Uuid> = sqlx::query_scalar(
         "/* storage:families.topology.role_resources */
@@ -211,7 +211,7 @@ pub async fn load_resolver_roles_shadow(
         &Value::Array(granted),
     )
     .await?;
-    snapshot.commit().await?;
+    snapshot.close().await?;
     Ok(page)
 }
 

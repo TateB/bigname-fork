@@ -222,7 +222,7 @@ async fn search_candidates(
 /// before the walk, which reads family tables a rebuild empties, so a rebuild refuses rather than
 /// answers an empty page. Only names of `filter.namespace` are walked and composed.
 pub async fn load_family_expiring_page(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     filter: &NameCurrentExpiringFilter,
     order: NameCurrentListOrder,
     cursor: Option<&NameCurrentListCursor>,
@@ -252,7 +252,7 @@ pub async fn load_family_expiring_page(
         }
     }
     let batch = batch_size(page_size);
-    let mut snapshot = batch::read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     batch::ensure_published(&mut snapshot, chains).await?;
     let namespace = filter.namespace.as_str();
     let mut gathered = Gathered::default();
@@ -300,7 +300,7 @@ pub async fn load_family_expiring_page(
                 _ => false,
             };
         if exhausted || settled {
-            snapshot.commit().await?;
+            snapshot.close().await?;
             return Ok(truncate(page, page_size));
         }
     }
