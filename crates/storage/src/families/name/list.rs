@@ -113,7 +113,6 @@ pub async fn load_family_search_page(
         (
             cursor.normalized_name.clone(),
             cursor.namespace.clone(),
-            cursor.normalized_name.clone(),
             cursor.namehash.clone(),
         )
     });
@@ -125,12 +124,7 @@ pub async fn load_family_search_page(
         after = candidates
             .last()
             .map(|(_, name, namespace, namehash)| {
-                (
-                    name.clone(),
-                    namespace.clone(),
-                    name.clone(),
-                    namehash.clone(),
-                )
+                (name.clone(), namespace.clone(), namehash.clone())
             })
             .or(after);
         gathered
@@ -149,12 +143,35 @@ pub async fn load_family_search_page(
     }
 }
 
+/// Bound by `search_candidates`; the plan test prepares this exact text. The length bound matches
+/// `name_surfaces_name_order_idx`'s predicate, so the walk reads that index in page order. With no
+/// cursor the keyset bound is `('', '', '')`, below every row (namespaces are never empty), so a
+/// generic plan still binds the cursor as an index condition.
+pub(crate) const SEARCH_CANDIDATES_SQL: &str = r"/* storage:families.name.search_candidates */
+     SELECT surface.logical_name_id, surface.raw_name, surface.namespace, surface.namehash
+     FROM bigname_phase.name_surfaces surface
+     JOIN bigname_phase.chain_lineage lineage
+       ON lineage.chain_id = surface.chain_id AND lineage.block_hash = surface.block_hash
+     JOIN bigname_phase.project_family_marker marker ON marker.chain_id = surface.chain_id
+     WHERE surface.visibility_state = 'active' AND surface.raw_name <> ''
+       AND octet_length(surface.raw_name) <= 2000
+       AND surface.block_number <= marker.current_block_number
+       AND surface.canonicality_state IN ('canonical', 'safe', 'finalized')
+       AND lineage.canonicality_state IN ('canonical', 'safe', 'finalized')
+       AND ($1::text[] IS NULL OR surface.namespace = ANY($1))
+       AND ($2::text IS NULL OR surface.raw_name = $2)
+       AND ($3::text IS NULL OR surface.raw_name LIKE $3 ESCAPE '\')
+       AND (surface.raw_name, surface.namespace, surface.namehash)
+           > (COALESCE($4, ''), COALESCE($5, ''), COALESCE($6, ''))
+     ORDER BY surface.raw_name ASC, surface.namespace ASC, surface.namehash ASC
+     LIMIT $7";
+
 /// The next readable surfaces after `after` in the search page's order that the filter's name
 /// predicates admit: (logical_name_id, raw_name, namespace, namehash).
 async fn search_candidates(
     conn: &mut PgConnection,
     filter: &NameCurrentListFilter,
-    after: Option<&(String, String, String, String)>,
+    after: Option<&(String, String, String)>,
     limit: usize,
 ) -> Result<Vec<(String, String, String, String)>> {
     let namespaces: Option<Vec<String>> = match (&filter.namespaces, &filter.namespace) {
@@ -177,37 +194,17 @@ async fn search_candidates(
                 format!("%{}%", escape_like_pattern(&contains.to_ascii_lowercase()))
             })
         });
-    let rows = sqlx::query(
-        r"/* storage:families.name.search_candidates */
-         SELECT surface.logical_name_id, surface.raw_name, surface.namespace, surface.namehash
-         FROM bigname_phase.name_surfaces surface
-         JOIN bigname_phase.chain_lineage lineage
-           ON lineage.chain_id = surface.chain_id AND lineage.block_hash = surface.block_hash
-         JOIN bigname_phase.project_family_marker marker ON marker.chain_id = surface.chain_id
-         WHERE surface.visibility_state = 'active' AND surface.raw_name <> ''
-           AND surface.block_number <= marker.current_block_number
-           AND surface.canonicality_state IN ('canonical', 'safe', 'finalized')
-           AND lineage.canonicality_state IN ('canonical', 'safe', 'finalized')
-           AND ($1::text[] IS NULL OR surface.namespace = ANY($1))
-           AND ($2::text IS NULL OR surface.raw_name = $2)
-           AND ($3::text IS NULL OR surface.raw_name LIKE $3 ESCAPE '\')
-           AND ($4::text IS NULL
-                OR (surface.raw_name, surface.namespace, surface.raw_name, surface.namehash)
-                   > ($4, $5, $6, $7))
-         ORDER BY surface.raw_name ASC, surface.namespace ASC, surface.namehash ASC
-         LIMIT $8",
-    )
-    .bind(namespaces)
-    .bind(filter.name.as_deref())
-    .bind(like)
-    .bind(after.map(|(name, ..)| name.as_str()))
-    .bind(after.map(|(_, namespace, ..)| namespace.as_str()))
-    .bind(after.map(|(_, _, normalized, _)| normalized.as_str()))
-    .bind(after.map(|(.., namehash)| namehash.as_str()))
-    .bind(i64::try_from(limit).context("search batch exceeds i64")?)
-    .fetch_all(conn)
-    .await
-    .context("failed to load the search candidates")?;
+    let rows = sqlx::query(SEARCH_CANDIDATES_SQL)
+        .bind(namespaces)
+        .bind(filter.name.as_deref())
+        .bind(like)
+        .bind(after.map(|(name, ..)| name.as_str()))
+        .bind(after.map(|(_, namespace, _)| namespace.as_str()))
+        .bind(after.map(|(.., namehash)| namehash.as_str()))
+        .bind(i64::try_from(limit).context("search batch exceeds i64")?)
+        .fetch_all(conn)
+        .await
+        .context("failed to load the search candidates")?;
     rows.into_iter()
         .map(|row| {
             Ok((

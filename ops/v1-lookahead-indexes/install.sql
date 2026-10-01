@@ -17,7 +17,7 @@ SET statement_timeout = '6h';
 -- the recovery.
 -- The definition check matches the one in the schema-migrations
 -- 20260917150000_normalized_events_v1_lookahead_indexes.sql (ENSv1) and
--- 20261001120000_normalized_events_basenames_lookahead_indexes.sql (Basenames Base) and
+-- 20261001120100_normalized_events_basenames_lookahead_indexes.sql (Basenames Base) and
 -- 20261001130000_normalized_events_v2_lookahead_indexes.sql (ENSv2). PostgreSQL always
 -- prints the table's schema name, and a type's schema name only when the
 -- session search_path does not include it. The printed text is not rewritten to

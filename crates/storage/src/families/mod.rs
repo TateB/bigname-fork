@@ -8,5 +8,7 @@ pub mod topology;
 
 #[cfg(test)]
 mod id_index_plan_tests;
+#[cfg(test)]
+mod name_order_plan_tests;
 
 pub(crate) use name::read_snapshot;

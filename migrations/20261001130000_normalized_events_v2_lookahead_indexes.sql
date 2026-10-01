@@ -1,6 +1,6 @@
 -- The ENSv2 indexes of Interpret's lookahead loader, beside the ENSv1 and Basenames pairs
 -- installed by 20260917150000_normalized_events_v1_lookahead_indexes.sql and
--- 20261001120000_normalized_events_basenames_lookahead_indexes.sql. The loader reads the ENSv2
+-- 20261001120100_normalized_events_basenames_lookahead_indexes.sql. The loader reads the ENSv2
 -- events of the names and ENSv2 state keys a batch touches, so Sepolia can use it. Prebuild
 -- them concurrently on large initialized databases using ops/v1-lookahead-indexes/install.sql
 -- before applying schema-migrations.

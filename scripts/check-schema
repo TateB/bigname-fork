@@ -634,11 +634,12 @@ check_served_projection_removal() {
             emit_phase_migration "$ROOT/migrations/20261001100000_retire_resolver_alias_families.sql" baseline-first
             emit_phase_migration "$ROOT/migrations/20261001110000_project_child_registration_registry_index.sql" baseline-first
             emit_phase_migration "$ROOT/migrations/20261001110100_project_child_edge_candidate_child_index.sql" baseline-first
+            emit_phase_migration "$ROOT/migrations/20261001120000_name_surfaces_name_order_index.sql" baseline-first
             # Absent from the pre-7c fixture, present in the baseline.
             if [ "$suffix" = removal ]; then
-                emit_phase_migration "$ROOT/migrations/20261001120000_normalized_events_basenames_lookahead_indexes.sql" preceding-shape
+                emit_phase_migration "$ROOT/migrations/20261001120100_normalized_events_basenames_lookahead_indexes.sql" preceding-shape
             else
-                emit_phase_migration "$ROOT/migrations/20261001120000_normalized_events_basenames_lookahead_indexes.sql" baseline-first
+                emit_phase_migration "$ROOT/migrations/20261001120100_normalized_events_basenames_lookahead_indexes.sql" baseline-first
             fi
             if [ "$suffix" = removal ]; then
                 emit_phase_migration "$ROOT/migrations/20261001130000_normalized_events_v2_lookahead_indexes.sql" preceding-shape
@@ -768,7 +769,8 @@ for migration_file in \
     "$ROOT/migrations/20261001100000_retire_resolver_alias_families.sql" \
     "$ROOT/migrations/20261001110000_project_child_registration_registry_index.sql" \
     "$ROOT/migrations/20261001110100_project_child_edge_candidate_child_index.sql" \
-    "$ROOT/migrations/20261001120000_normalized_events_basenames_lookahead_indexes.sql" \
+    "$ROOT/migrations/20261001120000_name_surfaces_name_order_index.sql" \
+    "$ROOT/migrations/20261001120100_normalized_events_basenames_lookahead_indexes.sql" \
     "$ROOT/migrations/20261001130000_normalized_events_v2_lookahead_indexes.sql"
 do
     emit_phase_migration "$migration_file" empty-schema | run_psql
@@ -1107,7 +1109,9 @@ for migration_file in \
     "$ROOT/migrations/20261001110000_project_child_registration_registry_index.sql" \
     "$ROOT/migrations/20261001110000_project_child_registration_registry_index.sql" \
     "$ROOT/migrations/20261001110100_project_child_edge_candidate_child_index.sql" \
-    "$ROOT/migrations/20261001110100_project_child_edge_candidate_child_index.sql"
+    "$ROOT/migrations/20261001110100_project_child_edge_candidate_child_index.sql" \
+    "$ROOT/migrations/20261001120000_name_surfaces_name_order_index.sql" \
+    "$ROOT/migrations/20261001120000_name_surfaces_name_order_index.sql"
 do
     emit_phase_migration "$migration_file" baseline-first | run_psql
 done
@@ -2015,7 +2019,7 @@ done
 v1_lookahead_install="$ROOT/ops/v1-lookahead-indexes/install.sql"
 v1_lookahead_readme=ops/v1-lookahead-indexes/README.md
 v1_lookahead_migration="$ROOT/migrations/20260917150000_normalized_events_v1_lookahead_indexes.sql"
-basenames_lookahead_migration="$ROOT/migrations/20261001120000_normalized_events_basenames_lookahead_indexes.sql"
+basenames_lookahead_migration="$ROOT/migrations/20261001120100_normalized_events_basenames_lookahead_indexes.sql"
 v2_lookahead_migration="$ROOT/migrations/20261001130000_normalized_events_v2_lookahead_indexes.sql"
 v1_lookahead_index_names=(
     normalized_events_v1_due_probe_idx
@@ -5403,7 +5407,16 @@ BEGIN
      AND attribute.attnum = ANY(indexed.indkey::smallint[])
     JOIN pg_class index ON index.oid = indexed.indexrelid
     JOIN pg_am access_method ON access_method.oid = index.relam
-    WHERE access_method.amname = 'btree';
+    WHERE access_method.amname = 'btree'
+      -- A reviewed partial index whose predicate bounds the column keeps every entry under
+      -- the btree limit; any other predicate must match exactly to be exempt.
+      AND (index.relname, COALESCE(pg_get_expr(indexed.indpred, indexed.indrelid), ''))
+          NOT IN (
+              (
+                  'name_surfaces_name_order_idx',
+                  '((visibility_state = ''active''::text) AND (canonicality_state = ANY (ARRAY[''canonical''::canonicality_state, ''safe''::canonicality_state, ''finalized''::canonicality_state])) AND (octet_length(raw_name) <= 2000))'
+              )
+          );
 
     IF unbounded_btree_columns IS NOT NULL THEN
         RAISE EXCEPTION

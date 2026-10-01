@@ -32,12 +32,12 @@ const CHAIN: &str = "ethereum-sepolia";
 const OTHER_CHAIN: &str = "base-sepolia";
 const ROWS: i64 = 2_000;
 const POINTERS: i64 = 20_000;
-const PLAN_MODES: [&str; 2] = ["force_generic_plan", "force_custom_plan"];
+pub(super) const PLAN_MODES: [&str; 2] = ["force_generic_plan", "force_custom_plan"];
 
 /// An index a plan must probe, and what its index condition must compare.
-struct Probe {
-    index: &'static str,
-    conditions: &'static [&'static str],
+pub(super) struct Probe {
+    pub(super) index: &'static str,
+    pub(super) conditions: &'static [&'static str],
 }
 
 #[tokio::test]
@@ -58,7 +58,7 @@ async fn resource_pointer_lookup_probes_both_indexes_with_bound_uuids() -> Resul
     .await
 }
 
-async fn with_database(
+pub(super) async fn with_database(
     prefix: &str,
     check: impl AsyncFnOnce(&mut PgConnection) -> Result<()>,
 ) -> Result<()> {
@@ -428,7 +428,7 @@ fn namehash(n: i64) -> String {
     format!("0x{n:064x}")
 }
 
-async fn explain_execute(
+pub(super) async fn explain_execute(
     connection: &mut PgConnection,
     mode: &str,
     statement: &str,
@@ -447,7 +447,7 @@ async fn explain_execute(
 
 /// Each probe's index must be scanned with an index condition holding all its conditions. In
 /// the text plan the condition is the line right after the scan node's own line.
-fn missing_probes(label: &str, plan: &[String], probes: &[Probe]) -> Vec<String> {
+pub(super) fn missing_probes(label: &str, plan: &[String], probes: &[Probe]) -> Vec<String> {
     probes
         .iter()
         .filter(|probe| {
