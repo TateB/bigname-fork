@@ -41,7 +41,8 @@ pub(super) async fn load_rows(
     Ok(rows)
 }
 
-/// Pauses a request after membership selection and before the grant read.
+/// Pauses a request after membership selection and before the grant read. Finding the hook takes
+/// a second pool connection while the read snapshot holds one.
 #[cfg(test)]
 pub(crate) mod grant_read_test_hooks {
     use std::sync::Arc;

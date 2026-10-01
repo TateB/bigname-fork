@@ -254,6 +254,7 @@ pub(super) fn changed_during_read() -> V2Error {
 }
 
 /// Pauses one test database's next request at a [`Stage`], so a test can publish a block there.
+/// Finding the hook takes a second pool connection while the read snapshot may hold one.
 #[cfg(test)]
 pub(crate) mod finish_test_hooks {
     use std::sync::Arc;
