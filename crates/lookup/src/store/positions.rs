@@ -51,8 +51,9 @@ pub(super) struct CapturedPublication {
 pub(super) async fn ensure_project_at_head(
     transaction: &mut Transaction<'_, Postgres>,
     head: &HeadRow,
+    lag_tolerance_blocks: i64,
 ) -> Result<CapturedPublication> {
-    super::family_rows::publication(transaction, head).await
+    super::family_rows::publication(transaction, head, lag_tolerance_blocks).await
 }
 
 pub(super) async fn inventory_position(

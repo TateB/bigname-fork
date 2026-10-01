@@ -199,6 +199,7 @@ async fn family_lookup_refuses_insert_and_clear_after_actual_overlapping_redo() 
                 "0xhistory240",
                 true,
                 false,
+                bigname_storage::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS,
             )
             .await?;
             assert_eq!(served.is_some(), from > 240, "phase={phase} from={from}");

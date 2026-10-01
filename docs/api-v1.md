@@ -751,7 +751,9 @@ for `ready` when its block and time lag are within the configured thresholds,
 its interpreter content hash matches this API build, and a same-height
 publication has the stored head's exact block hash. These checks read the
 [family marker](glossary.md#family-marker), which must also be `live`, on
-readable lineage, and at most one block behind the stored head. The marker
+readable lineage, and at most the
+[publication lag tolerance](glossary.md#publication-lag-tolerance) behind the
+stored head (one block by default; see below). The marker
 supplies `indexed_block` and its timestamp, including the lags computed from
 them. Project lifecycle state and redo flags still come from the phase rows.
 While an Interpret or Project redo is in progress, `lag_blocks` and
@@ -857,16 +859,22 @@ The ledger transaction holds shared locks on both phase rows and the family
 marker through its commit, so an overlapping redo cannot start between the
 check and the write. An unrelated phase-row update alone does not change the
 publication generation. Routes combining indexed and verified answers also
-require both answers to fit the reported `meta.as_of` position.
+require both answers to fit the reported `meta.as_of` position. Verified calls
+run at the stored head, so while the publication trails the head the verified
+section on those routes reports `stale`; raising the publication lag tolerance
+widens indexed serving only.
 
 Indexed snapshot selection uses the [family marker](glossary.md#family-marker).
 It must be `live`, carry this build's interpreter content hash, sit on readable
-lineage and trail the stored head by at most one block. A `bootstrap_pending`
-marker means a rebuild is still populating the families, and reads return
-`409 stale`. When the publication trails the requested `head`, `safe` or
-`finalized` position by the permitted one-block head lag, the route reports
-the publication in `meta.as_of`. A publication further behind, from another
-interpreter generation or on an orphaned fork is unavailable.
+lineage and trail the stored head by at most the publication lag tolerance:
+`BIGNAME_API_PUBLICATION_LAG_TOLERANCE_BLOCKS`, one block by default, never
+negative, and one count for every chain. A `bootstrap_pending` marker means a
+rebuild is still populating the families, and reads return `409 stale`. When
+the publication trails the requested `head`, `safe` or `finalized` position
+within that tolerance, the route reports the publication in `meta.as_of`. A
+publication further behind, ahead of the stored head, from another interpreter
+generation or on an orphaned fork is unavailable. A tolerance above the `/v1/status` thresholds
+means status can report `stale` while reads are still served.
 
 The API captures and rechecks the marker's `sequence` around indexed reads.
 Collection cursors carry no publication generation. Each current-state page
@@ -1332,10 +1340,11 @@ change snapshot identity, filter boundaries, or keyset continuation.
 
 The API selects current `latest`, `safe`, and `finalized` positions from
 `bigname_phase.chain_heads` and obtains their timestamps from readable
-`bigname_phase.chain_lineage`. Every selection is available only when the current
-`project` phase is completed with the API's compiled interpreter content hash on
-the readable lineage at most one block behind the latest head (see the
-publication-lag rule above). Timestamp `at` selection and opaque-token replay
+`bigname_phase.chain_lineage`. Every selection is available only when a live
+[family marker](glossary.md#family-marker) carries the API's compiled
+interpreter content hash on readable lineage at most the publication lag
+tolerance behind the latest head (see the publication-lag rule above); the
+Project phase may be running meanwhile. Timestamp `at` selection and opaque-token replay
 still choose historical positions: every supplied or resolved position must
 exist in `bigname_phase.chain_lineage` and satisfy the requested finality
 floor, and an authoritative cross-chain selection bounds auxiliary positions
@@ -1347,9 +1356,10 @@ returns `409 conflict`.
 API startup discovers the status chain set from the union of
 `bigname_phase.chain_heads` and `bigname_phase.chain_phase_state`. `/v1/status` uses
 those same relations for its chain set and reads stored head/finality positions
-from `chain_heads`, project progress from the `project` row in
-`chain_phase_state`, and both timestamps from the matching readable
-`chain_lineage` rows.
+from `chain_heads`, the indexed block from the
+[family marker](glossary.md#family-marker), Project lifecycle and redo state
+from the `project` row in `chain_phase_state`, and both timestamps from the
+matching readable `chain_lineage` rows.
 
 Latest-only collections (names, subnames, address names, permissions, search,
 registry labels and product history) page over current data. They omit

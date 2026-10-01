@@ -323,9 +323,17 @@ async fn run(
             }
         }
         ensure!(
-            load_served_project_generation(pool, CHAIN, number, &target.hash, true, true)
-                .await?
-                .is_some(),
+            load_served_project_generation(
+                pool,
+                CHAIN,
+                number,
+                &target.hash,
+                true,
+                true,
+                PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS
+            )
+            .await?
+            .is_some(),
             "the family publication is not servable at {number}"
         );
         ensure!(

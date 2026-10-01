@@ -1,10 +1,31 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use sqlx::PgPool;
 
 use crate::v2::support::status_freshness::{StatusFreshness, StatusFreshnessConfig};
 
 pub(crate) const DEFAULT_PHASE_HEARTBEAT_MAX_AGE_SECS: i64 = 60;
+
+static PUBLICATION_LAG_TOLERANCE_BLOCKS: OnceLock<i64> = OnceLock::new();
+
+/// Set at startup from `BIGNAME_API_PUBLICATION_LAG_TOLERANCE_BLOCKS`. A process-wide
+/// value rather than an `AppState` field because snapshot selection, generation rechecks,
+/// status and lookup all need it, many of them below helpers that take only a pool.
+pub(crate) fn configure_publication_lag_tolerance_blocks(blocks: i64) -> anyhow::Result<()> {
+    let configured = *PUBLICATION_LAG_TOLERANCE_BLOCKS.get_or_init(|| blocks);
+    anyhow::ensure!(
+        configured == blocks,
+        "the publication lag tolerance is already {configured} blocks in this process"
+    );
+    Ok(())
+}
+
+pub(crate) fn publication_lag_tolerance_blocks() -> i64 {
+    PUBLICATION_LAG_TOLERANCE_BLOCKS
+        .get()
+        .copied()
+        .unwrap_or(bigname_storage::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS)
+}
 
 pub(crate) async fn is_absent_phase_schema(pool: &PgPool, error: &anyhow::Error) -> bool {
     let relation_is_undefined = error.chain().any(|source| {

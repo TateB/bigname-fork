@@ -144,7 +144,8 @@ BEGIN
           AND marker.current_block_number::text = $2 ->> 'block_number'
           AND marker.current_block_hash = $2 ->> 'block_hash'
           AND marker.input_content_hash = $2 ->> 'input_content_hash'
-          AND $3 - marker.current_block_number BETWEEN 0 AND 1
+          -- Lag was admitted when lookup captured this publication against the same head.
+          AND marker.current_block_number <= $3
           AND (marker.current_block_number <> $3 OR marker.current_block_hash = $4)
           AND NOT EXISTS (
               SELECT 1 FROM chain_phase_state input_phase
