@@ -60,6 +60,55 @@ pub(crate) const fn wrapper_lifecycle_matches_fuses(
     }
 }
 
+/// The served `manager` (docs/api-v1.md, Manager): the owner of a name with no NameWrapper state,
+/// and the token holder, the registrant, of a wrapped name in any wrapper state, because
+/// NameWrapper authorizes record changes by token holder or approved operator with no wrapper-state
+/// condition (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L202-L222 @ ens_v1@91c966f).
+/// Burned fuses can still forbid a particular change, and a wrapped `.eth` name in registrar grace
+/// still serves its holder although NameWrapper refuses it then
+/// (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L1082-L1089 @ ens_v1@91c966f); see
+/// docs/upstream.md, Known divergences.
+pub(crate) fn served_manager(
+    declared_summary: &Value,
+    owner: Option<&String>,
+    registrant: Option<&String>,
+) -> Option<String> {
+    if declared_summary.get("wrapper_state").is_some() {
+        registrant.cloned()
+    } else {
+        owner.cloned()
+    }
+}
+
 fn invalid_wrapper_metadata() -> V2Error {
     V2Error::internal_error("stored wrapper metadata is inconsistent")
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::served_manager;
+
+    #[test]
+    fn manager_is_the_owner_unwrapped_and_the_holder_in_every_wrapper_state() {
+        let owner = "0xowner".to_owned();
+        let holder = "0xholder".to_owned();
+        for (summary, expected) in [
+            (json!({}), Some(&owner)),
+            (json!({"wrapper_state": "wrapped"}), Some(&holder)),
+            (json!({"wrapper_state": "emancipated"}), Some(&holder)),
+            (json!({"wrapper_state": "locked"}), Some(&holder)),
+        ] {
+            assert_eq!(
+                served_manager(&summary, Some(&owner), Some(&holder)).as_ref(),
+                expected,
+                "{summary}"
+            );
+        }
+        assert_eq!(
+            served_manager(&json!({"wrapper_state": "locked"}), Some(&owner), None),
+            None
+        );
+    }
 }
