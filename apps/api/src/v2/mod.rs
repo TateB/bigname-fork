@@ -38,6 +38,7 @@ mod resolvers;
 #[cfg(test)]
 pub(crate) use resolvers::generation_test_hooks as resolver_generation_test_hooks;
 mod restrictions;
+mod route_name;
 mod router;
 mod search;
 mod snapshots;

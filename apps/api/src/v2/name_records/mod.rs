@@ -179,6 +179,7 @@ pub(crate) async fn get_name_records(
 
     let include_resolution_auxiliary =
         namespace == BASENAMES_NAMESPACE && params.source == RequestSource::Verified;
+    let normalized = super::route_name::route_name(&state.pool, &namespace, normalized).await?;
     let (mut selected_snapshot, mut row, mut record_inventory) = load_name_records_snapshot_state(
         &state,
         &namespace,

@@ -98,6 +98,7 @@ pub(crate) async fn get_history(
         .clone()
         .unwrap_or_else(|| normalized.namespace.to_owned());
 
+    let normalized = super::route_name::route_name(&state.pool, &namespace, normalized).await?;
     let logical_name_id =
         bigname_storage::logical_name_id_for_name(&namespace, &normalized.normalized_name);
     children::refuse_registrar_root(child_registrations, &namespace, &logical_name_id)?;
