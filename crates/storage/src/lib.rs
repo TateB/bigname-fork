@@ -27,6 +27,7 @@ mod permissions;
 mod phase_projection_reads;
 mod primary_name;
 mod projection_helpers;
+mod read_db;
 mod record_inventory;
 mod registries;
 mod resolution_support;
@@ -148,6 +149,7 @@ pub use primary_name::{
     load_primary_name_current, load_primary_name_current_snapshot,
     load_primary_name_current_snapshots, normalized_claim_name,
 };
+pub use read_db::{ReadDb, begin_read_snapshot};
 #[cfg(any(test, feature = "test-support"))]
 pub use record_inventory::explain_record_inventory_abi_evidence_for_test;
 pub use record_inventory::{

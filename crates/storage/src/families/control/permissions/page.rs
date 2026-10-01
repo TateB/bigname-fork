@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
-use sqlx::{PgConnection, PgPool, types::time::OffsetDateTime};
+use sqlx::{PgConnection, types::time::OffsetDateTime};
 use uuid::Uuid;
 
 use super::{
@@ -34,7 +34,7 @@ use crate::{
     PermissionsCurrentResourceSummary, ResourcePermissionCoverage,
     families::{
         control::lifecycle::Clock,
-        name::{FamilyPublication, FamilyPublicationUnavailable, publication_on, read_snapshot},
+        name::{FamilyPublication, FamilyPublicationUnavailable, publication_on},
     },
     projection_helpers::{checked_page_limit_i64, checked_page_size_usize, split_keyset_page},
 };
@@ -43,7 +43,7 @@ use crate::{
 /// families: the rows of `subject` and/or `resource_id` after `cursor`, ordered by subject,
 /// resource and scope key as bytes (the served `COLLATE "C"` order).
 pub async fn load_family_effective_permissions_page(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     subject: Option<&str>,
     resource_id: Option<Uuid>,
     namespace: Option<&str>,
@@ -63,7 +63,7 @@ pub async fn load_family_effective_permissions_page(
         "effective permissions page_size must be positive",
         "effective permissions page_size must fit usize",
     )?;
-    let mut snapshot = read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     let rows = page_rows(
         &mut snapshot,
         subject,
@@ -73,7 +73,7 @@ pub async fn load_family_effective_permissions_page(
         size + 1,
     )
     .await?;
-    snapshot.commit().await?;
+    snapshot.close().await?;
     let (rows, next_cursor) = split_keyset_page(rows, size, |row| {
         PermissionsCurrentAccountResourceCursor::from(row)
     });
@@ -86,7 +86,7 @@ pub async fn load_family_effective_permissions_page(
 
 /// A sentinel-bounded inline expansion for address `include=role_summary`, in one read snapshot.
 pub async fn load_family_bounded_permissions(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     resource_ids: &[Uuid],
     namespace: Option<&str>,
     max_rows: u64,
@@ -99,7 +99,7 @@ pub async fn load_family_bounded_permissions(
     if resource_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let mut snapshot = read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     let mut rows = Vec::new();
     for resource in resource_ids.iter().copied().collect::<BTreeSet<_>>() {
         rows.extend(
@@ -117,7 +117,7 @@ pub async fn load_family_bounded_permissions(
             break;
         }
     }
-    snapshot.commit().await?;
+    snapshot.close().await?;
     Ok(rows)
 }
 
@@ -167,13 +167,13 @@ async fn page_rows(
 /// The permission summaries `load_serving_permission_summaries` serves, read from the families: one
 /// per readable resource of `resource_ids` at or below its chain's publication.
 pub async fn load_family_permission_summaries(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     resource_ids: &[Uuid],
 ) -> Result<BTreeMap<Uuid, PermissionsCurrentResourceSummary>> {
     if resource_ids.is_empty() {
         return Ok(BTreeMap::new());
     }
-    let mut snapshot = read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     let mut out = BTreeMap::new();
     for (publication, resources) in published(&mut snapshot, resource_ids).await? {
         let chain_id = publication.chain_id.as_str();
@@ -222,7 +222,7 @@ pub async fn load_family_permission_summaries(
             );
         }
     }
-    snapshot.commit().await?;
+    snapshot.close().await?;
     Ok(out)
 }
 

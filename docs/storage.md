@@ -2026,10 +2026,12 @@ Every selection also requires a live [family marker](glossary.md#family-marker)
 with the API's compiled interpreter content hash, at or below the newest stored
 head and at most the API's
 [publication lag tolerance](glossary.md#publication-lag-tolerance) (one block
-by default) behind it. The
-API reads only projections eligible for the selected positions and revalidates
-the Project generation before returning. A concurrent head or generation
-change returns `409 stale`.
+by default) behind it. The API reads only projections eligible for the selected
+positions and revalidates the Project generation before returning; a
+current-state collection checks it instead on its one read snapshot, before its
+first read. A head that advances within that tolerance leaves the publication
+servable; a replaced publication, or one that stops being servable, before that
+check returns `409 stale`.
 
 ### History page order
 

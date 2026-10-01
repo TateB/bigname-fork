@@ -10,7 +10,7 @@ pub(super) async fn apply(
     state: &AppState,
     row: &NameCurrentRow,
     selected: &SelectedSnapshot,
-    snapshot: Option<&CollectionSnapshot>,
+    snapshot: Option<&mut CollectionSnapshot>,
     record: &mut NameRecord,
 ) -> V2Result<()> {
     let Some(snapshot) = snapshot.filter(|_| record.status != Status::Unsupported) else {
@@ -18,7 +18,7 @@ pub(super) async fn apply(
     };
     #[cfg(test)]
     crate::v2::search_public_namespace_read_test_hooks::run(&state.pool).await?;
-    let counts = load_name_counts(&state.pool, row).await?;
+    let counts = load_name_counts(snapshot.conn().await?, row).await?;
     let current = snapshot.finish(state).await?;
     let selected_meta = snapshot_meta(selected)?;
     let chain_id = name_chain_id(row)
@@ -55,11 +55,11 @@ pub(super) struct NameCounts {
 /// The direct readable subname count and, when the row has current record inventory, its known
 /// record-selector count; both are the same bounded reads the subnames and address-name routes run.
 pub(super) async fn load_name_counts(
-    pool: &sqlx::PgPool,
+    conn: &mut sqlx::PgConnection,
     row: &NameCurrentRow,
 ) -> V2Result<NameCounts> {
     let subname_count = bigname_storage::load_children_current_summaries(
-        pool,
+        &mut *conn,
         std::slice::from_ref(&row.logical_name_id),
     )
     .await
@@ -71,7 +71,7 @@ pub(super) async fn load_name_counts(
     .next()
     .and_then(|summary| u64::try_from(summary.child_count).ok())
     .unwrap_or_default();
-    let record_count = bigname_storage::families::records::load_family_record_counts(pool, &[row])
+    let record_count = bigname_storage::families::records::load_family_record_counts(conn, &[row])
         .await
         .map_err(crate::v2::name_rows_error(
             crate::v2::SnapshotReadResource::Name,

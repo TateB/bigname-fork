@@ -121,7 +121,7 @@ pub(super) async fn get_address_resolves_to(
         sort: params.sort,
         order,
     };
-    let snapshot = crate::v2::collection_snapshot::CollectionSnapshot::capture_for_namespace(
+    let mut snapshot = crate::v2::collection_snapshot::CollectionSnapshot::capture_for_namespace(
         state,
         params.cursor.as_deref(),
         params.namespace.as_deref(),
@@ -145,7 +145,7 @@ pub(super) async fn get_address_resolves_to(
     let (rows, next_storage_cursor) = match &coins {
         ResolvesToCoins::Single { coin_type, numeric } => {
             let page = bigname_storage::load_address_records_current_page(
-                &state.pool,
+                snapshot.conn().await?,
                 normalized_address,
                 coin_type,
                 namespaces.as_deref(),
@@ -167,7 +167,7 @@ pub(super) async fn get_address_resolves_to(
         }
         ResolvesToCoins::Evm => {
             let page = bigname_storage::load_address_records_current_evm_page(
-                &state.pool,
+                snapshot.conn().await?,
                 normalized_address,
                 namespaces.as_deref(),
                 dedupe_to_storage(params.dedupe),
@@ -180,7 +180,9 @@ pub(super) async fn get_address_resolves_to(
             )
             .await
             .map_err(load_error)?;
-            reject_rows_past_coin_type_limit(state, &snapshot, &page.entries).await?;
+            if let Err(unsupported) = reject_rows_past_coin_type_limit(&page.entries) {
+                return Err(snapshot.refuse(state, unsupported).await);
+            }
             let rows = page.entries.into_iter().map(ResolvesToRow::from_evm);
             (rows.collect::<V2Result<Vec<_>>>()?, page.next_cursor)
         }
@@ -194,7 +196,7 @@ pub(super) async fn get_address_resolves_to(
         .into_iter()
         .collect::<Vec<_>>();
     let name_rows = bigname_storage::load_name_current_by_logical_name_ids(
-        &state.pool,
+        snapshot.conn().await?,
         &logical_name_ids,
     )
     .await
@@ -211,11 +213,12 @@ pub(super) async fn get_address_resolves_to(
         .filter(|row| Authority::from_provenance(&row.provenance) == Some(Authority::EnsV2))
         .map(|row| row.logical_name_id.clone())
         .collect::<Vec<_>>();
-    let migrated_at_by_name = load_migrated_at(&state.pool, &migrated_logical_name_ids).await?;
+    let migrated_at_by_name =
+        load_migrated_at(snapshot.conn().await?, &migrated_logical_name_ids).await?;
     let primary_flags = match &coins {
         ResolvesToCoins::Single { coin_type, .. } => {
             let primary_names_by_namespace = load_primary_names_by_namespace(
-                &state.pool,
+                snapshot.conn().await?,
                 normalized_address,
                 coin_type,
                 entries.iter().map(|entry| entry.namespace.as_str()),
@@ -231,7 +234,9 @@ pub(super) async fn get_address_resolves_to(
                 })
                 .collect::<Vec<_>>()
         }
-        ResolvesToCoins::Evm => evm_primary_flags(&state.pool, normalized_address, &rows).await?,
+        ResolvesToCoins::Evm => {
+            evm_primary_flags(snapshot.conn().await?, normalized_address, &rows).await?
+        }
     };
     let role_resource_ids = include_role_summary.then(|| {
         entries
@@ -244,7 +249,7 @@ pub(super) async fn get_address_resolves_to(
     let permissions_by_resource = if let Some(resource_ids) = role_resource_ids.as_deref() {
         super::role_summary::load_rows(
             state,
-            &snapshot,
+            &mut snapshot,
             resource_ids,
             params.namespace.as_deref(),
             entries.iter().filter_map(|entry| entry.resource_id),
@@ -263,7 +268,7 @@ pub(super) async fn get_address_resolves_to(
     };
     let permission_summaries =
         if let Some(resource_ids) = role_resource_ids.as_deref() {
-            bigname_storage::load_serving_permission_summaries(&state.pool, resource_ids)
+            bigname_storage::load_serving_permission_summaries(snapshot.conn().await?, resource_ids)
             .await
             .map_err(crate::v2::name_rows_error(crate::v2::SnapshotReadResource::Resource, |_| {
                 V2Error::internal_error(format!(
@@ -275,7 +280,7 @@ pub(super) async fn get_address_resolves_to(
         };
     let subname_counts_by_name = if include.counts {
         use crate::v2::SnapshotReadResource::Resource;
-        bigname_storage::load_children_current_summaries(&state.pool, &logical_name_ids)
+        bigname_storage::load_children_current_summaries(snapshot.conn().await?, &logical_name_ids)
             .await
             .map_err(crate::v2::name_rows_error(Resource, |_| {
                 V2Error::internal_error(format!(
@@ -295,7 +300,7 @@ pub(super) async fn get_address_resolves_to(
     };
     let record_counts_by_name = if include_role_summary || include.counts {
         load_address_name_record_counts(
-            &state.pool,
+            snapshot.conn().await?,
             entries.iter().map(|entry| entry.logical_name_id.as_str()),
             &name_rows,
         )
@@ -413,16 +418,20 @@ pub(super) async fn get_address_resolves_to(
 /// row's namespace, so a name resolving to an address on another EVM chain is marked primary by
 /// that chain's claim rather than by the coin-60 claim the authority relations use.
 async fn load_primary_names_by_namespace<'a>(
-    pool: &sqlx::PgPool,
+    db: impl Into<bigname_storage::ReadDb<'_>>,
     address: &str,
     coin_type: &str,
     namespaces: impl Iterator<Item = &'a str>,
 ) -> V2Result<BTreeMap<String, Option<String>>> {
     let namespaces = namespaces.collect::<BTreeSet<_>>();
+    let mut db = db.into();
     let mut primary_names = BTreeMap::new();
     for namespace in namespaces {
         let primary_name = bigname_storage::load_primary_name_current_snapshot(
-            pool, address, namespace, coin_type,
+            db.reborrow(),
+            address,
+            namespace,
+            coin_type,
         )
         .await
         .map_err(name_rows_error(Resource, |_| {

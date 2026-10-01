@@ -19,8 +19,9 @@
 //!   The pin is a chain position, not a publication generation: a same-block rebuild is not
 //!   detected, since holding a generation is the binding this contract dropped.
 //!
-//! Only a publication that lands during one request's own read refuses that request
-//! (`CollectionSnapshot::finish`, 409 asking for a retry); the same cursor then continues.
+//! Only a publication that lands between one request's admission and its first read refuses
+//! that request (`CollectionSnapshot::conn`, 409 asking for a retry); the same cursor then
+//! continues. One that lands after it does not reach the page's read snapshot.
 //!
 //! Adopting it in a route, replacing any publication or generation cursor field:
 //!
@@ -30,10 +31,10 @@
 //! let storage_cursor = position.map(|p| storage_cursor_from(&p)).transpose()?;
 //! // Capture the publication without the cursor, and do not mark the request as continuing:
 //! // An expiry filter takes this request's `snapshot.evaluated_at()`, never a cursor's time.
-//! let snapshot = CollectionSnapshot::capture_for_namespace(&state, None, namespace).await?;
-//! // ... read the page after `storage_cursor` ...
+//! let mut snapshot = CollectionSnapshot::capture_for_namespace(&state, None, namespace).await?;
+//! let page = read_page(snapshot.conn().await?, storage_cursor.as_ref()).await?;
 //! let next_cursor = page.next_cursor.map(|c| list.next(position_of(&c)));
-//! let meta = snapshot.finish(&state).await?;           // the same-request recheck stays
+//! let meta = snapshot.finish(&state).await?;           // commits; rechecks the manifests
 //! ```
 
 use std::collections::BTreeMap;

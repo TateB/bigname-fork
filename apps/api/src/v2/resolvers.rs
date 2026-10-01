@@ -108,7 +108,7 @@ pub(crate) async fn get_resolver(
     )?;
     // Admitted without the cursor: a bound-names cursor binds no publication (`list_cursor`), so
     // only a publication during this read refuses it, with a retry.
-    let publication = super::collection_snapshot::CollectionSnapshot::capture_for_namespace(
+    let mut publication = super::collection_snapshot::CollectionSnapshot::capture_for_namespace(
         &state,
         None,
         Some(resolver_namespace(chain_id_slug)?),
@@ -169,8 +169,17 @@ pub(crate) async fn get_resolver(
     let project_generations =
         load_resolver_project_generations(&state.pool, &selected_snapshot, require_selected_head)
             .await?;
+    revalidate_project_generations(
+        &state,
+        &mut publication,
+        &selected_snapshot,
+        &project_generations,
+        params.at.is_some(),
+        "served resolver data changed while the request was being read",
+    )
+    .await?;
     let row = bigname_storage::load_phase_resolver_current(
-        &state.pool,
+        publication.conn().await?,
         chain_id_slug,
         &normalized_address,
     )
@@ -181,14 +190,6 @@ pub(crate) async fn get_resolver(
         ))
     }))?;
     let Some(row) = row else {
-        revalidate_project_generations(
-            &state.pool,
-            &selected_snapshot,
-            &project_generations,
-            params.at.is_some(),
-            "served resolver data changed while the request was being read",
-        )
-        .await?;
         if !require_selected_head {
             return Err(V2Error::stale(
                 "resolver data is unavailable at the selected historical position",
@@ -200,7 +201,7 @@ pub(crate) async fn get_resolver(
     };
     require_phase_target_snapshot(&row.chain_positions, &row.chain_id, &selected_snapshot)?;
     let (bound_name_rows, storage_next_cursor) = load_bound_name_rows(
-        &state.pool,
+        publication.conn().await?,
         chain_id_slug,
         params.namespace.as_deref(),
         storage_cursor.as_ref(),
@@ -212,14 +213,6 @@ pub(crate) async fn get_resolver(
     for bound_name_row in &bound_name_rows {
         require_phase_name_snapshot(bound_name_row, &selected_snapshot)?;
     }
-    revalidate_project_generations(
-        &state.pool,
-        &selected_snapshot,
-        &project_generations,
-        params.at.is_some(),
-        "served resolver data changed while the request was being read",
-    )
-    .await?;
 
     let next_cursor = storage_next_cursor
         .as_ref()
@@ -296,7 +289,7 @@ pub(crate) fn build_bound_name_record(
 }
 
 async fn load_bound_name_rows(
-    pool: &sqlx::PgPool,
+    conn: &mut sqlx::PgConnection,
     chain_id_slug: &str,
     namespace: Option<&str>,
     cursor: Option<&NameCurrentListCursor>,
@@ -306,7 +299,7 @@ async fn load_bound_name_rows(
 ) -> V2Result<(Vec<NameCurrentListRow>, Option<NameCurrentListCursor>)> {
     let limit = page_size.saturating_add(1) as i64;
     let loaded = bigname_storage::families::name::load_family_bound_names(
-        pool,
+        conn,
         chain_id_slug,
         resolver_address,
         namespace,

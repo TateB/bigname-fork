@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use sqlx::{PgPool, Postgres, QueryBuilder};
+use sqlx::{Postgres, QueryBuilder};
 
 use super::{
     ChainBlockRange, EventHistoryReadFilter, HistoryBlockWindow, summary::push_history_count_query,
@@ -9,18 +9,19 @@ use super::{
 /// the rows `GET /v1/events?contract_address=` counts on that chain, built by the same
 /// statement, in every namespace the contract emitted into.
 pub async fn count_contract_events(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     chain_id: &str,
     address: &str,
     event_kinds: &[String],
     as_of_block: Option<i64>,
 ) -> Result<u64> {
+    let mut conn = db.into().acquire().await?;
     let filter = contract_count_filter(chain_id, address, event_kinds, as_of_block);
     let mut builder = QueryBuilder::<Postgres>::new("");
     push_history_count_query(&mut builder, &filter, true, None);
     let count = builder
         .build_query_scalar::<i64>()
-        .fetch_one(pool)
+        .fetch_one(&mut *conn)
         .await
         .with_context(|| format!("failed to count events emitted by {chain_id}:{address}"))?;
     u64::try_from(count).context("negative contract event count")

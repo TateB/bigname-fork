@@ -1033,8 +1033,9 @@ async fn reach(control: &crate::v2::collection_snapshot::finish_test_hooks::Fini
         .context("registry request never reached the hook")
 }
 
-/// Runs the overview, pausing once its publication check has passed, runs `late` (the change a
-/// publication makes while the labels count is read), and returns the response.
+/// Runs the overview, pausing once its snapshot has passed the publication check and before it
+/// reads anything on it, runs `late` (a change published during the read), and returns the
+/// response.
 async fn registry_with_late_change<F, Fut>(
     database: &TestDatabase,
     uri: &str,
@@ -1044,43 +1045,36 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<()>>,
 {
-    use crate::v2::collection_snapshot::finish_test_hooks;
-    let (_before_guard, before_check) = finish_test_hooks::install(&database.pool).await?;
+    use crate::v2::collection_snapshot::finish_test_hooks::{Stage, install_at};
+    let (_guard, read) = install_at(&database.pool, Stage::Pinned).await?;
     let request = spawn_registry_request(database, uri.to_owned());
-    reach(&before_check).await?;
-    // The publication check consumed the first hook; this one pauses the labels count.
-    let (_after_guard, after_check) = finish_test_hooks::install(&database.pool).await?;
-    before_check.resume().await;
-    reach(&after_check).await?;
+    reach(&read).await?;
     late().await?;
-    after_check.resume().await;
+    read.resume().await;
     let response = request.await.context("registry request task panicked")??;
     let status = response.status();
     Ok((status, read_json(response).await?))
 }
 
-// The block-bounded evidence stays fenced on the publication; the current labels count is read
-// after that check, so a publication during it does not refuse the overview and its new label
-// is counted while the selected evidence and `meta` stay at the checked publication.
+// The block-bounded evidence and the current labels count are read on one snapshot of the
+// captured publication: a publication during the read neither refuses the overview nor adds its
+// new label to the count.
 #[tokio::test]
-async fn v2_get_registry_counts_labels_published_after_the_publication_check() -> Result<()> {
-    use crate::v2::collection_snapshot::finish_test_hooks;
+async fn v2_get_registry_counts_labels_at_the_captured_publication() -> Result<()> {
     let database = TestDatabase::new_migrated().await?;
     seed_registry_fixture(&database).await?;
     let uri = format!("/v1/registries/1/{ALPHA_REGISTRY}?include=counts");
     let selected = registry_payload(&database, &uri).await?;
 
-    let (_guard, before_check) = finish_test_hooks::install(&database.pool).await?;
-    let request = spawn_registry_request(&database, uri.clone());
-    reach(&before_check).await?;
-    commit_family_block(&database.pool).await?;
-    before_check.resume().await;
-    let response = request.await.context("registry request task panicked")??;
-    let status = response.status();
-    let payload: Value = read_json(response).await?;
-    assert_eq!(status, StatusCode::CONFLICT, "{payload:#}");
-    assert_eq!(payload["error"]["code"], json!("stale"));
+    let pool = database.pool.clone();
+    let (status, payload) =
+        registry_with_late_change(&database, &uri, || commit_family_block(&pool)).await?;
+    assert_eq!(status, StatusCode::OK, "{payload:#}");
+    assert_eq!(payload, selected);
+    database.cleanup().await?;
 
+    let database = TestDatabase::new_migrated().await?;
+    seed_registry_fixture(&database).await?;
     seed_unpublished_alpha_label(&database).await?;
     let pool = database.pool.clone();
     let (status, payload) = registry_with_late_change(&database, &uri, || async move {
@@ -1088,10 +1082,7 @@ async fn v2_get_registry_counts_labels_published_after_the_publication_check() -
     })
     .await?;
     assert_eq!(status, StatusCode::OK, "{payload:#}");
-    assert_eq!(
-        payload["data"]["counts"],
-        json!({ "labels": 3, "events": 5, "roles": 0 })
-    );
+    assert_eq!(payload["data"]["counts"], selected["data"]["counts"]);
     assert_eq!(payload["meta"], selected["meta"]);
     assert_eq!(payload["data"]["name"], selected["data"]["name"]);
     assert_eq!(payload["data"]["referenced_by"], selected["data"]["referenced_by"]);
@@ -1099,9 +1090,9 @@ async fn v2_get_registry_counts_labels_published_after_the_publication_check() -
 }
 
 // A later publication rebinds the alpha registry from alpha.eth to beta.eth, keeping its two
-// labels. The late count follows the name the registry serves at its own snapshot.
+// labels. A rebind during the read leaves the count on alpha.eth; the next read follows it.
 #[tokio::test]
-async fn v2_get_registry_late_labels_count_follows_a_rebind() -> Result<()> {
+async fn v2_get_registry_labels_count_follows_a_rebind_on_the_next_read() -> Result<()> {
     let database = TestDatabase::new_migrated().await?;
     seed_registry_fixture(&database).await?;
     let uri = format!("/v1/registries/1/{ALPHA_REGISTRY}?include=counts");
@@ -1191,13 +1182,14 @@ async fn v2_get_registry_event_count_includes_every_namespace_the_feed_default_d
     database.cleanup().await
 }
 
-// The late count checks its own publication: one that becomes unservable after the overview's
-// check refuses the request rather than counting nothing.
+// A marker that becomes unservable during the read does not reach the count, which reads the
+// captured publication on the overview's snapshot.
 #[tokio::test]
-async fn v2_get_registry_late_labels_count_refuses_an_unservable_publication() -> Result<()> {
+async fn v2_get_registry_labels_count_ignores_a_marker_change_during_the_read() -> Result<()> {
     let database = TestDatabase::new_migrated().await?;
     seed_registry_fixture(&database).await?;
     let uri = format!("/v1/registries/1/{ALPHA_REGISTRY}?include=counts");
+    let selected = registry_payload(&database, &uri).await?;
     let pool = database.pool.clone();
     let (status, payload) = registry_with_late_change(&database, &uri, || async move {
         sqlx::query("UPDATE bigname_phase.project_family_marker SET state = 'bootstrap_pending'")
@@ -1206,8 +1198,8 @@ async fn v2_get_registry_late_labels_count_refuses_an_unservable_publication() -
         Ok(())
     })
     .await?;
-    assert_eq!(status, StatusCode::CONFLICT, "{payload:#}");
-    assert_eq!(payload["error"]["code"], json!("stale"));
+    assert_eq!(status, StatusCode::OK, "{payload:#}");
+    assert_eq!(payload, selected);
     database.cleanup().await
 }
 
