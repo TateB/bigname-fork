@@ -1726,6 +1726,7 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

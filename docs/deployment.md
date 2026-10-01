@@ -390,6 +390,13 @@ The runner logs the choice at info level when a chain's loader is first chosen
 and whenever it changes (`interpret chose its prior-state loader`,
 `interpret changed its prior-state loader`), with the source family, and the
 rollout status of its manifest, that required the full-state loader.
+Each full-state cold restore logs at info level when it starts (`interpret is
+restoring prior adapter state from stored events`, with the chain, the first
+block of the batch and the reason) and when it finishes (`interpret restored
+prior adapter state`, with the number of events read and the elapsed
+milliseconds). After a reorganization the chain restores once, for the redo of
+the orphaned blocks: the session the completed redo ends with carries into the
+next normal batch, unless the lineage is orphaned again before that batch.
 `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true`
 (`--interpret-force-full-state-loader`) is the one operator override: it makes
 every chain use the full-state loader. It defaults to false. The lookahead
