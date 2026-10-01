@@ -54,7 +54,9 @@ impl PublicNamespaceSet {
 }
 
 /// The namespace authority the request was admitted under is still the configured one. The
-/// publications need no recheck: the page read them on one snapshot that served them.
+/// publications need no recheck: the page read them on one snapshot that served them. That
+/// snapshot commits before the first token statement here, so a change between the token
+/// statements lands after the read.
 pub(crate) async fn revalidate_collection_manifests(
     state: &AppState,
     expected: &PublicNamespaceSet,
