@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
-use sqlx::{PgPool, Postgres, QueryBuilder, Row, postgres::PgRow};
+use sqlx::{Postgres, QueryBuilder, Row, postgres::PgRow};
 
 use crate::projection_helpers::{
     checked_page_limit_i64, checked_page_size_usize, split_keyset_page,
@@ -51,11 +51,12 @@ const POINTER_SELECT: &str = r#"
 /// `SubregistryUpdated` pointer, or is a manifest-declared `root_registry`/`registry` contract.
 /// `as_of_block` bounds events and inclusive declaration intervals to a served position.
 pub async fn load_registry_contract(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     chain_id: &str,
     address: &str,
     as_of_block: Option<i64>,
 ) -> Result<Option<RegistryContractRow>> {
+    let mut conn = db.into().acquire().await?;
     let address = address.to_ascii_lowercase();
     let rows = sqlx::query(&format!(
         r#"
@@ -178,7 +179,7 @@ pub async fn load_registry_contract(
     .bind(chain_id)
     .bind(&address)
     .bind(as_of_block)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
     .with_context(|| format!("failed to load registry contract {chain_id}:{address}"))?;
 
@@ -205,13 +206,14 @@ pub async fn load_registry_contract(
 /// pointer event are omitted; a name whose latest pointer was cleared is returned with
 /// `subregistry = None`. `as_of_block` bounds the pointer events to a served position.
 pub async fn load_subregistry_pointers_for_names(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     logical_name_ids: &[String],
     as_of_block: Option<i64>,
 ) -> Result<BTreeMap<String, SubregistryPointer>> {
     if logical_name_ids.is_empty() {
         return Ok(BTreeMap::new());
     }
+    let mut conn = db.into().acquire().await?;
     let rows = sqlx::query(&format!(
         r#"
         WITH pointer AS (
@@ -241,7 +243,7 @@ pub async fn load_subregistry_pointers_for_names(
     ))
     .bind(logical_name_ids)
     .bind(as_of_block)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
     .with_context(|| {
         format!(
@@ -261,11 +263,12 @@ pub async fn load_subregistry_pointers_for_names(
 /// targets `address`. `None` when no current pointer targets the registry (the root
 /// registry, or a registry that was announced but never linked).
 pub async fn load_registry_serving_pointer(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     chain_id: &str,
     address: &str,
     as_of_block: Option<i64>,
 ) -> Result<Option<SubregistryPointer>> {
+    let mut conn = db.into().acquire().await?;
     let address = address.to_ascii_lowercase();
     let mut builder = current_pointers_to_registry(chain_id, &address, as_of_block);
     builder.push(
@@ -274,7 +277,7 @@ pub async fn load_registry_serving_pointer(
     );
     let row = builder
         .build()
-        .fetch_optional(pool)
+        .fetch_optional(&mut *conn)
         .await
         .with_context(|| {
             format!("failed to load serving name for registry {chain_id}:{address}")
@@ -285,7 +288,7 @@ pub async fn load_registry_serving_pointer(
 /// Loads one keyset page of names whose current subregistry pointer targets `address`,
 /// ordered by display name then logical identity.
 pub async fn load_registry_references_page(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     chain_id: &str,
     address: &str,
     as_of_block: Option<i64>,
@@ -293,6 +296,7 @@ pub async fn load_registry_references_page(
     page_size: u64,
     count_total: bool,
 ) -> Result<RegistryReferencePage> {
+    let mut conn = db.into().acquire().await?;
     let address = address.to_ascii_lowercase();
     let limit = checked_page_limit_i64(
         page_size,
@@ -306,9 +310,13 @@ pub async fn load_registry_references_page(
     )?;
     let mut builder =
         references_page_query(chain_id, &address, as_of_block, cursor, limit, count_total);
-    let rows = builder.build().fetch_all(pool).await.with_context(|| {
-        format!("failed to load names referencing registry {chain_id}:{address}")
-    })?;
+    let rows = builder
+        .build()
+        .fetch_all(&mut *conn)
+        .await
+        .with_context(|| {
+            format!("failed to load names referencing registry {chain_id}:{address}")
+        })?;
     let total_count = match rows.first() {
         Some(row) if count_total => Some(
             u64::try_from(row.try_get::<i64, _>("total_count")?)

@@ -8,7 +8,7 @@ mod snapshot;
 use std::collections::BTreeMap;
 
 use anyhow::Result;
-use sqlx::{PgPool, types::Uuid};
+use sqlx::types::Uuid;
 
 pub use expiring::NameCurrentExpiringFilter;
 pub(crate) use expiring::expiring_page_from;
@@ -48,10 +48,10 @@ pub const DEFAULT_NAME_CURRENT_LINEAGE_JOINS: &str = r#"
 
 /// Compose a current exact-name row by deterministic logical name identity from the families.
 pub async fn load_name_current(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     logical_name_id: &str,
 ) -> Result<Option<NameCurrentRow>> {
-    crate::families::name::load_family_name(pool, logical_name_id).await
+    crate::families::name::load_family_name(db, logical_name_id).await
 }
 
 /// Load current exact-name projection rows for a set of logical name identities.
@@ -61,14 +61,14 @@ pub async fn load_name_current(
 /// callers that need request or page order should iterate their original ids and look up into the
 /// map. The rows are composed from the owned key families.
 pub async fn load_name_current_by_logical_name_ids(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     logical_name_ids: &[String],
 ) -> Result<BTreeMap<String, NameCurrentRow>> {
     if logical_name_ids.is_empty() {
         return Ok(BTreeMap::new());
     }
 
-    crate::families::name::load_family_names_by_logical_name_ids(pool, logical_name_ids).await
+    crate::families::name::load_family_names_by_logical_name_ids(db, logical_name_ids).await
 }
 
 /// Load the canonical representative current name for each resource (registration).
@@ -78,12 +78,12 @@ pub async fn load_name_current_by_logical_name_ids(
 /// row, including its declared wrapper summary. The rows are
 /// composed from the owned key families.
 pub async fn load_current_names_by_resource_ids(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     resource_ids: &[Uuid],
 ) -> Result<BTreeMap<Uuid, NameCurrentRow>> {
     if resource_ids.is_empty() {
         return Ok(BTreeMap::new());
     }
 
-    crate::families::name::load_family_names_by_resource_ids(pool, resource_ids).await
+    crate::families::name::load_family_names_by_resource_ids(db, resource_ids).await
 }

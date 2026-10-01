@@ -1,6 +1,6 @@
 #[path = "collection_publication.rs"]
 mod collections;
-pub(crate) use collections::revalidate_collection_namespace_set;
+pub(crate) use collections::revalidate_collection_manifests;
 
 use super::*;
 use std::sync::Arc;
@@ -380,6 +380,15 @@ pub(crate) async fn load_selected_project_generations_for_read(
     selected: &SelectedSnapshot,
     require_interpret_not_redo: bool,
 ) -> std::result::Result<Option<BTreeMap<String, String>>, sqlx::Error> {
+    let mut conn = pool.acquire().await?;
+    load_selected_project_generations_on(&mut conn, selected, require_interpret_not_redo).await
+}
+
+pub(crate) async fn load_selected_project_generations_on(
+    conn: &mut sqlx::PgConnection,
+    selected: &SelectedSnapshot,
+    require_interpret_not_redo: bool,
+) -> std::result::Result<Option<BTreeMap<String, String>>, sqlx::Error> {
     let mut generations = BTreeMap::new();
     for position in selected.chain_positions.as_map().values() {
         // Do not compare interpret.xmin: normal forward batches update it. History-rewriting redos
@@ -387,7 +396,7 @@ pub(crate) async fn load_selected_project_generations_for_read(
         // The selected position is the served publication (the head, or a publication trailing
         // it within tolerance), so the publication must sit exactly there.
         let generation = bigname_storage::load_served_project_generation(
-            pool,
+            &mut *conn,
             &position.chain_id,
             position.block_number,
             &position.block_hash,

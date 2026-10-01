@@ -138,7 +138,7 @@ pub async fn resource_is_registry_control_for_registrar_lease(
 /// (upstream: .refs/ens_v1/contracts/registry/ENSRegistry.sol:L60-L84 @ ens_v1@91c966f)
 /// (upstream: .refs/ens_v1/contracts/ethregistrar/BaseRegistrarImplementation.sol:L118-L152 @ ens_v1@91c966f)
 pub async fn load_registry_permission_registration_map(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     resource_ids: &[Uuid],
     registration_id: Option<Uuid>,
     publication_block_bounds: &BTreeMap<String, i64>,
@@ -147,6 +147,7 @@ pub async fn load_registry_permission_registration_map(
     {
         return Ok(BTreeMap::new());
     }
+    let mut conn = db.into().acquire().await?;
     // Select a batch of page resources, or controls of the explicitly requested lease. The
     // reverse lookup is only a candidate restriction; the latest-grant check below still
     // excludes obsolete leases. Direct nodes take precedence over possibly stale name links.
@@ -239,7 +240,7 @@ pub async fn load_registry_permission_registration_map(
         .bind(resource_ids)
         .bind(registration_id)
         .bind(serde_json::to_value(publication_block_bounds)?)
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await
         .context("failed to resolve published registry permission registrations")?;
     let mut mapping = BTreeMap::new();

@@ -1,5 +1,5 @@
-// Collections and lookup heads capture the family publication and revalidate it after reading.
-// Expiry filters use its block timestamp on both first pages and continuations.
+// Collections read the captured family publication on one snapshot; lookup heads revalidate it
+// after reading. Expiry filters use its block timestamp on both first pages and continuations.
 
 /// Advance the generation during a paused read, modeling the marker change of a family commit.
 /// An intentional direct write: the fixtures publish through the family publisher, but a
@@ -28,57 +28,77 @@ fn ens_head_scope() -> bigname_storage::SnapshotSelectionScope {
 }
 
 #[tokio::test]
-async fn v2_collection_refuses_a_family_block_committed_during_the_read() -> Result<()> {
+async fn v2_collection_serves_the_captured_publication_after_a_block_lands_mid_read() -> Result<()> {
     let database = TestDatabase::new_migrated().await?;
     seed_marker_collection_fixture(&database).await?;
     let state = database.app_state();
-    let snapshot = crate::v2::collection_snapshot::CollectionSnapshot::capture_for_namespace(
+    let mut snapshot = crate::v2::collection_snapshot::CollectionSnapshot::capture_for_namespace(
         &state,
         None,
         Some("ens"),
     )
     .await
     .expect("a live family publication is servable");
+    let captured = snapshot.meta().expect("the captured publication has a meta");
+    let marker_sequence = "SELECT sequence::TEXT FROM bigname_phase.project_family_marker";
+    let read_before: String = sqlx::query_scalar(marker_sequence)
+        .fetch_one(snapshot.conn().await.expect("the snapshot serves the capture"))
+        .await?;
     commit_family_block(&database.pool).await?;
-    let error = snapshot
+    let read_after: String = sqlx::query_scalar(marker_sequence)
+        .fetch_one(snapshot.conn().await.expect("the snapshot stays open"))
+        .await?;
+    assert_eq!(read_after, read_before, "a later read sees the captured block");
+    let meta = snapshot
         .finish(&state)
         .await
-        .expect_err("the generation changed");
-    assert_eq!(error.code(), crate::v2::ErrorCode::Stale);
-    assert_eq!(
-        error.envelope().error.message,
-        "collection publication changed during the read; retry the request"
-    );
+        .expect("a block after the snapshot began does not refuse the page");
+    assert_eq!(meta.as_of, captured.as_of);
+    database.cleanup().await
+}
 
-    let _first = crate::v2::collection_snapshot::CollectionSnapshot::capture_for_namespace(
-        &state,
-        None,
-        Some("ens"),
-    )
-    .await
-    .expect("capture the new generation");
+#[tokio::test]
+async fn v2_collection_retries_a_block_committed_before_the_snapshot_begins() -> Result<()> {
+    let database = TestDatabase::new_migrated().await?;
+    seed_marker_collection_fixture(&database).await?;
+    let state = database.app_state();
     let cursor = crate::v2::encode(&crate::v2::CursorPayload::new(
         "test",
         Default::default(),
         Default::default(),
         None,
     ));
-    let continued = crate::v2::collection_snapshot::CollectionSnapshot::capture_for_namespace(
-        &state,
-        Some(&cursor),
-        Some("ens"),
-    )
-    .await
-    .expect("the continuation reads the current publication");
-    commit_family_block(&database.pool).await?;
-    let error = continued
-        .finish(&state)
-        .await
-        .expect_err("the generation changed");
-    assert_eq!(
-        error.envelope().error.message,
-        "collection publication changed during the read; retry the request"
-    );
+    for cursor in [None, Some(cursor.as_str())] {
+        let mut snapshot =
+            crate::v2::collection_snapshot::CollectionSnapshot::capture_for_namespace(
+                &state,
+                cursor,
+                Some("ens"),
+            )
+            .await
+            .expect("a live family publication is servable");
+        commit_family_block(&database.pool).await?;
+        let error = snapshot
+            .conn()
+            .await
+            .expect_err("the snapshot no longer serves the capture");
+        assert_eq!(error.code(), crate::v2::ErrorCode::Stale);
+        assert_eq!(
+            error.envelope().error.message,
+            "collection publication changed during the read; retry the request"
+        );
+
+        let mut retried =
+            crate::v2::collection_snapshot::CollectionSnapshot::capture_for_namespace(
+                &state,
+                cursor,
+                Some("ens"),
+            )
+            .await
+            .expect("the retry captures the new publication");
+        retried.conn().await.expect("the retry is served");
+        retried.finish(&state).await.expect("the retry finishes");
+    }
     database.cleanup().await
 }
 

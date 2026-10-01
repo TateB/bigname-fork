@@ -1213,7 +1213,9 @@ with it, both report `full`. The Sepolia entrypoint is the checked-in active
 `manifests/sepolia/ethereum/ens/ens_execution/v1.toml`, which the normal
 manifest sync installs. The request pool uses `BIGNAME_DATABASE_MAX_CONNECTIONS`; together
 with the reserved readiness connection, one API process can open at most
-`BIGNAME_DATABASE_MAX_CONNECTIONS + 1` PostgreSQL connections.
+`BIGNAME_DATABASE_MAX_CONNECTIONS + 1` PostgreSQL connections. A current-state
+collection request holds one request-pool connection while its read snapshot is
+open.
 
 ### Database connection budget
 
@@ -1832,6 +1834,30 @@ rows without the key to the other end of the list:
 
 A client walking one of these sorts across the change restarts from the first
 page.
+
+### Current-state collection pages read one database snapshot
+
+The build that reads each current-state collection page, the resolver and
+registry overviews and name detail's `include=counts` on one read-only
+`REPEATABLE READ` database snapshot (TYR-144) changes only API read paths, but
+it rotates the
+[interpreter content hash](glossary.md#interpreter-content-hash) for every
+chain: the readers it changes take the request's snapshot connection, and some
+of them sit under the hashed `crates/storage/src/families` root. Stored rows do
+not change. It needs no schema-migration, no manifest change and no historical
+ingest fetch. An existing deployment runs the new binary for both the phase
+runner and the API, and finishes the full-history Interpret redo and the
+Project redo it installs before the matching API serves, as for any rotation;
+an API upgraded alone refuses the old build's family publication with
+`409 stale`.
+
+Each such request holds one request-pool connection from its first read until
+its snapshot commits, and takes no other pool connection meanwhile; admission
+before it and the namespace manifest recheck after it each take a connection
+briefly. `BIGNAME_DATABASE_MAX_CONNECTIONS` therefore bounds the collection
+reads one API process runs at once. Responses keep their shapes, status codes and cursors; a
+publication that lands while a page is read no longer turns it into
+`409 stale`.
 
 ### Configurable publication lag tolerance
 

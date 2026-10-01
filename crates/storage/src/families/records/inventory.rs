@@ -177,10 +177,10 @@ async fn family_record_inventory_for_key(
 /// family inventory of the resource the row serves records through, `None` when the row has no
 /// lookup key or the resource no inventory. Read in one snapshot at each chain's publication.
 pub async fn load_family_record_counts(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     rows: &[&crate::NameCurrentRow],
 ) -> Result<Vec<Option<u64>>> {
-    let mut snapshot = crate::families::read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     let mut wanted = Vec::with_capacity(rows.len());
     let mut by_chain: BTreeMap<String, BTreeSet<Uuid>> = BTreeMap::new();
     for row in rows {
@@ -248,7 +248,7 @@ pub async fn load_family_record_counts(
                 })
         })
         .collect();
-    snapshot.commit().await?;
+    snapshot.close().await?;
     Ok(counts)
 }
 

@@ -416,22 +416,22 @@ async fn v2_list_cursor_past_the_end_answers_an_empty_last_page() -> Result<()> 
     database.cleanup().await
 }
 
-/// A publication that lands while one continuation reads still refuses that request, but the
-/// cursor stays good: the 409 asks for a retry, and the same cursor then continues.
+/// A publication that lands between one continuation's admission and its read refuses that
+/// request, but the cursor stays good: the 409 asks for a retry, and the same cursor then continues.
 #[tokio::test]
-async fn v2_list_cursor_continuation_retries_when_publication_changes_during_the_read() -> Result<()>
+async fn v2_list_cursor_continuation_retries_when_publication_changes_before_its_read() -> Result<()>
 {
     let database = TestDatabase::new_migrated().await?;
     seed_list_cursor_fixture(&database).await?;
     for (uri, holder) in list_cursor_routes()? {
         if uri.starts_with("/v1/search") {
-            // Search admits its namespaces with its own recheck and has no collection finish.
+            // Search admits its namespaces with its own recheck and has no collection snapshot.
             continue;
         }
         let (_, next) = list_cursor_page(&database, &uri, holder).await?;
         let continued = list_cursor_continue(&uri, &next.context("a continuation")?);
         let message =
-            resolver_publication_replaced_before_finish(&database, continued.clone()).await?;
+            resolver_publication_replaced_before_read(&database, continued.clone()).await?;
         assert_eq!(message, LIST_CURSOR_RETRY, "{continued}");
         let (rows, last) = list_cursor_page(&database, &continued, holder).await?;
         assert_eq!(rows.len(), 1, "{continued}");

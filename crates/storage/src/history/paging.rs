@@ -351,12 +351,13 @@ pub(super) fn push_history_filters<'a>(
 }
 
 pub(super) async fn load_history_events_by_ids(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     ids: &[i64],
 ) -> Result<Vec<HistoryEvent>> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
+    let mut conn = db.into().acquire().await?;
     let filter = EventHistoryReadFilter::default();
     let mut builder = QueryBuilder::<Postgres>::new("");
     push_history_select(&mut builder, &filter, true, false, false);
@@ -368,7 +369,7 @@ pub(super) async fn load_history_events_by_ids(
 
     let rows = builder
         .build()
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await
         .context("failed to fetch normalized events by id")?;
     rows.into_iter().map(decode_history_event).collect()

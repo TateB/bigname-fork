@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use sqlx::{PgPool, types::Uuid};
+use sqlx::{PgConnection, types::Uuid};
 
 use super::super::{V2Error, V2Result};
 
@@ -43,7 +43,7 @@ WITH latest AS (
 "#;
 
 pub(super) async fn registry_role_count(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     chain: &str,
     registry: &str,
     at: Option<i64>,
@@ -54,14 +54,14 @@ pub(super) async fn registry_role_count(
     .bind(chain)
     .bind(registry)
     .bind(at)
-    .fetch_one(pool)
+    .fetch_one(conn)
     .await
     .map_err(|error| count_error(&error))?;
     Ok(count as u64)
 }
 
 pub(super) async fn label_role_counts(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     chain: &str,
     registry: &str,
     resources: &[Uuid],
@@ -79,7 +79,7 @@ pub(super) async fn label_role_counts(
     .bind(registry)
     .bind(at)
     .bind(resources)
-    .fetch_all(pool)
+    .fetch_all(conn)
     .await
     .map_err(|error| count_error(&error))?;
     Ok(rows

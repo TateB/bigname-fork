@@ -5,7 +5,7 @@ use crate::v2::{HistoryEventType, V2Result, history_event_type};
 use serde_json::{Value, json};
 
 pub(super) async fn page(
-    pool: &sqlx::PgPool,
+    conn: &mut sqlx::PgConnection,
     chain: &str,
     address: &str,
     section: &str,
@@ -14,7 +14,7 @@ pub(super) async fn page(
     page_size: u64,
 ) -> V2Result<(Vec<(String, String, Value)>, u64)> {
     family_page(
-        pool,
+        conn,
         chain,
         address,
         section,
@@ -28,7 +28,7 @@ pub(super) async fn page(
 /// Resolver collections at the family publication; roles attach the corresponding name,
 /// registration and grant-event evidence from that snapshot.
 async fn family_page(
-    pool: &sqlx::PgPool,
+    conn: &mut sqlx::PgConnection,
     chain: &str,
     address: &str,
     section: &str,
@@ -41,10 +41,10 @@ async fn family_page(
     };
     let limit = page_size.saturating_add(1) as i64;
     let loaded = match section {
-        "roles" => load_resolver_roles_shadow(pool, chain, address, key, limit).await,
+        "roles" => load_resolver_roles_shadow(&mut *conn, chain, address, key, limit).await,
         _ => {
             let namespace = super::super::resolver_namespace(chain)?;
-            load_resolver_links_shadow(pool, chain, address, namespace, key, limit).await
+            load_resolver_links_shadow(&mut *conn, chain, address, namespace, key, limit).await
         }
     }
     .map_err(crate::v2::name_rows_error(
@@ -56,13 +56,13 @@ async fn family_page(
     ))?;
     let mut rows = loaded.rows;
     if section == "roles" {
-        attach_grants(pool, &mut rows, height, publication_block_bounds).await?;
+        attach_grants(conn, &mut rows, height, publication_block_bounds).await?;
     }
     Ok((rows, loaded.total_count))
 }
 
 async fn attach_grants(
-    pool: &sqlx::PgPool,
+    conn: &mut sqlx::PgConnection,
     rows: &mut [(String, String, Value)],
     height: i64,
     publication_block_bounds: &BTreeMap<String, i64>,
@@ -77,14 +77,14 @@ async fn attach_grants(
                 .filter_map(Value::as_i64)
         })
         .collect::<Vec<_>>();
-    let events = bigname_storage::load_history_events_by_ids(pool, &ids)
+    let events = bigname_storage::load_history_events_by_ids(&mut *conn, &ids)
         .await
         .map_err(|_| read_error())?;
     let registrations = rows
         .iter()
         .map(|(_, id, _)| id.parse::<sqlx::types::Uuid>().map_err(|_| read_error()))
         .collect::<V2Result<Vec<_>>>()?;
-    let names = bigname_storage::load_current_names_by_resource_ids(pool, &registrations)
+    let names = bigname_storage::load_current_names_by_resource_ids(&mut *conn, &registrations)
         .await
         .map_err(crate::v2::name_rows_error(
             crate::v2::SnapshotReadResource::Resolver,
@@ -96,7 +96,7 @@ async fn attach_grants(
         .copied()
         .collect::<Vec<_>>();
     let leases = bigname_storage::load_registry_permission_registration_map(
-        pool,
+        conn,
         &nameless,
         None,
         publication_block_bounds,
