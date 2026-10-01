@@ -211,6 +211,15 @@ impl CollectionSnapshot {
         self.meta()
     }
 
+    /// `error` for a page refused after its reads, unless the namespace authority changed
+    /// meanwhile, which is the retry 409 [`Self::finish`] answers.
+    pub(crate) async fn refuse(&mut self, state: &AppState, error: V2Error) -> V2Error {
+        match self.finish(state).await {
+            Ok(_) => error,
+            Err(stale) => stale,
+        }
+    }
+
     /// The `meta` of a history page: the publication captured when the request was admitted. A
     /// history page is not a snapshot, so a publication during the read does not refuse it.
     pub(crate) async fn finish_history(&self, state: &AppState) -> V2Result<Meta> {

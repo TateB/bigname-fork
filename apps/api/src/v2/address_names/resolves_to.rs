@@ -180,7 +180,9 @@ pub(super) async fn get_address_resolves_to(
             )
             .await
             .map_err(load_error)?;
-            reject_rows_past_coin_type_limit(&page.entries)?;
+            if let Err(unsupported) = reject_rows_past_coin_type_limit(&page.entries) {
+                return Err(snapshot.refuse(state, unsupported).await);
+            }
             let rows = page.entries.into_iter().map(ResolvesToRow::from_evm);
             (rows.collect::<V2Result<Vec<_>>>()?, page.next_cursor)
         }

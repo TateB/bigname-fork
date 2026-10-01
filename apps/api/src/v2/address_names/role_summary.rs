@@ -13,8 +13,6 @@ pub(super) async fn load_rows(
 ) -> V2Result<Vec<EffectivePermissionRow>> {
     #[cfg(test)]
     grant_read_test_hooks::run(&state.pool).await?;
-    #[cfg(not(test))]
-    let _ = state;
     let rows = bigname_storage::load_bounded_effective_permissions_by_resource_ids(
         snapshot.conn().await?,
         ids,
@@ -34,9 +32,10 @@ pub(super) async fn load_rows(
     // serialized expansion, not only distinct storage rows or permission subjects.
     let expanded_rows: usize = rows.iter().map(|row| multiplicity[&row.resource_id]).sum();
     if expanded_rows > MAX_INLINE_GRANT_ROWS as usize {
-        return Err(V2Error::unsupported(
+        let unsupported = V2Error::unsupported(
             "inline role_summary exceeds 1000 total grant rows; omit include and paginate /v1/permissions using the returned permission handle as registration_id; preserve only an explicitly requested namespace and do not add name or address filters",
-        ));
+        );
+        return Err(snapshot.refuse(state, unsupported).await);
     }
     Ok(rows)
 }
