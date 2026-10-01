@@ -7,11 +7,11 @@ Usage:
   scripts/ci-apt-install package...
 
 Installs Debian packages on a GitHub-hosted runner, skipping any already
-installed. The network steps (index update and package download) each run
-under a timeout and are retried; the runner image's apt mirror list puts
-azure.archive.ubuntu.com first, and when that mirror stalls apt can wait on it
-until the job times out. After a failed attempt the Azure mirror is dropped
-from the list, so the retry fetches from the remaining mirrors.
+installed. The runner image's apt mirror list puts azure.archive.ubuntu.com
+first; on 2026-10-01 that mirror trickled a 29 MB package for minutes while
+archive.ubuntu.com served it in a second. The Azure mirror is dropped from the
+list whenever another mirror remains, and the index update and package
+download each run under a timeout, retried up to three times.
 USAGE
 }
 
@@ -32,22 +32,22 @@ if [ "${#missing[@]}" -eq 0 ]; then
 fi
 
 mirrors=/etc/apt/apt-mirrors.txt
+if [ -f "$mirrors" ] && grep -q 'azure\.archive\.ubuntu\.com' "$mirrors" &&
+  grep -v 'azure\.archive\.ubuntu\.com' "$mirrors" | grep -q '[^[:space:]]'; then
+  echo "dropping azure.archive.ubuntu.com from $mirrors" >&2
+  sudo sed -i '/azure\.archive\.ubuntu\.com/d' "$mirrors"
+fi
 apt=(apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
 
 for attempt in 1 2 3; do
-  if sudo timeout 120 "${apt[@]}" update &&
-    sudo timeout 240 "${apt[@]}" install -y --no-install-recommends --download-only "${missing[@]}"; then
+  if sudo timeout 90 "${apt[@]}" update &&
+    sudo timeout 120 "${apt[@]}" install -y --no-install-recommends --download-only "${missing[@]}"; then
     # Packages are already downloaded, so unpacking needs no network and is not
     # interrupted by a timeout.
     sudo "${apt[@]}" install -y --no-install-recommends --no-download "${missing[@]}"
     exit 0
   fi
   echo "apt attempt $attempt failed for: ${missing[*]}" >&2
-  if [ -f "$mirrors" ] && grep -q 'azure\.archive\.ubuntu\.com' "$mirrors" &&
-    grep -v 'azure\.archive\.ubuntu\.com' "$mirrors" | grep -q '[^[:space:]]'; then
-    echo "dropping azure.archive.ubuntu.com from $mirrors" >&2
-    sudo sed -i '/azure\.archive\.ubuntu\.com/d' "$mirrors"
-  fi
   sleep $((attempt * 5))
 done
 exit 1
