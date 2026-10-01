@@ -91,7 +91,7 @@ pub(crate) async fn explicit_namespace_request_scope(
     .await
     .map_err(api_error_to_v2)?;
     let selected_heads = request_scope_head_fingerprint(&state.pool, &scope).await?;
-    let input = SnapshotSelectorInput::new(None, None, SnapshotConsistency::Head)
+    let input = crate::v2::snapshots::selector_input(None, None, SnapshotConsistency::Head)
         .map_err(snapshot_selection_api_error)
         .map_err(api_error_to_v2)?;
     let (selected, project_generations, interpret_redo_state) =

@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use bigname_storage::{
     SelectedSnapshot, SnapshotConsistency, SnapshotSelectionError, SnapshotSelectionErrorKind,
-    SnapshotSelectionScope, SnapshotSelectorInput, load_served_project_generation,
-    resolve_exact_name_snapshot_selection, snapshot_chain_has_head,
+    SnapshotSelectionScope, load_served_project_generation, resolve_exact_name_snapshot_selection,
+    snapshot_chain_has_head,
 };
 use sqlx::PgPool;
 
@@ -31,7 +31,7 @@ pub(crate) async fn load_served_head(
     pool: &PgPool,
     scope: &SnapshotSelectionScope,
 ) -> V2Result<Option<ServedHead>> {
-    let input = SnapshotSelectorInput::new(None, None, SnapshotConsistency::Head)
+    let input = crate::v2::snapshots::selector_input(None, None, SnapshotConsistency::Head)
         .map_err(|_| V2Error::internal_error("failed to select lookup data"))?;
     let selected = match resolve_exact_name_snapshot_selection(pool, scope, &input).await {
         Ok(selected) => selected,
@@ -92,6 +92,7 @@ pub(crate) async fn load_project_generations(
             &position.block_hash,
             false,
             false,
+            crate::state::publication_lag_tolerance_blocks(),
         )
         .await
         .map_err(|_| V2Error::internal_error("failed to validate lookup data"))?

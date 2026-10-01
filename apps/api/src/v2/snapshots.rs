@@ -75,6 +75,16 @@ pub(crate) fn snapshot_meta(selected: &SelectedSnapshot) -> V2Result<Meta> {
     })
 }
 
+/// A snapshot selector serving within the configured publication lag tolerance.
+pub(crate) fn selector_input(
+    at: Option<SnapshotAt>,
+    chain_positions: Option<ChainPositions>,
+    consistency: SnapshotConsistency,
+) -> bigname_storage::SnapshotSelectionResult<SnapshotSelectorInput> {
+    Ok(SnapshotSelectorInput::new(at, chain_positions, consistency)?
+        .with_publication_lag_tolerance_blocks(crate::state::publication_lag_tolerance_blocks()))
+}
+
 pub(crate) async fn resolve_v2_snapshot_for(
     pool: &PgPool,
     scope: &SnapshotSelectionScope,
@@ -91,7 +101,7 @@ pub(crate) async fn resolve_v2_snapshot_for(
         )),
         Some(AtSelector::SnapshotToken(token)) => Some(decode_at_token(token)?),
     };
-    let input = SnapshotSelectorInput::new(at, None, consistency)
+    let input = selector_input(at, None, consistency)
         .map_err(|error| map_snapshot_error_for_resource(error, resource))?;
 
     resolve_exact_name_snapshot_selection(pool, scope, &input)
