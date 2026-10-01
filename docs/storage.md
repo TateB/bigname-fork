@@ -1668,8 +1668,10 @@ boundary has already settled. Interpret then reads, in the batch's input
 snapshot, the latest readable event per interpreter state key among the events
 of those names and resources, adds the names and resources those events
 reference, and repeats until a round adds nothing. There is no round limit: each
-continuing round adds a name or resource from the chain's finite stored history,
-so the repetition ends. On a chain with an ENSv2 manifest the rounds also read the
+continuing round adds a name, resource or ENSv2 state key from a finite set (the
+names, resources and keys the batch's logs and the chain's stored history
+reference or derive, and the registry-only resource of each of those names), so the
+repetition ends. On a chain with an ENSv2 manifest the rounds also read the
 readable ENSv2 events filed under each name and
 [ENSv2 state key](glossary.md#ensv2-state-key) in the set, starting from the
 keys the batch's logs name and the keys of registry tokens whose expiry falls
@@ -1683,8 +1685,9 @@ restore or interpretation reads a name or ENSv2 state key that was not loaded,
 Interpret discards that attempt, adds it, repeats the rounds above and
 interprets again. Every attempt that continues adds a name or key not loaded
 before, and those a batch can read are derived from its logs and the snapshot's
-finite stored history, so the attempts end; a read of a loaded name in another
-spelling fails the batch instead. Only an attempt that read nothing unloaded is
+finite stored history, so the attempts end. A read under another spelling than
+the loaded one fails the batch only when that spelling is loaded too, so the
+adapter's state keys must match the keys its events are filed under. Only an attempt that read nothing unloaded is
 published. The
 session is discarded after the batch. Two partial expression indexes on
 `normalized_events` serve these reads for the ENSv1 families:

@@ -345,8 +345,10 @@ batch's own block range, which `BIGNAME_INTERPRET_BLOCKS_PER_BATCH` bounds; and
 the whole retained history of each name, resource and
 [ENSv2 state key](../glossary.md#ensv2-state-key) that range touches, which a
 smaller batch reduces only by touching fewer of them. Lower the batch size
-first. If the cost stays high at one block per batch, it is the history that
-block touches, such as a name or ENSv2 registry with a very long history. `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true` pays the restore
+first. If the cost stays high at one block per batch, tell that block's own logs
+apart from the retained history of the names and ENSv2 state keys it touches
+before choosing a loader override: a block with many large logs costs the same
+under either loader. `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true` pays the restore
 once per start instead of once per batch, for every chain that runner serves.
 A chain that logs `interpret chose its prior-state loader` with a full-state
 reason, or a runner started with `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true`,

@@ -33,6 +33,9 @@ const ROOT_REGISTRY: &str = "0x9703dbd26dab89504490994138cf2c575251a9ce";
 const MIGRATION_REGISTRY: &str = "0x0000000000000000000000000000000000000771";
 /// The role bitmap the unlocked controller grants a migrated name's owner.
 const MIGRATED_ROLES: &str = "97409655027181761882228017414928043062435250176";
+/// `MIGRATED_ROLES` plus `ROLE_UNREGISTER`
+/// (upstream: .refs/ens_v2_sepolia_20260916/contracts/src/registry/libraries/RegistryRolesLib.sol:L24 @ ens_v2_sepolia_20260916@366de741).
+const UNREGISTER_ROLES: &str = "97409655027181761882228017414928043062435254272";
 /// `MIGRATED_ROLES` with its lowest role revoked.
 const REVOKED_ROLES: &str = "97409655027181761882228017414928043062434201600";
 
@@ -139,7 +142,13 @@ impl Seeder<'_> {
     }
 
     /// The ETHRegistry logs of one registration: label, mint, resource link and owner roles.
-    async fn register_v2(&mut self, label: &str, expiry: i64, sender: &str) -> TestResult {
+    async fn register_v2(
+        &mut self,
+        label: &str,
+        expiry: i64,
+        sender: &str,
+        roles: &str,
+    ) -> TestResult {
         let owner: Address = OWNER.parse()?;
         let sender: Address = sender.parse()?;
         let registered = v2::LabelRegistered {
@@ -164,13 +173,13 @@ impl Seeder<'_> {
             resource: v2_token(label),
         };
         self.log(ETH_REGISTRY, resource.encode_log_data()).await?;
-        let roles = v2::EACRolesChanged {
+        let granted = v2::EACRolesChanged {
             resource: v2_token(label),
             account: owner,
             oldRoleBitmap: U256::ZERO,
-            newRoleBitmap: MIGRATED_ROLES.parse()?,
+            newRoleBitmap: roles.parse()?,
         };
-        self.log(ETH_REGISTRY, roles.encode_log_data()).await
+        self.log(ETH_REGISTRY, granted.encode_log_data()).await
     }
 
     async fn transfer_v2(&mut self, id: U256, from: Address, to: Address) -> TestResult {
@@ -238,11 +247,13 @@ async fn seed_history(pool: &PgPool, lineage: &[i64]) -> TestResult {
     seed.log(ETH_REGISTRY, parent.encode_log_data()).await?;
     seed.register_v1("alice", START + 10 * GRACE).await?;
     seed.register_v1("carol", START + 1_000).await?;
-    seed.register_v2("bob", START + 2_000, OWNER).await?;
-    seed.set_v2_resolver("bob").await?;
-    seed.register_v2("dave", START + 1_000 + GRACE + 50, OWNER)
+    seed.register_v2("bob", START + 2_000, OWNER, MIGRATED_ROLES)
         .await?;
-    seed.register_v2("erin", START + 2_000, OWNER).await?;
+    seed.set_v2_resolver("bob").await?;
+    seed.register_v2("dave", START + 1_000 + GRACE + 50, OWNER, MIGRATED_ROLES)
+        .await?;
+    seed.register_v2("erin", START + 10 * GRACE, OWNER, UNREGISTER_ROLES)
+        .await?;
 
     seed.block(FIRST_BLOCK + 1).await?;
     let renewed = v1::registrar::NameRenewed {
@@ -307,8 +318,13 @@ async fn seed_history(pool: &PgPool, lineage: &[i64]) -> TestResult {
     };
     seed.log(BASE_REGISTRAR, to_graveyard.encode_log_data())
         .await?;
-    seed.register_v2("alice", START + 10 * GRACE, UNLOCKED_CONTROLLER)
-        .await?;
+    seed.register_v2(
+        "alice",
+        START + 10 * GRACE,
+        UNLOCKED_CONTROLLER,
+        MIGRATED_ROLES,
+    )
+    .await?;
     seed.log(MIGRATION_REGISTRY, v2::RegistryCreated {}.encode_log_data())
         .await?;
     let deployed = v2::ProxyDeployed {
@@ -320,8 +336,9 @@ async fn seed_history(pool: &PgPool, lineage: &[i64]) -> TestResult {
     seed.log(VERIFIABLE_FACTORY, deployed.encode_log_data())
         .await?;
 
-    // Unregistering burns the token
-    // (upstream: .refs/ens_v2_sepolia_20260916/contracts/src/registry/PermissionedRegistry.sol:L224-L234 @ ens_v2_sepolia_20260916@366de741).
+    // Unregistering a live token needs ROLE_UNREGISTER and burns the token
+    // (upstream: .refs/ens_v2_sepolia_20260916/contracts/src/registry/PermissionedRegistry.sol:L222-L234 @ ens_v2_sepolia_20260916@366de741)
+    // (upstream: .refs/ens_v2_sepolia_20260916/contracts/src/registry/PermissionedRegistry.sol:L648-L665 @ ens_v2_sepolia_20260916@366de741).
     seed.block(FIRST_BLOCK + 3).await?;
     let unregistered = v2::LabelUnregistered {
         tokenId: v2_token("erin"),
@@ -471,6 +488,12 @@ async fn ensv2_lookahead_matches_full_state_for_every_batch() -> TestResult {
             "the history must exercise {family} {kind}"
         );
     }
+    assert!(
+        rows.iter().any(|row| row["block_number"] == FIRST_BLOCK + 3
+            && row["event_kind"] == "RegistrationReleased"
+            && row["after_state"]["source_event"] == "LabelUnregistered"),
+        "erin's unregister releases her registration"
+    );
     for (blocks_per_batch, stored) in grids {
         assert_eq!(
             stored, full_state,
