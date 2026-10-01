@@ -22,6 +22,9 @@ mod resolver_announcements;
 #[path = "tests/v1_pre_surface_resolver.rs"]
 mod v1_pre_surface_resolver;
 
+#[path = "tests/v1_resolver_after_reregistration.rs"]
+mod v1_resolver_after_reregistration;
+
 #[path = "tests/v1_wrapped_registration_resolver.rs"]
 mod v1_wrapped_registration_resolver;
 
@@ -3963,6 +3966,7 @@ fn incremental_v2_delta_refreshes_only_the_affected_topology_component() {
             emitting_address: None,
             state_scope: Some(format!("{registry}:-:{token_id}:-:LabelRegistered")),
             block_timestamp: Some(OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(timestamp)),
+            write_position: None,
             after_state: json!({
                 "source_event":"LabelRegistered",
                 "token_id":token_id,
@@ -4495,6 +4499,7 @@ fn assert_registration_grant_restore_matches_live(registration: bool) -> anyhow:
         emitting_address: None,
         state_scope: Some(format!("registry:{namehash}")),
         block_timestamp: Some(OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(1)),
+        write_position: None,
         after_state: json!({
             "source_event":"NewOwner",
             "child_node":namehash,
@@ -4578,6 +4583,7 @@ fn assert_registration_grant_restore_matches_live(registration: bool) -> anyhow:
         emitting_address: None,
         state_scope: Some(grant.state_scope),
         block_timestamp: Some(raw.block_timestamp),
+        write_position: None,
         after_state: grant.after_state,
     };
     let restored_state = super::state::State::new(vec![registry_prior, restored_grant], Vec::new());
@@ -4808,6 +4814,46 @@ fn role_free_role_sensitive_event_is_rejected() -> anyhow::Result<()> {
     assert_eq!(
         error.to_string(),
         "manifest 71 source family ens_v1_registry_l1 event NewOwner has empty emitter_roles; declare emitter_roles, or add the (source_family, event) pair to bigname_manifests::ROLE_INSENSITIVE_EVENTS with a justification that the adapter does not consume Selected.emitter_role"
+    );
+    Ok(())
+}
+
+#[test]
+fn ens_reverse_events_must_come_from_their_own_registrar_role() -> anyhow::Result<()> {
+    const NAME_FOR_ADDR: &str = "event NameForAddrChanged(address indexed addr, string name)";
+    const CLAIMED: &str = "event ReverseClaimed(address indexed addr, bytes32 indexed node)";
+    let validate = |name, fragment, role| {
+        super::catalog::Catalog::new(
+            vec![manifest(
+                81,
+                "ens_v1_reverse_l1",
+                name,
+                fragment,
+                &[role],
+                &["ReverseChanged", "RecordChanged"],
+            )],
+            Vec::new(),
+            Vec::new(),
+        )
+        .map(|_| ())
+    };
+    validate(
+        "NameForAddrChanged",
+        NAME_FOR_ADDR,
+        "default_reverse_registrar",
+    )?;
+    validate("ReverseClaimed", CLAIMED, "reverse_registrar")?;
+    assert_eq!(
+        validate("NameForAddrChanged", NAME_FOR_ADDR, "reverse_registrar")
+            .expect_err("addr.reverse registrar has no NameForAddrChanged")
+            .to_string(),
+        "manifest 81 source family ens_v1_reverse_l1 declares NameForAddrChanged for roles other than default_reverse_registrar"
+    );
+    assert_eq!(
+        validate("ReverseClaimed", CLAIMED, "default_reverse_registrar")
+            .expect_err("default.reverse registrar has no ReverseClaimed")
+            .to_string(),
+        "manifest 81 source family ens_v1_reverse_l1 declares ReverseClaimed for roles other than reverse_registrar"
     );
     Ok(())
 }
@@ -9866,6 +9912,7 @@ fn surface_before_first_owner_links_a_later_ownerless_resolver() -> anyhow::Resu
         emitting_address: None,
         state_scope: Some(format!("surface:{node:#x}")),
         block_timestamp: Some(OffsetDateTime::UNIX_EPOCH),
+        write_position: None,
         after_state: json!({"source_event":"NameRegistered", "namehash":format!("{node:#x}")}),
     };
     let mut registry = admission(95, "registry");
@@ -11198,6 +11245,11 @@ fn ens_v2_resource_and_lineage_survive_prior_state_and_token_regeneration() -> a
             block_timestamp: event
                 .block_number
                 .map(|number| OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(number)),
+            write_position: PriorWritePosition::from_parts(
+                event.block_number,
+                event.transaction_index,
+                event.log_index,
+            ),
             after_state: event.after_state.clone(),
         })
         .collect();
@@ -20849,6 +20901,11 @@ fn prior_event(event: &NormalizedEvent) -> PriorEventInput {
         block_timestamp: event
             .block_number
             .map(|number| OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(number)),
+        write_position: PriorWritePosition::from_parts(
+            event.block_number,
+            event.transaction_index,
+            event.log_index,
+        ),
         after_state: event.after_state.clone(),
     }
 }

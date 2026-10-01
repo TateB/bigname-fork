@@ -1221,7 +1221,26 @@ the same node in the registration transaction, such as the resolver write
 `registerAndWrapETH2LD` makes after wrapping, stays on that wrapper resource,
 the one the name is served from. Its registry-read copy follows the ordinary
 registration reconciliation rules, and a registry write that comes after a
-later ownership write in the same transaction is reconciled as before. Record
+later ownership write in the same transaction is reconciled as before. Replay
+orders registry resolver writes by their raw position, block then transaction
+then log, because stored rows from one block come back in no fixed order. A
+later raw write always replaces the pointer, wherever its rows were reconciled,
+and an earlier write restored after it never does. Only among the rows of one
+raw write, when that write produces both a registry-read pointer and a row on a
+registrar or wrapper resource, does replay keep the registry-read pointer
+whichever row it restores first. So a wrapped `.eth` name registered again after
+expiry and grace with a resolver selects that resolver rather than one set
+through `NameWrapper.setResolver` during the earlier registration, or one its
+still-recorded registry owner set through `ENSRegistry.setResolver` earlier in
+the same block, since registry authorisation checks only the recorded owner.
+Explicit clears keep their position too. A restored row without a full raw
+position falls back to block time, where a registry-read pointer from the same
+block keeps out rows on other resources.
+(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L666-L671 @ ens_v1@91c966f)
+(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L1009-L1019 @ ens_v1@91c966f)
+(upstream: .refs/ens_v1/contracts/registry/ENSRegistry.sol:L17-L20 @ ens_v1@91c966f)
+(upstream: .refs/ens_v1/contracts/registry/ENSRegistry.sol:L89-L95 @ ens_v1@91c966f)
+Record
 attribution remains node-keyed and provider-free. If a registrar registration
 makes the registrar resource current before the retained registry-only
 authority can be materialized, the same observation still marks that retained
@@ -1454,6 +1473,29 @@ Name, version and resolver changes update their family keys; the claim reader
 selects their current state. Explicit `NameForAddrChanged` tuple claims retain
 their existing event path. These are declared claims; forward verification
 remains request-scoped.
+
+The ENSIP-19 `default.reverse` registrar's `NameForAddrChanged` keys its own
+tuple at coin type `2147483648`, with `<address>.default.reverse` as its
+reverse name; the tuple's claim is the latest such write. The reader applies
+ENS's ETH reverse resolver order to a coin type `60` read: the `addr.reverse`
+claim, after any hydration overlay, wins when the reverse node's current
+resolver is nonzero and the claim's source name has at least one byte. The
+test is the retained or hydrated value, not the claim status: a whitespace-only
+name is `not_found` yet still wins, as a nonempty text name that does not
+normalize wins with its `invalid_name` status and a nonempty name retained only
+as bytes wins with its `unsupported` status. Otherwise the reader
+serves the same namespace's `default.reverse` claim, under the requested coin
+type, when that tuple exists, and the `addr.reverse` claim (or no tuple)
+when it does not. A served `default.reverse` claim keeps its own status, so an
+empty default name is `not_found`
+(upstream: .refs/ens_v1/contracts/reverseResolver/ETHReverseResolver.sol:L15-L19 @ ens_v1@91c966f)
+(upstream: .refs/ens_v1/contracts/reverseResolver/ETHReverseResolver.sol:L42-L70 @ ens_v1@91c966f).
+The projection knows a resolver's name only from that resolver's admitted
+events or hydration, so a reverse node pointing at an unadmitted resolver
+falls back here while the chain would return that resolver's name; see
+[upstream divergences](upstream.md#known-divergences). The first source in the
+upstream order, a standalone `addr.reverse` registrar, has no admitted
+deployment and is not read.
 
 Configured mainnet follow blocks prepare reverse hydration
 before opening the publication transaction. A short preparation transaction uses

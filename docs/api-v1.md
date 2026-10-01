@@ -599,6 +599,8 @@ Rules:
   reads. `GET /v1/names/{name}/subnames` populates it with the parent's direct
   readable subname count, applying the same optional prefix and expiry filters
   as the page before its cursor.
+  The registry overview's nested `referenced_by` page populates it only with
+  `include=counts`.
   Other routes populate it only where a precomputed count makes it
   cheap or where they explicitly document `include=total_count`; they must not
   otherwise run unconditional full counts on the request path.
@@ -836,9 +838,11 @@ answer. Other verified primary-name tuples are explicit `unsupported`; indexed
 answers remain available where their projection supports the requested tuple.
 Provider transport failures abort this route with `500 internal_error` rather
 than producing a verified answer entry with `status=stale`.
-The post-call guard also revalidates the selected Ethereum publication generation and both
-selected ENS manifest declarations; a concurrent replacement returns `409
-stale` and no verified answer.
+The post-call guard also revalidates the selected Ethereum publication generation and the
+selected ENS manifest declarations: the ENS registry, the Universal Resolver,
+and, when the profile declares one, the `default.reverse` registrar. A
+concurrent replacement of any of them, including the `default.reverse`
+registrar declaration, returns `409 stale` and no verified answer.
 
 Verified lookup captures a live family publication before provider execution.
 The post-call guard compares its block identity, interpreter content hash and

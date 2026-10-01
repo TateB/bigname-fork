@@ -284,6 +284,26 @@ window as the two above, with the phase runner, redo processes and API stopped. 
 `indisready` in `pg_index` and that `pg_get_indexdef` shows `(chain_id, logical_name_id)`,
 with `WHERE (logical_name_id IS NOT NULL)` on the key state index only.
 
+`20261001110000_project_child_registration_registry_index.sql` adds
+`project_child_registration_state_registry_idx` on `(chain_id,
+registry_contract_instance_id)`, and
+`20261001110100_project_child_edge_candidate_child_index.sql` adds
+`project_child_edge_candidate_child_idx` on `(chain_id, namespace, child_node)`; the child
+pages and counts, the registry labels read among them, probe both. Each is a plain
+`CREATE INDEX` with the same SHARE lock on its table until the schema-migration commits.
+Apply them with the phase runner, redo processes and API stopped, with the same
+`lock_timeout`, `statement_timeout` and retry procedure, `--target-version
+20261001110000` and then `20261001110100`. Afterwards, confirm both indexes are
+`indisvalid` and `indisready` and that `pg_get_indexdef` shows those columns.
+The same build narrows the child reads in `crates/storage/src/families`, so it also
+rotates the [interpreter content hash](glossary.md#interpreter-content-hash) for every
+chain even though no stored row changes. After the migrations, an existing deployment finishes the
+full-range Interpret redo and then the stamped Project redo it installs before the
+matching API serves, as the [handoff](#phase-runner-configuration) describes; until
+then its snapshot-selected reads answer `409 stale`. When this build ships together with the
+[resolver set while registering a wrapped name](#resolver-set-while-registering-a-wrapped-name)
+change, which rotates the hash too, that change's single redo pair discharges both rotations.
+
 The API binds to the configured `BIGNAME_API_HOST` and
 `BIGNAME_API_PORT`; `/healthz` remains its local readiness endpoint. Current
 runtime configuration is documented in
@@ -1144,8 +1164,7 @@ routes fail closed with `409 stale` and `GET /v1/namespaces/ens` reports
 `verified_records` and `verified_primary_name` as `unsupported` with
 `unsupported_reason=execution_provider_not_configured` for chain `11155111`;
 with it, both report `full`. The Sepolia entrypoint is the checked-in active
-`manifests/sepolia/ethereum/ens/ens_execution/v1.toml` (its verified-resolution
-flag stays `shadow`), which the normal
+`manifests/sepolia/ethereum/ens/ens_execution/v1.toml`, which the normal
 manifest sync installs. The request pool uses `BIGNAME_DATABASE_MAX_CONNECTIONS`; together
 with the reserved readiness connection, one API process can open at most
 `BIGNAME_DATABASE_MAX_CONNECTIONS + 1` PostgreSQL connections.
@@ -1619,3 +1638,91 @@ is the `RegistrationGranted` row emitted by the ENSv1 BaseRegistrar
 `MigrationApplied` row (`type=migration`), which shares its block, transaction
 and log with the ENSv2 `RegistrationGranted` it accompanies. Each row carries
 its `block_number`, `transaction_hash` and block `timestamp`.
+
+### Resolver set when a wrapped name is registered again
+
+The build that lets a later registry resolver write, by block, transaction and
+log position, replace a resolver pointer that an earlier write left on the
+registry read resource
+([projections](projections.md#records-shared-through-resolver-links)) changes
+`crates/adapters/src`, so it rotates the
+[interpreter content hash](glossary.md#interpreter-content-hash) for every
+chain. It needs no schema-migration, no manifest change and no historical
+ingest fetch. It ships in the same full-history Interpret redo and Project redo
+as [Resolver set while registering a wrapped name](#resolver-set-while-registering-a-wrapped-name),
+and an existing deployment finishes both redos before the matching API serves, as for any rotation. Only
+that redo corrects names already affected: when the Project redo publishes, a
+wrapped `.eth` name whose earlier registration set its resolver through
+`NameWrapper.setResolver`, and which was registered again with a resolver after
+expiry and grace, serves the resolver from the new registration rather than the
+earlier one, including any later change or clear. The same holds when the
+registry owner left by an earlier unwrap set a resolver earlier in the block of
+the new registration.
+(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L666-L671 @ ens_v1@91c966f)
+(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L1009-L1019 @ ens_v1@91c966f)
+(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L382-L396 @ ens_v1@91c966f)
+(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L1022-L1032 @ ens_v1@91c966f)
+(upstream: .refs/ens_v1/contracts/registry/ENSRegistry.sol:L17-L20 @ ens_v1@91c966f)
+(upstream: .refs/ens_v1/contracts/registry/ENSRegistry.sol:L89-L95 @ ens_v1@91c966f)
+(upstream: .refs/ens_v1/contracts/ethregistrar/BaseRegistrarImplementation.sol:L101-L104 @ ens_v1@91c966f)
+(upstream: .refs/ens_v1/contracts/ethregistrar/BaseRegistrarImplementation.sol:L130-L152 @ ens_v1@91c966f)
+Before the release is recorded, confirm that both redos adopted the new hash.
+
+### Capability flags without shadow
+
+The build that removes `shadow` as a capability-flag status
+([manifests](manifests.md#capability_flags)) and flips the checked-in `shadow`
+flags to `supported` changes `crates/manifests/src`, so it rotates the
+[interpreter content hash](glossary.md#interpreter-content-hash) for every
+chain, although no interpreted or projected row changes. It needs no
+schema-migration and no historical ingest fetch. It changes the payloads of the
+active Sepolia `ens_execution`, `ens_v1_registrar_l1` and `ens_v2_registrar_l1`
+manifests and the active Mainnet `ens_v1_registrar_l1` manifest, so manifest
+synchronization records a
+[manifest-authority marker](glossary.md#manifest-authority-marker) for
+`ethereum-sepolia` (and `ethereum-mainnet` under the Mainnet profile), and the
+Interpret redo that discharges it runs with `--attest-watch-set-coverage`: a
+capability flag widens no watch-plan range. The Mainnet `ens_execution` and
+`basenames_execution` v1 manifests are `shadow` rollouts, so their changed
+payloads record no marker and do not invalidate the Base Project phase.
+
+Ship it with the
+[resolver set while registering a wrapped name](#resolver-set-while-registering-a-wrapped-name)
+release: that release's full-history Interpret redo and Project redo on every
+chain discharge this rotation and the marker too, and the matching API serves
+only after both redos publish, as for any rotation. Before the release is
+recorded, confirm that `GET /v1/namespaces/ens` reports `name_profile` and
+`name_history` as `full` and that the Sepolia `verified_records` and
+`verified_primary_name` are unchanged.
+
+### Default reverse names
+
+The build that admits the ENSIP-19 `default.reverse` registrar and serves its
+name as the coin type `60` fallback
+([primary-name route](api-v1-routes.md#get-v1addressesaddressprimary-name))
+adds a `default_reverse_registrar` contract and its `NameForAddrChanged` event
+to the `ens_v1_reverse_l1` manifests: Sepolia
+`0x4F382928805ba0e23B30cFB75fC9E848e82DFD47` from block `8579966`
+(upstream: .refs/ens_v1/deployments/sepolia/DefaultReverseRegistrar.json:L2 @ ens_v1@91c966f)
+(upstream: .refs/ens_v1/deployments/sepolia/DefaultReverseRegistrar.json:L270 @ ens_v1@91c966f)
+and Mainnet `0x283F227c4Bd38ecE252C4Ae7ECE650B0e913f1f9` from block `22764819`
+(upstream: .refs/ens_v1/deployments/mainnet/DefaultReverseRegistrar.json:L2 @ ens_v1@91c966f)
+(upstream: .refs/ens_v1/deployments/mainnet/DefaultReverseRegistrar.json:L270 @ ens_v1@91c966f)
+([manifests](manifests.md#ens-mainnet)). It also changes
+`crates/adapters/src` and the family readers under
+`crates/storage/src/families`, so it rotates the
+[interpreter content hash](glossary.md#interpreter-content-hash) for every
+chain. It needs no schema-migration. The new address widens the watch plan:
+manifest synchronization records a
+[manifest-authority marker](glossary.md#manifest-authority-marker) and stamps a
+required Ingest redo from the declared start block through the published head.
+Complete that Ingest redo, then the full-history Interpret redo with
+`--attest-watch-set-coverage`, then the Project redo it installs, before the
+matching API serves. It may ship with the "Resolver set while registering a
+wrapped name" release, whose Interpret and Project redos then run once for
+both. Before the release is recorded, run the Sepolia check in the route
+contract: `0x4f06fd857f8d4c6172aaa3f6a96a645b6940aacc` must answer
+`evers.eth` and `0x1d84ad46f1ec91b4bb3208f645ad2fa7abec19f8` must answer
+`artitest.eth` on both sources, and
+`GET /v1/events?contract_address=0x4F382928805ba0e23B30cFB75fC9E848e82DFD47`
+must list `primary_name` rows with `coin_type` `2147483648`.
