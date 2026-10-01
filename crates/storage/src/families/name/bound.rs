@@ -99,6 +99,57 @@ pub async fn load_family_bound_names(
     Ok(out)
 }
 
+/// Bound by `candidates`; the plan test prepares this exact text. The length bound matches
+/// `name_surfaces_name_order_idx`'s predicate, so the walk reads that index in page order. With no
+/// cursor the keyset bound is `('', '', '')`, below every row (namespaces are never empty), so a
+/// generic plan still binds the cursor as an index condition.
+pub(crate) const BOUND_CANDIDATES_SQL: &str = "/* storage:families.name.bound_candidates */
+     WITH reached AS (
+         SELECT event.logical_name_id
+         FROM bigname_phase.project_resource_pointer pointer
+         JOIN bigname_phase.normalized_events event
+           ON event.event_identity = pointer.pointer_position ->> 'event_identity'
+         WHERE pointer.chain_id = $1 AND pointer.resolver_address = lower($2)
+           AND event.logical_name_id IS NOT NULL
+         UNION
+         SELECT pointer.namespace || ':' || lower(pointer.namehash)
+         FROM bigname_phase.project_resource_pointer pointer
+         WHERE pointer.chain_id = $1 AND pointer.resolver_address = lower($2)
+           AND pointer.source_family = 'ens_v2_root_l1'
+           AND pointer.namespace IS NOT NULL AND pointer.namehash IS NOT NULL
+         UNION
+         SELECT event.logical_name_id
+         FROM bigname_phase.project_registry_pointer pointer
+         JOIN bigname_phase.normalized_events event
+           ON event.event_identity = pointer.event_identity
+         WHERE pointer.chain_id = $1 AND pointer.resolver_address = lower($2)
+           AND pointer.resource_id IS NULL AND event.logical_name_id IS NOT NULL
+         UNION
+         -- Named F5 keys retain a name's own latest pointer when the resource's latest
+         -- pointer names another name. The resolver index reads retained pointer keys,
+         -- never the history of ResolverChanged events at this resolver.
+         SELECT pointer.logical_name_id
+         FROM bigname_phase.project_named_resource_pointer pointer
+         WHERE pointer.chain_id = $1 AND pointer.resolver_address = lower($2)
+     )
+     SELECT surface.logical_name_id, surface.raw_name, surface.namespace, surface.namehash
+     FROM reached
+     JOIN bigname_phase.name_surfaces surface
+       ON surface.logical_name_id = reached.logical_name_id
+     JOIN bigname_phase.chain_lineage lineage
+       ON lineage.chain_id = surface.chain_id AND lineage.block_hash = surface.block_hash
+     JOIN bigname_phase.project_family_marker marker ON marker.chain_id = surface.chain_id
+     WHERE surface.visibility_state = 'active'
+       AND octet_length(surface.raw_name) <= 2000
+       AND surface.block_number <= marker.current_block_number
+       AND surface.canonicality_state IN ('canonical', 'safe', 'finalized')
+       AND lineage.canonicality_state IN ('canonical', 'safe', 'finalized')
+       AND ($3::text IS NULL OR surface.namespace = $3)
+       AND (surface.raw_name, surface.namespace, surface.namehash)
+           > (COALESCE($4, ''), COALESCE($5, ''), COALESCE($6, ''))
+     ORDER BY surface.raw_name, surface.namespace, surface.namehash
+     LIMIT $7";
+
 /// The next names after `after` in the page order that a pointer naming the resolver reaches:
 /// (logical_name_id, raw_name, namespace, namehash). A candidate is a superset: `admitted` keeps
 /// the names whose composed row serves the resolver.
@@ -108,65 +159,19 @@ async fn candidates(
     after: Option<&(String, String, String)>,
     limit: i64,
 ) -> Result<Vec<(String, String, String, String)>> {
-    let rows = sqlx::query(
-        "/* storage:families.name.bound_candidates */
-         WITH reached AS (
-             SELECT event.logical_name_id
-             FROM bigname_phase.project_resource_pointer pointer
-             JOIN bigname_phase.normalized_events event
-               ON event.event_identity = pointer.pointer_position ->> 'event_identity'
-             WHERE pointer.chain_id = $1 AND pointer.resolver_address = lower($2)
-               AND event.logical_name_id IS NOT NULL
-             UNION
-             SELECT pointer.namespace || ':' || lower(pointer.namehash)
-             FROM bigname_phase.project_resource_pointer pointer
-             WHERE pointer.chain_id = $1 AND pointer.resolver_address = lower($2)
-               AND pointer.source_family = 'ens_v2_root_l1'
-               AND pointer.namespace IS NOT NULL AND pointer.namehash IS NOT NULL
-             UNION
-             SELECT event.logical_name_id
-             FROM bigname_phase.project_registry_pointer pointer
-             JOIN bigname_phase.normalized_events event
-               ON event.event_identity = pointer.event_identity
-             WHERE pointer.chain_id = $1 AND pointer.resolver_address = lower($2)
-               AND pointer.resource_id IS NULL AND event.logical_name_id IS NOT NULL
-             UNION
-             -- Named F5 keys retain a name's own latest pointer when the resource's latest
-             -- pointer names another name. The resolver index reads retained pointer keys,
-             -- never the history of ResolverChanged events at this resolver.
-             SELECT pointer.logical_name_id
-             FROM bigname_phase.project_named_resource_pointer pointer
-             WHERE pointer.chain_id = $1 AND pointer.resolver_address = lower($2)
-         )
-         SELECT surface.logical_name_id, surface.raw_name, surface.namespace, surface.namehash
-         FROM reached
-         JOIN bigname_phase.name_surfaces surface
-           ON surface.logical_name_id = reached.logical_name_id
-         JOIN bigname_phase.chain_lineage lineage
-           ON lineage.chain_id = surface.chain_id AND lineage.block_hash = surface.block_hash
-         JOIN bigname_phase.project_family_marker marker ON marker.chain_id = surface.chain_id
-         WHERE surface.visibility_state = 'active'
-           AND surface.block_number <= marker.current_block_number
-           AND surface.canonicality_state IN ('canonical', 'safe', 'finalized')
-           AND lineage.canonicality_state IN ('canonical', 'safe', 'finalized')
-           AND ($3::text IS NULL OR surface.namespace = $3)
-           AND ($4::text IS NULL
-                OR (surface.raw_name, surface.namespace, surface.namehash) > ($4, $5, $6))
-         ORDER BY surface.raw_name, surface.namespace, surface.namehash
-         LIMIT $7",
-    )
-    .bind(chain_id)
-    .bind(resolver_address)
-    .bind(namespace)
-    .bind(after.map(|(name, ..)| name.as_str()))
-    .bind(after.map(|(_, namespace, _)| namespace.as_str()))
-    .bind(after.map(|(.., namehash)| namehash.as_str()))
-    .bind(limit)
-    .fetch_all(conn)
-    .await
-    .with_context(|| {
-        format!("failed to walk the bound-name candidates of {chain_id}:{resolver_address}")
-    })?;
+    let rows = sqlx::query(BOUND_CANDIDATES_SQL)
+        .bind(chain_id)
+        .bind(resolver_address)
+        .bind(namespace)
+        .bind(after.map(|(name, ..)| name.as_str()))
+        .bind(after.map(|(_, namespace, _)| namespace.as_str()))
+        .bind(after.map(|(.., namehash)| namehash.as_str()))
+        .bind(limit)
+        .fetch_all(conn)
+        .await
+        .with_context(|| {
+            format!("failed to walk the bound-name candidates of {chain_id}:{resolver_address}")
+        })?;
     rows.into_iter()
         .map(|row| {
             Ok((
