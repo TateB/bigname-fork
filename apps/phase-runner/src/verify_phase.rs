@@ -59,6 +59,7 @@ pub struct VerificationSource {
     source_key: String,
     source_kind: String,
     endpoint: Arc<str>,
+    recorded_genesis: Option<String>,
     provider_kind: VerificationProviderKind,
     level: VerificationLevel,
     cross_check_through: Option<i64>,
@@ -438,9 +439,12 @@ impl ProductionReferences {
             return Ok(provider.clone());
         }
         let (source_key, mode) = (source.source_key(), self.rpc_chain_check);
+        let genesis = source.recorded_genesis.as_deref();
         let provider =
             VerificationProvider::new(source.chain_id(), source.source_kind(), &source.endpoint)
-                .and_then(|reader| reader.with_rpc_chain_check(&source.chain_id, source_key, mode))
+                .and_then(|reader| {
+                    reader.with_rpc_chain_check(&source.chain_id, source_key, mode, genesis)
+                })
                 .map_err(|_| provider_configuration_error(source))?;
         if provider.kind() != source.provider_kind() {
             return Err(RunnerError::data_integrity(format!(
@@ -551,6 +555,7 @@ fn select_source(chain_id: &str, sources: &[SourceConfig]) -> RunnerResult<Verif
         source_key: source.source_key.clone(),
         source_kind: source.source_kind.clone(),
         endpoint: Arc::from(source.endpoint()),
+        recorded_genesis: source.recorded_genesis(),
         provider_kind,
         level,
         cross_check_through: (chain_id == "base-mainnet"

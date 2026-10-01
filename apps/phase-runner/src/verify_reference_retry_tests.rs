@@ -42,6 +42,7 @@ fn source(kind: VerificationProviderKind) -> VerificationSource {
         source_key: "reference".to_owned(),
         source_kind: "drpc".to_owned(),
         endpoint: Arc::from("https://unused.invalid"),
+        recorded_genesis: None,
         provider_kind: kind,
         level: VerificationLevel::CrossChecked,
         cross_check_through: None,

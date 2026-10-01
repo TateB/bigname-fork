@@ -375,7 +375,35 @@ pub async fn verify_rpc_chain(
     provider
         .verify_chain(expected)
         .await
-        .map_err(|error| provider_error(&context, error))
+        .map_err(|error| match provider_error(&context, error) {
+            error if error.rpc_chain_mismatch().is_some() => error,
+            error => crate::IngestError::new(error.kind(), redact_endpoint(&error, endpoint)),
+        })
+}
+
+/// A provider's error body can echo the request URI; startup errors promise never to carry the
+/// endpoint's credentials, path or query.
+fn redact_endpoint(error: &crate::IngestError, endpoint: &str) -> String {
+    let mut rendered = error.to_string();
+    let Ok(url) = reqwest::Url::parse(endpoint) else {
+        return rendered.replace(endpoint.trim(), "<redacted-endpoint>");
+    };
+    let mut secrets = [
+        endpoint.trim(),
+        url.as_str(),
+        url.path(),
+        url.query().unwrap_or_default(),
+        url.username(),
+        url.password().unwrap_or_default(),
+    ]
+    .into_iter()
+    .filter(|secret| secret.len() > 1)
+    .collect::<Vec<_>>();
+    secrets.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
+    for secret in secrets {
+        rendered = rendered.replace(secret, "<redacted>");
+    }
+    rendered
 }
 
 pub type SharedProvider = Arc<ChainProvider>;

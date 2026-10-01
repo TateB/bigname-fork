@@ -29,7 +29,12 @@ pub async fn transition(
         let kind = normalized_source_kind(&source.source_kind);
         Ok(
             VerificationProvider::new(&source.chain_id, &kind, source.endpoint())?
-                .with_rpc_chain_check(&source.chain_id, &source.source_key, rpc_chain_check)?,
+                .with_rpc_chain_check(
+                    &source.chain_id,
+                    &source.source_key,
+                    rpc_chain_check,
+                    source.recorded_genesis().as_deref(),
+                )?,
         )
     })
     .await

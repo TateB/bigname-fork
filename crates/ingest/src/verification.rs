@@ -82,9 +82,11 @@ impl VerificationProvider {
         chain_id: &str,
         source_key: &str,
         mode: RpcChainCheck,
+        recorded_genesis: Option<&str>,
     ) -> Result<Self> {
         if self.kind == VerificationProviderKind::IndependentRpc {
-            let expected = ExpectedRpcChain::new(chain_id, source_key, mode)?;
+            let expected = ExpectedRpcChain::new(chain_id, source_key, mode)?
+                .with_recorded_genesis(recorded_genesis);
             self.provider = self.provider.with_chain_check(expected);
         }
         Ok(self)

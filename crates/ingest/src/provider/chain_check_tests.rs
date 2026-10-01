@@ -311,15 +311,65 @@ async fn an_unpinned_chain_is_held_to_its_recorded_genesis() -> Result<()> {
         ),
         (Some(MAINNET_GENESIS), Some(SEPOLIA_GENESIS))
     );
+
+    let reference = crate::VerificationProvider::new("base-mainnet", "drpc", &node.endpoint)?
+        .with_rpc_chain_check(
+            "base-mainnet",
+            "reference",
+            RpcChainCheck::Full,
+            Some(MAINNET_GENESIS),
+        )?;
+    let error = crate::admit_ingest_checkpoint_heads(&reference)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error
+            .rpc_chain_mismatch()
+            .map(|m| m.observed_genesis_hash.clone()),
+        Some(Some(SEPOLIA_GENESIS.to_owned()))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_startup_check_error_never_repeats_the_endpoint_path_or_key() -> Result<()> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = format!(
+        "http://{}/v1/secret-key?token=hunter2",
+        listener.local_addr()?
+    );
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let _ = read_request_body(&mut socket).await;
+            let body = "unknown key in POST /v1/secret-key?token=hunter2";
+            let response = format!(
+                "HTTP/1.1 401 Unauthorized\r\ncontent-length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = socket.write_all(response.as_bytes()).await;
+        }
+    });
+
+    let expected = ExpectedRpcChain::new("ethereum-mainnet", "primary", RpcChainCheck::Full)?;
+    let error = verify_rpc_chain(&endpoint, &expected).await.unwrap_err();
+    let rendered = format!("{error:#}");
+    assert!(rendered.contains("401"), "{rendered}");
+    for secret in ["secret-key", "hunter2"] {
+        assert!(!rendered.contains(secret), "{rendered}");
+    }
     Ok(())
 }
 
 #[tokio::test]
 async fn verification_references_and_one_shot_checks_share_the_guard() -> Result<()> {
     let node = Node::start("0x1", Some(MAINNET_GENESIS)).await?;
-    let reference =
-        crate::VerificationProvider::new("ethereum-sepolia", "drpc", &node.endpoint)?
-            .with_rpc_chain_check("ethereum-sepolia", "reference", RpcChainCheck::ChainIdOnly)?;
+    let reference = crate::VerificationProvider::new("ethereum-sepolia", "drpc", &node.endpoint)?
+        .with_rpc_chain_check(
+        "ethereum-sepolia",
+        "reference",
+        RpcChainCheck::ChainIdOnly,
+        None,
+    )?;
     let error = crate::admit_ingest_checkpoint_heads(&reference)
         .await
         .unwrap_err();
