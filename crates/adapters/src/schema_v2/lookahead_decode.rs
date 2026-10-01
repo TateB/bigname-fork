@@ -108,8 +108,8 @@ pub(super) fn collect(
                 out.node(namespace, &registrar_namehash(selected, label))?;
             }
             "Transfer" => out.node(namespace, &registrar_namehash(selected, topic(raw, 3)?))?,
-            // ENSv2 migration correlation only: the controller set is emptied at the start of
-            // every transaction, and the correlation reads the batch, not prior state.
+            // ENSv1→ENSv2 migration correlation only: the controller set is emptied at the start
+            // of every transaction, and the correlation reads the batch, not prior state.
             "ControllerAdded" | "ControllerRemoved" => {}
             // A registrar proxy upgrade (the Basenames upgradeable controller declares one)
             // reads no name state.
