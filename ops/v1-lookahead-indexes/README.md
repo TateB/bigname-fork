@@ -100,7 +100,7 @@ not finish in several minutes, and took under four seconds after `ANALYZE`.
 
 The matching versioned schema-migrations
 `20260917150000_normalized_events_v1_lookahead_indexes.sql` (ENSv1) and
-`20261001120000_normalized_events_basenames_lookahead_indexes.sql` (Basenames
+`20261001120100_normalized_events_basenames_lookahead_indexes.sql` (Basenames
 Base) each install the same definitions of their pair on initialized databases
 and are no-ops before the phase schema exists; after a live prebuild, their
 `IF NOT EXISTS` is a no-op that adopts the indexes by name alone. Each therefore

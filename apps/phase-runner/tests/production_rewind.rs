@@ -263,6 +263,8 @@ async fn observe_cancellation(child: &mut OwnedChild, gate: &Gate) -> Result<()>
         );
         match connect().await.context("metrics connect timed out")? {
             Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => break,
+            // A connect queued on the listener as it closes is reset; the next poll is refused.
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
             Err(error) => return Err(error).context("unexpected metrics connection error"),
             Ok(connection) => drop(connection),
         }

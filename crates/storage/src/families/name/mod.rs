@@ -47,7 +47,11 @@ pub(crate) use batch::{
     all_servable_publications, load as load_composed, load_base as load_composed_base,
     servable_publication,
 };
+#[cfg(test)]
+pub(crate) use bound::BOUND_CANDIDATES_SQL;
 pub use bound::load_family_bound_names;
+#[cfg(test)]
+pub(crate) use list::SEARCH_CANDIDATES_SQL;
 pub use list::{load_family_expiring_page, load_family_search_page};
 #[cfg(test)]
 pub(crate) use loaders::{MIGRATIONS_SQL, RESOURCE_POINTERS_SQL, RESOURCES_SQL, canonical_uuid};
