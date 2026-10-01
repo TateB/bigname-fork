@@ -78,7 +78,7 @@ async fn normal_resumes_from_the_session_a_completed_redo_leaves() -> TestResult
         let database = database("interpret_redo_session_expected").await?;
         seed_history(database.pool(), History::Lifecycle).await?;
         walk_normal(&full_state_engine(database.pool()), None, last_block).await?;
-        let stored = stored_events(database.pool()).await?;
+        let stored = stored_events(database.pool(), CHAIN).await?;
         database.cleanup().await?;
         stored
     };
@@ -146,7 +146,7 @@ async fn normal_resumes_from_the_session_a_completed_redo_leaves() -> TestResult
             restores.len()
         );
         assert_eq!(
-            stored_events(pool).await?,
+            stored_events(pool, CHAIN).await?,
             expected,
             "orphaned after redo: {orphaned_after_redo}"
         );
