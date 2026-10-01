@@ -18422,11 +18422,12 @@ fn interpret_test_batch(mut input: BatchInput) -> anyhow::Result<BatchOutput> {
         input.blocks = blocks.into_values().collect();
     }
     let output = super::interpret_schema_v2_batch(input.clone())?;
-    // Every ENSv1-only fixture input doubles as a loader-equivalence case: interpreting it
-    // from lookahead-scoped state must give exactly the output of full restored state.
-    if lookahead::is_ensv1_only(&input) {
+    // Every fixture input the lookahead covers doubles as a loader-equivalence case:
+    // interpreting it from lookahead-scoped state must give exactly the output of full
+    // restored state.
+    if lookahead::is_lookahead_covered(&input) {
         lookahead::assert_scoped_matches(input).map_err(|error| {
-            error.context("ENSv1 fixture input differs between lookahead and full-state")
+            error.context("fixture input differs between lookahead and full-state")
         })?;
     }
     Ok(output)
@@ -18445,14 +18446,14 @@ fn every_ensv1_adapter_fixture_matches_scoped_lookahead() -> anyhow::Result<()> 
         blocks: Vec::new(),
         raw_logs: Vec::new(),
     };
-    assert!(lookahead::is_ensv1_only(&ensv1));
+    assert!(lookahead::is_lookahead_covered(&ensv1));
     let before = lookahead::scoped_comparisons();
     interpret_test_batch(ensv1.clone())?;
     assert_eq!(lookahead::scoped_comparisons(), before + 1);
 
     let mut with_v2 = ensv1;
     with_v2.manifests[0].source_family = "ens_v2_registry_l1".to_owned();
-    assert!(!lookahead::is_ensv1_only(&with_v2));
+    assert!(!lookahead::is_lookahead_covered(&with_v2));
     Ok(())
 }
 

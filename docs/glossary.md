@@ -1663,7 +1663,9 @@ rebuilds it from readable `normalized_events` rows.
 the way Interpret restores prior adapter state for one batch on a chain
 whose `active` and `deprecated` manifests all belong to source families it
 covers (`ens_v1_registrar_l1`, `ens_v1_registry_l1`, `ens_v1_resolver_l1`,
-`ens_v1_wrapper_l1`, `ens_v1_reverse_l1`, `basenames_l1_compat`, and every
+`ens_v1_wrapper_l1`, `ens_v1_reverse_l1`, `basenames_l1_compat`, the four
+Basenames Base families `basenames_base_registry`, `basenames_base_registrar`,
+`basenames_base_resolver` and `basenames_base_primary`, and every
 `*_execution` family) and whose retained `normalized_events` hold no history of
 an uncovered family under a `draft` or `shadow` manifest: it loads only the
 history of the names and resources the batch can touch (those its logs

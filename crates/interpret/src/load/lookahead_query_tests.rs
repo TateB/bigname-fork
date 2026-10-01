@@ -390,21 +390,28 @@ async fn working_sets_larger_than_the_removed_limits_are_returned_whole() -> Res
 #[tokio::test]
 async fn expiry_generic_plan_uses_both_timestamp_index_bounds() -> Result {
     let db = database().await?;
-    sqlx::query(
-        "INSERT INTO normalized_events
-         (event_identity,namespace,event_kind,source_family,manifest_version,chain_id,
-          block_number,block_hash,transaction_hash,raw_fact_ref,derivation_kind,
-          canonicality_state,after_state)
-         SELECT 'expiry-plan-'||n,'ens','RegistrationGranted','ens_v1_registrar_l1',1,$1,
-                1,'block-1','tx',jsonb_build_object($2::text,n::text),
-                'ens_v1_unwrapped_authority','canonical',
-                jsonb_build_object('namehash','node-'||n,'expiry',n)
-         FROM generate_series(1,2000) n",
-    )
-    .bind(CHAIN)
-    .bind(INTERPRETER_STATE_KEY)
-    .execute(db.pool())
-    .await?;
+    for (namespace, family) in [
+        ("ens", "ens_v1_registrar_l1"),
+        ("basenames", "basenames_base_registrar"),
+    ] {
+        sqlx::query(
+            "INSERT INTO normalized_events
+             (event_identity,namespace,event_kind,source_family,manifest_version,chain_id,
+              block_number,block_hash,transaction_hash,raw_fact_ref,derivation_kind,
+              canonicality_state,after_state)
+             SELECT 'expiry-plan-'||$3||'-'||n,$3,'RegistrationGranted',$4,1,$1,
+                    1,'block-1','tx',jsonb_build_object($2::text,$3||n::text),
+                    'ens_v1_unwrapped_authority','canonical',
+                    jsonb_build_object('namehash','node-'||n,'expiry',n)
+             FROM generate_series(1,2000) n",
+        )
+        .bind(CHAIN)
+        .bind(INTERPRETER_STATE_KEY)
+        .bind(namespace)
+        .bind(family)
+        .execute(db.pool())
+        .await?;
+    }
     let mut connection = db.pool().acquire().await?;
     sqlx::raw_sql("ANALYZE normalized_events; SET plan_cache_mode=force_generic_plan;")
         .execute(&mut *connection)
@@ -423,21 +430,26 @@ async fn expiry_generic_plan_uses_both_timestamp_index_bounds() -> Result {
     ))
     .fetch_one(&mut *connection)
     .await?;
-    let mut pending = vec![&plan[0]["Plan"]];
-    let mut bounded = false;
-    while let Some(node) = pending.pop() {
-        if node["Index Name"] == "normalized_events_v1_due_probe_idx" {
-            let condition = node["Index Cond"].as_str().unwrap_or("");
-            bounded |= condition.contains("$3") && condition.contains("$4");
+    for index in [
+        "normalized_events_v1_due_probe_idx",
+        "normalized_events_basenames_due_probe_idx",
+    ] {
+        let mut pending = vec![&plan[0]["Plan"]];
+        let mut bounded = false;
+        while let Some(node) = pending.pop() {
+            if node["Index Name"] == index {
+                let condition = node["Index Cond"].as_str().unwrap_or("");
+                bounded |= condition.contains("$3") && condition.contains("$4");
+            }
+            if let Some(children) = node["Plans"].as_array() {
+                pending.extend(children);
+            }
         }
-        if let Some(children) = node["Plans"].as_array() {
-            pending.extend(children);
-        }
+        assert!(
+            bounded,
+            "generic expiry plan must index both timestamp bounds on {index}: {plan}"
+        );
     }
-    assert!(
-        bounded,
-        "generic expiry plan must index both timestamp bounds: {plan}"
-    );
     let names = due_names(
         &mut connection,
         CHAIN,
@@ -448,12 +460,12 @@ async fn expiry_generic_plan_uses_both_timestamp_index_bounds() -> Result {
         OffsetDateTime::from_unix_timestamp(ENS_GRACE_PERIOD_SECS + 1910)?,
     )
     .await?;
-    assert_eq!(
-        names,
-        (1900..1910)
-            .map(|n| format!("ens:node-{n}"))
-            .collect::<Vec<_>>()
-    );
+    let mut expected: Vec<_> = ["basenames", "ens"]
+        .into_iter()
+        .flat_map(|namespace| (1900..1910).map(move |n| format!("{namespace}:node-{n}")))
+        .collect();
+    expected.sort();
+    assert_eq!(names, expected);
     drop(connection);
     db.cleanup().await?;
     Ok(())
@@ -469,26 +481,34 @@ fn index_names(plan: &Value, names: &mut Vec<String>) {
 }
 
 /// The fixture database holds only the checked-in baseline schema, so this proves the
-/// baseline defines indexes whose expressions the two lookahead queries can use. A drifted
-/// expression in either place would fall back to scanning `normalized_events`.
+/// baseline defines indexes whose expressions the two lookahead queries can use, for the
+/// ENSv1 and the Basenames Base families alike. A drifted expression or family predicate in
+/// either place would fall back to scanning `normalized_events`.
 #[tokio::test]
 async fn lookahead_sql_uses_baseline_indexes() -> Result {
     let db = database().await?;
-    sqlx::query(
-        "INSERT INTO normalized_events
-         (event_identity,namespace,event_kind,source_family,manifest_version,chain_id,
-          block_number,block_hash,transaction_hash,raw_fact_ref,derivation_kind,
-          canonicality_state,after_state)
-         SELECT 'plan-'||n,'ens','RegistrationGranted','ens_v1_registrar_l1',1,$1,
-                1,'block-1','tx',jsonb_build_object($2::text,'key-'||n),
-                'ens_v1_unwrapped_authority','canonical',
-                jsonb_build_object('namehash','node-'||n,'expiry',n)
-         FROM generate_series(1,5000) n",
-    )
-    .bind(CHAIN)
-    .bind(INTERPRETER_STATE_KEY)
-    .execute(db.pool())
-    .await?;
+    for (namespace, family) in [
+        ("ens", "ens_v1_registrar_l1"),
+        ("basenames", "basenames_base_registrar"),
+    ] {
+        sqlx::query(
+            "INSERT INTO normalized_events
+             (event_identity,namespace,event_kind,source_family,manifest_version,chain_id,
+              block_number,block_hash,transaction_hash,raw_fact_ref,derivation_kind,
+              canonicality_state,after_state)
+             SELECT 'plan-'||$3||'-'||n,$3,'RegistrationGranted',$4,1,$1,
+                    1,'block-1','tx',jsonb_build_object($2::text,'key-'||$3||'-'||n),
+                    'ens_v1_unwrapped_authority','canonical',
+                    jsonb_build_object('namehash','node-'||n,'expiry',n)
+             FROM generate_series(1,5000) n",
+        )
+        .bind(CHAIN)
+        .bind(INTERPRETER_STATE_KEY)
+        .bind(namespace)
+        .bind(family)
+        .execute(db.pool())
+        .await?;
+    }
     let mut connection = db.pool().acquire().await?;
     sqlx::raw_sql("ANALYZE normalized_events; ANALYZE chain_lineage;")
         .execute(&mut *connection)
@@ -499,14 +519,19 @@ async fn lookahead_sql_uses_baseline_indexes() -> Result {
         .replace("{clear_marker}", SUBREGISTRY_INVALIDATED_TOKEN_IDS_KEY)
         .replace("{transaction_index}", super::TRANSACTION_INDEX_KEY)
         .replace("{log_index}", super::LOG_INDEX_KEY);
-    for (statement, signature, arguments, index) in [
+    for (name, statement, signature, arguments, indexes) in [
         (
+            "events",
             events_sql.as_str(),
             "text,bigint,text[],uuid[]",
-            format!("'{CHAIN}',3,ARRAY['ens:node-7','ens:node-4000'],ARRAY[]::uuid[]"),
-            "normalized_events_v1_direct_node_probe_idx",
+            format!("'{CHAIN}',3,ARRAY['ens:node-7','basenames:node-4000'],ARRAY[]::uuid[]"),
+            [
+                "normalized_events_v1_direct_node_probe_idx",
+                "normalized_events_basenames_direct_node_probe_idx",
+            ],
         ),
         (
+            "due_names",
             super::DUE_NAMES,
             "text,bigint,bigint,bigint,bigint",
             format!(
@@ -514,13 +539,16 @@ async fn lookahead_sql_uses_baseline_indexes() -> Result {
                 ENS_GRACE_PERIOD_SECS + 100,
                 ENS_GRACE_PERIOD_SECS + 110
             ),
-            "normalized_events_v1_due_probe_idx",
+            [
+                "normalized_events_v1_due_probe_idx",
+                "normalized_events_basenames_due_probe_idx",
+            ],
         ),
     ] {
         // Both plan kinds matter: sqlx prepares the statement, and PostgreSQL may switch a
         // prepared statement to its generic plan.
         for mode in ["force_custom_plan", "force_generic_plan"] {
-            let prepared = format!("{index}_{mode}");
+            let prepared = format!("{name}_{mode}");
             sqlx::raw_sql(&format!(
                 "SET plan_cache_mode={mode}; PREPARE {prepared}({signature}) AS {statement}"
             ))
@@ -533,10 +561,12 @@ async fn lookahead_sql_uses_baseline_indexes() -> Result {
             .await?;
             let mut used = Vec::new();
             index_names(&plan[0]["Plan"], &mut used);
-            assert!(
-                used.iter().any(|name| name == index),
-                "{mode} plan must use {index}, used {used:?}"
-            );
+            for index in indexes {
+                assert!(
+                    used.iter().any(|name| name == index),
+                    "{mode} {name} plan must use {index}, used {used:?}"
+                );
+            }
         }
     }
     drop(connection);

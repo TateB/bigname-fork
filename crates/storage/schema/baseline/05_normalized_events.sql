@@ -706,6 +706,33 @@ CREATE INDEX IF NOT EXISTS normalized_events_v1_direct_node_probe_idx
     WHERE canonicality_state IN ('canonical','safe','finalized')
       AND source_family LIKE 'ens\_v1\_%';
 
+-- The same two reads for the Basenames Base families, whose events the ENSv1 protocol code
+-- writes in the same shape. The expressions equal the two above; only the family predicate
+-- differs, so each chain's lookahead reads stay on one small partial index.
+CREATE INDEX IF NOT EXISTS normalized_events_basenames_due_probe_idx
+    ON normalized_events (
+        chain_id,
+        (CASE WHEN jsonb_typeof(after_state -> 'expiry') IN ('number','string')
+            AND after_state ->> 'expiry' ~ '^[+-]?[0-9]+$'
+            AND length(ltrim(after_state ->> 'expiry', '+-0')) <= 19
+          THEN ((CASE WHEN left(after_state ->> 'expiry', 1) = '-' THEN '-' ELSE '' END)
+            || COALESCE(NULLIF(ltrim(after_state ->> 'expiry', '+-0'), ''), '0'))::numeric
+        END),
+        block_number
+    )
+    WHERE canonicality_state IN ('canonical','safe','finalized')
+      AND source_family = 'basenames_base_registrar'
+      AND event_kind IN ('RegistrationGranted','RegistrationRenewed','TokenControlTransferred');
+
+CREATE INDEX IF NOT EXISTS normalized_events_basenames_direct_node_probe_idx
+    ON normalized_events (
+        chain_id,
+        (COALESCE(namespace || ':' || lower(COALESCE(after_state ->> 'child_node', after_state ->> 'namehash', after_state ->> 'node', after_state #>> '{grant_source,node}', after_state #>> '{revocation_source,node}')), logical_name_id)),
+        block_number
+    )
+    WHERE canonicality_state IN ('canonical','safe','finalized')
+      AND source_family LIKE 'basenames\_base\_%';
+
 -- The address history read finds the names and resources an address held in the past from
 -- three kinds of events: a registration granted to it, a token transferred to it, and a
 -- registry ownership transfer to it. Each partial index keys one kind by the lowercased new

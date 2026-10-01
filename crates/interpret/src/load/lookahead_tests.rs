@@ -54,8 +54,15 @@ fn any_uncovered_manifest_family_requires_the_full_state_loader() {
             rollout_status: "deprecated",
         })
     );
-    let base = [manifest("basenames_base_registry")];
-    assert!(super::full_state_reason(&base, &base).is_some());
+    let base: Vec<_> = [
+        "basenames_base_primary",
+        "basenames_base_registrar",
+        "basenames_base_registry",
+        "basenames_base_resolver",
+    ]
+    .map(manifest)
+    .into();
+    assert_eq!(super::full_state_reason(&base, &base), None);
 }
 
 /// Opt-in operator probe. All connections enforce read-only mode; no writer is called.

@@ -100,7 +100,7 @@ impl Engine {
     }
 
     /// Operator override: always restore prior state with the full-state loader, even on
-    /// a chain where the per-batch ENSv1 lookahead loader would be chosen automatically.
+    /// a chain where the per-batch lookahead loader would be chosen automatically.
     pub fn with_full_state_loader_forced(mut self, forced: bool) -> Self {
         self.force_full_state_loader = forced;
         self
