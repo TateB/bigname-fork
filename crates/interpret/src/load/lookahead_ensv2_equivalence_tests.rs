@@ -1,4 +1,5 @@
-//! Database tests that the lookahead loader and the full-state loader produce identical
+//! Database tests that the [lookahead loader](../../../../docs/glossary.md#lookahead-loader)
+//! and the full-state loader produce identical
 //! output on Sepolia, whose manifests mix ENSv1 and ENSv2 families: batch by batch over a
 //! history with an ENSv1→ENSv2 migration and registration expiries, across a one-block
 //! reorg, and across a restart.
@@ -81,7 +82,11 @@ const OFFSETS: [i64; 9] = [
     1_000 + GRACE + 400, // 8: quiet
 ];
 
-/// ENSv2 token ids carry a version in their low four bytes; a fresh label's is zero.
+/// ENSv2 token ids carry a version in their low four bytes
+/// (upstream: .refs/ens_v2_sepolia_20260916/contracts/src/utils/LibLabel.sol:L15-16 @ ens_v2_sepolia_20260916@366de741)
+/// (upstream: .refs/ens_v2_sepolia_20260916/contracts/src/registry/PermissionedRegistry.sol:L685 @ ens_v2_sepolia_20260916@366de741);
+/// a fresh label's is zero, because the version only increments on unregister or regeneration
+/// (upstream: .refs/ens_v2_sepolia_20260916/contracts/src/registry/PermissionedRegistry.sol:L34 @ ens_v2_sepolia_20260916@366de741).
 fn v2_token(label: &str) -> U256 {
     let mut versioned = keccak256(label.as_bytes()).0;
     versioned[28..].fill(0);
@@ -234,7 +239,7 @@ async fn seed_history(pool: &PgPool, lineage: &[i64]) -> TestResult {
     };
     seed.log(PUBLIC_RESOLVER, address.encode_log_data()).await?;
 
-    // The unlocked controller's `.eth` migration: registrar transfer to the controller,
+    // The unlocked controller's `.eth` ENSv1→ENSv2 migration: registrar transfer to the controller,
     // registry reclaim, registry transfer and registrar transfer to the Graveyard, then the
     // ENSv2 registration, with a migration registry deployed in the same transaction.
     // (upstream: .refs/ens_v2/contracts/src/migration/UnlockedMigrationController.sol:L111-L119 @ ens_v2@a971bd64)

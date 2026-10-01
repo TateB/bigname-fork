@@ -1669,20 +1669,23 @@ snapshot, the latest readable event per interpreter state key among the events
 of those names and resources, adds the names and resources those events
 reference, and repeats until a round adds nothing. There is no round limit: each
 continuing round adds a name or resource from the chain's finite stored history,
-so the repetition ends. On a chain with an ENSv2 manifest the first round also
-reads every readable ENSv2 event before the batch, so ENSv2 registry, resolver
-and permission state is restored whole, and the names and resources those
-events mention join the set. Interpret restores a fresh adapter state from exactly those events under the
+so the repetition ends. On a chain with an ENSv2 manifest the rounds also read the
+readable ENSv2 events filed under each name and
+[ENSv2 state key](glossary.md#ensv2-state-key) in the set, starting from the
+keys the batch's logs name and the keys of registry tokens whose expiry falls
+inside the batch's time span; the keys, names and resources those events
+reference join the set. Interpret restores a fresh adapter state from exactly those events under the
 same canonical-lineage and pre-batch boundary rules as a cold restore, and
 interprets the batch against it in the same input snapshot. ENSv2
 interpretation derives names from registry state, such as the ENSv1 predecessor
 an [ENSv1→ENSv2 migration](glossary.md#ensv1ensv2-migration) retires, so the collector cannot list them all in advance: when
-restore or interpretation reads a name that was not loaded, Interpret discards
-that attempt, adds the name, repeats the rounds above and interprets again.
-Every attempt that continues adds a name not loaded before, and the names a
-batch can read are derived from its logs and the snapshot's finite stored
-history, so the attempts end; a read of a loaded name in another spelling fails
-the batch instead. Only an attempt that read no unloaded name is published. The
+restore or interpretation reads a name or ENSv2 state key that was not loaded,
+Interpret discards that attempt, adds it, repeats the rounds above and
+interprets again. Every attempt that continues adds a name or key not loaded
+before, and those a batch can read are derived from its logs and the snapshot's
+finite stored history, so the attempts end; a read of a loaded name in another
+spelling fails the batch instead. Only an attempt that read nothing unloaded is
+published. The
 session is discarded after the batch. Two partial expression indexes on
 `normalized_events` serve these reads for the ENSv1 families:
 `normalized_events_v1_direct_node_probe_idx` (events of one name) and

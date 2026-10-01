@@ -131,9 +131,9 @@ that version's recorded checksum, as the runbook's
 describes, because the file no longer builds two obsolete label indexes.
 
 Interpret's per-batch [lookahead loader](glossary.md#lookahead-loader) reads
-`normalized_events` through two partial expression indexes for the ENSv1
-families, two for the Basenames Base families and one partial index for the
-ENSv2 families. Follow their
+`normalized_events` through eight partial indexes: two expression indexes for
+the ENSv1 families, two for the Basenames Base families and four for the ENSv2
+families. Follow their
 [online index runbook](../ops/v1-lookahead-indexes/README.md) before applying
 the matching schema-migrations on a large initialized database, and before
 starting a release whose loader covers the chain.
@@ -1925,7 +1925,9 @@ initialized database, rerun
 [`ops/v1-lookahead-indexes/install.sql`](../ops/v1-lookahead-indexes/README.md)
 before applying the schema-migrations and starting the release: it accepts the
 existing four indexes and builds the ENSv2 ones concurrently. Then run
-`ANALYZE bigname_phase.normalized_events`. Ethereum mainnet and Base read only
+`ANALYZE bigname_phase.normalized_events` and apply the schema-migrations with
+`--target-version 20261001130000`, which then only adopts and checks the
+prebuilt indexes. Ethereum mainnet and Base read only
 the ENSv2 name index, but the schema-migration builds all four without
 `CONCURRENTLY` by scanning `normalized_events`, so prebuild them on every large
 database. `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true` keeps the full-state loader on
