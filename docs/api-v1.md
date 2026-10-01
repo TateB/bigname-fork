@@ -855,7 +855,10 @@ The ledger transaction holds shared locks on both phase rows and the family
 marker through its commit, so an overlapping redo cannot start between the
 check and the write. An unrelated phase-row update alone does not change the
 publication generation. Routes combining indexed and verified answers also
-require both answers to fit the reported `meta.as_of` position.
+require both answers to fit the reported `meta.as_of` position. Verified calls
+run at the stored head, so while the publication trails the head the verified
+section on those routes reports `stale`; raising the publication lag tolerance
+widens indexed serving only.
 
 Indexed snapshot selection uses the [family marker](glossary.md#family-marker).
 It must be `live`, carry this build's interpreter content hash, sit on readable
