@@ -45,6 +45,9 @@ pub(crate) struct LookupSnapshot {
     pub resolver_address: String,
     pub entrypoint_chain_id: String,
     pub entrypoint_address: String,
+    /// The stored head the publication was admitted against; the post-call guard requires it
+    /// unchanged.
+    pub head: LookupPosition,
     pub authoritative_position: LookupPosition,
     pub execution_position: LookupPosition,
     pub execution_block: ExecutionBlock,
@@ -223,12 +226,7 @@ pub(crate) async fn load_snapshot(
     positions::ensure_canonical(&mut transaction, &resolver_position).await?;
 
     let entrypoint = routes::entrypoint_authority(namespace, resolver_chain_id)?;
-    let authoritative_position = LookupPosition {
-        chain_id: resolver_head.chain_id,
-        block_number: resolver_head.block_number,
-        block_hash: resolver_head.block_hash,
-        timestamp: resolver_head.timestamp,
-    };
+    let authoritative_position = project_publication.position.clone();
     let execution_position = if entrypoint.chain_id.as_str() == resolver_position.chain_id {
         resolver_position.clone()
     } else {
@@ -352,6 +350,12 @@ pub(crate) async fn load_snapshot(
         resolver_address: resolver_address.to_string(),
         entrypoint_chain_id: entrypoint.chain_id.to_string(),
         entrypoint_address: entrypoint_manifest.declared_address.to_ascii_lowercase(),
+        head: LookupPosition {
+            chain_id: resolver_head.chain_id,
+            block_number: resolver_head.block_number,
+            block_hash: resolver_head.block_hash,
+            timestamp: resolver_head.timestamp,
+        },
         authoritative_position,
         execution_position: live_execution_position,
         execution_block,

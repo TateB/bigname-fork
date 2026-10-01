@@ -626,9 +626,10 @@ Rules:
   is older than the newest `chain_heads` marker for that chain. The lookup
   engine returns both positions, and `meta.as_of`/`meta.as_of_token` expose
   those actual lookup positions rather than implying execution at the newer
-  marker. The engine independently requires its [`project`
-  phase](architecture.md#intake-architecture) to be at the current readable
-  authoritative head before executing. After the live calls it revalidates the
+  marker. The engine independently requires a live
+  [family publication](glossary.md#family-marker) within the publication lag
+  tolerance of the stored head before executing, and that publication is the
+  authoritative position: calls on its chain run at its block. After the live calls it revalidates the
   exact project generation, projected name topology, selected manifest
   declarations, and canonical positions. A concurrent replacement returns the
   existing `409 stale` response and performs no ledger mutation. `meta.as_of` is
@@ -848,7 +849,8 @@ registrar declaration, returns `409 stale` and no verified answer.
 
 Verified lookup captures a live family publication before provider execution.
 The post-call guard compares its block identity, interpreter content hash and
-marker sequence, alongside the execution head and manifest declarations. A
+marker sequence, alongside the stored head it was admitted against and the
+manifest declarations. A
 new publication or same-height republish returns `409 stale`. An Interpret or
 Project redo whose range overlaps that publication also refuses the lookup.
 The ledger transaction holds shared locks on both phase rows and the family
@@ -856,9 +858,11 @@ marker through its commit, so an overlapping redo cannot start between the
 check and the write. An unrelated phase-row update alone does not change the
 publication generation. Routes combining indexed and verified answers also
 require both answers to fit the reported `meta.as_of` position. Verified calls
-run at the stored head, so while the publication trails the head the verified
-section on those routes reports `stale`; raising the publication lag tolerance
-widens indexed serving only.
+on the publication's chain execute at the publication's block, which is the
+position `meta.as_of` reports, so a publication trailing the stored head within
+the publication lag tolerance serves both answers. A selection that is not the
+publication, such as an older `at`, `safe` or `finalized` position, still
+reports the verified section `stale`.
 
 Indexed snapshot selection uses the [family marker](glossary.md#family-marker).
 It must be `live`, carry this build's interpreter content hash, sit on readable

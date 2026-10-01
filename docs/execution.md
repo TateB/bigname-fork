@@ -105,7 +105,7 @@ arm-scoped. The supported topology classes are:
   resolution on the profile's Ethereum L1 (Mainnet or Sepolia) with a null
   exact resolver and no linked-subregistry, projected wildcard, or
   transport path, executed through that chain's manifest-admitted Universal
-  Resolver at its readable head. This last route has no indexed comparison and retains the exact resolver
+  Resolver at the captured family publication's block. This last route has no indexed comparison and retains the exact resolver
   as null in the API response. The entrypoint walks to the nearest nonzero
   ancestor and accepts it only when it implements ENSIP-10
   `(upstream: .refs/ens_v1/contracts/universalResolver/RegistryUtils.sol:L25-L38 @ ens_v1@91c966f)`
