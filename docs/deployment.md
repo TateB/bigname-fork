@@ -1666,6 +1666,34 @@ the new registration.
 (upstream: .refs/ens_v1/contracts/registry/ENSRegistry.sol:L89-L95 @ ens_v1@91c966f)
 (upstream: .refs/ens_v1/contracts/ethregistrar/BaseRegistrarImplementation.sol:L101-L104 @ ens_v1@91c966f)
 (upstream: .refs/ens_v1/contracts/ethregistrar/BaseRegistrarImplementation.sol:L130-L152 @ ens_v1@91c966f)
+
+### Authority of registry children with no name surface
+
+The build that serves `authority` on an ENSv1 registry child with no name
+surface (a `setSubnodeOwner` or `setSubnodeRecord` node with no registrar
+lease: both write the child's registry owner, emit `NewOwner` and create no
+registrar lease
+(upstream: .refs/ens_v1/contracts/registry/ENSRegistry.sol:L49-L58 @ ens_v1@91c966f)
+(upstream: .refs/ens_v1/contracts/registry/ENSRegistry.sol:L75-L84 @ ens_v1@91c966f)),
+from the registry generation that owns its node: `ens_v0` while the deployed
+registry still answers for the node from the 2017 registry, which it does
+until it holds a record of its own
+(upstream: .refs/ens_v1/contracts/registry/ENSRegistryWithFallback.sol:L18-L46 @ ens_v1@91c966f),
+and `ens_v1` after; on
+`GET /v1/addresses/{address}/names` and `GET /v1/names/{name}/subnames`, and
+lets the address-names `authority` filter match it
+([api-v1-routes](api-v1-routes.md#get-v1addressesaddressnames)), changes
+`crates/storage/src/families`, so it rotates the
+[interpreter content hash](glossary.md#interpreter-content-hash) for every
+chain. It needs no schema-migration, no manifest change and no historical
+ingest fetch, and it changes no projected row: the value is read from
+`project_registry_node_state` at request time. It ships in the same
+full-history Interpret redo and Project redo as
+[Resolver set while registering a wrapped name](#resolver-set-while-registering-a-wrapped-name),
+and an existing deployment finishes both redos before the matching API serves,
+as for any rotation. Such a child also carries the `ens_v1` object, with a
+null `expires_at` because it holds no lease. Subname rows also gain the
+optional `authority` field, taken from the child's name row when it has one.
 Before the release is recorded, confirm that both redos adopted the new hash.
 
 ### Capability flags without shadow
@@ -1726,3 +1754,35 @@ contract: `0x4f06fd857f8d4c6172aaa3f6a96a645b6940aacc` must answer
 `artitest.eth` on both sources, and
 `GET /v1/events?contract_address=0x4F382928805ba0e23B30cFB75fC9E848e82DFD47`
 must list `primary_name` rows with `coin_type` `2147483648`.
+
+### Missing sort keys sort as the smallest value
+
+The build that makes a missing `expires_at`, `registered_at` or `created_at`
+the smallest value in list sorts (first ascending, last descending) on
+[`GET /v1/addresses/{address}/names`](api-v1-routes.md#get-v1addressesaddressnames),
+[`GET /v1/names/{name}/subnames`](api-v1-routes.md#get-v1namesnamesubnames) and
+[`GET /v1/names`](api-v1-routes.md#get-v1names) changes only API read paths,
+but it rotates the
+[interpreter content hash](glossary.md#interpreter-content-hash) for every
+chain: `crates/storage/src/address_names/query.rs` is on the content hash's
+file list because the stored name summary takes its timestamps from it, and the
+subname and former-registrant readers it edits sit under the hashed
+`crates/storage/src/families` root. It needs no schema-migration, no manifest change and no historical
+ingest fetch. An existing deployment runs the new binary for both the phase
+runner and the API, and finishes the full-history Interpret redo and the
+Project redo it installs before the matching API serves, as for any rotation;
+an API upgraded alone refuses the old build's family publication with
+`409 stale`. A cursor issued before the change on one of these sorts still
+decodes and resumes after its saved row, but in the new order, which moved the
+rows without the key to the other end of the list:
+
+- Ascending (undated rows were last and are now first): a cursor saved on a
+  dated row skips every undated row, and a cursor saved on an undated row
+  returns every dated row a second time.
+- Descending (undated rows were first and are now last): a cursor saved on an
+  undated row skips every dated row, so rows with a real timestamp are lost,
+  and a cursor saved on a dated row returns the undated rows already seen a
+  second time at the end.
+
+A client walking one of these sorts across the change restarts from the first
+page.

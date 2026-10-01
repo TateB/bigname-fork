@@ -476,7 +476,7 @@
             "name": "authority",
             "in": "query",
             "required": false,
-            "description": "Comma-separated selected authority arms. Rows without an authority arm do not match. Not accepted with relation=former_registrant.",
+            "description": "Comma-separated served `authority` values; a row matches when the `authority` it serves is any listed value, including an ENSv1 registry child with no name row by its registry's value. Rows that serve no `authority` match no set. Not accepted with relation=former_registrant.",
             "schema": {
               "type": "array",
               "items": {
@@ -6290,7 +6290,8 @@
               "string",
               "null"
             ],
-            "description": "BaseRegistrar lease expiry as a decimal Unix-second string, exact up to `9223372036854775807` and served as that value above it, or null when the name has no lease, such as any subname. After the Universal Resolver cutover the top-level `expires_at` of a name with a live ENSv2 entry is that entry's expiry instead. Below that cap the lease's grace deadline is this value plus 90 days; a capped value does not give the deadline."
+            "description": "BaseRegistrar lease expiry as a decimal Unix-second string, exact up to `9223372036854775807` and served as that value above it, or null when the name has no lease, such as any subname or an ENSv1 registry child with no name row that no NameWrapper or registrar event named. The exception is a registry child with no name row that a NameWrapper or registrar event named only under a label that fails ENSIP-15 normalization: it omits this field and the wrapper fields (presence condition `ens_v1_lifecycle`), because its lease and NameWrapper state are projected without a name row. After the Universal Resolver cutover the top-level `expires_at` of a name with a live ENSv2 entry is that entry's expiry instead. Below that cap the lease's grace deadline is this value plus 90 days; a capped value does not give the deadline.\n\nPresence condition: The row is not an ENSv1 registry child with no current name row that a NameWrapper or registrar event named only under a label failing ENSIP-15 normalization. Such a child's lease and NameWrapper state are kept without a name row, so its object carries no lifecycle fields: no expires_at and no wrapper fields.",
+            "x-presence": "when ens_v1_lifecycle"
           },
           "wrapper_state": {
             "$ref": "#/components/schemas/WrapperState",
@@ -6304,9 +6305,6 @@
           }
         },
         "additionalProperties": false,
-        "required": [
-          "expires_at"
-        ],
         "description": "What only ENSv1 holds about a name while ENSv1 decides it: the BaseRegistrar lease date and the NameWrapper position. Name-shaped rows carry it as `ens_v1` exactly while the name's authority is `ens_v1` or `ens_v0`; see the [naming dictionary](https://github.com/ensdomains/bigname/blob/main/docs/api-v1.md#naming-dictionary)."
       },
       "NameRecord": {
@@ -7150,9 +7148,13 @@
             ],
             "description": "Decimal Unix-second string for a finite deadline, or null for a classified absent expiry; see [timestamp format and absent expiry](https://github.com/ensdomains/bigname/blob/main/docs/api-v1.md#timestamp-format-and-absent-expiry)."
           },
+          "authority": {
+            "$ref": "#/components/schemas/Authority",
+            "description": "Registry generation that owns the node, as the child's name row serves it, or for an ENSv1 registry child with no name row its registry's, `ens_v1` or `ens_v0`; omitted when none applies or for an ownerless registry row without a retained registrar binding."
+          },
           "ens_v1": {
             "$ref": "#/components/schemas/EnsV1",
-            "description": "What only ENSv1 holds about the name; present exactly while the authority its name detail serves is `ens_v1` or `ens_v0`.\n\nPresence condition: The name's served authority is ens_v1 or ens_v0. The object is absent under ens_v2, with no authority, and on identity-only unsupported records and lookup feed records.",
+            "description": "What only ENSv1 holds about the name; present exactly while the row's `authority` is `ens_v1` or `ens_v0`; a child with no name row holds no lease, so its `expires_at` is null.\n\nPresence condition: The name's served authority is ens_v1 or ens_v0. The object is absent under ens_v2, with no authority, and on identity-only unsupported records and lookup feed records.",
             "x-presence": "when ens_v1_authority"
           },
           "subregistry": {
@@ -7241,7 +7243,7 @@
           },
           "authority": {
             "$ref": "#/components/schemas/Authority",
-            "description": "Selected authority arm; omitted when none is selected or for an ownerless registry row without a retained registrar binding."
+            "description": "Registry generation that owns the node: the selected authority arm, or for an ENSv1 registry child with no name row its registry's, `ens_v1` or `ens_v0`; omitted when none applies or for an ownerless registry row without a retained registrar binding."
           },
           "ens_v1": {
             "$ref": "#/components/schemas/EnsV1",
@@ -8254,9 +8256,13 @@
             ],
             "description": "Decimal Unix-second string for a finite deadline, or null for a classified absent expiry; see [timestamp format and absent expiry](https://github.com/ensdomains/bigname/blob/main/docs/api-v1.md#timestamp-format-and-absent-expiry)."
           },
+          "authority": {
+            "$ref": "#/components/schemas/Authority",
+            "description": "Registry generation that owns the node, as the child's name row serves it, or for an ENSv1 registry child with no name row its registry's, `ens_v1` or `ens_v0`; omitted when none applies or for an ownerless registry row without a retained registrar binding."
+          },
           "ens_v1": {
             "$ref": "#/components/schemas/EnsV1",
-            "description": "What only ENSv1 holds about the name; present exactly while the authority its name detail serves is `ens_v1` or `ens_v0`.\n\nPresence condition: The name's served authority is ens_v1 or ens_v0. The object is absent under ens_v2, with no authority, and on identity-only unsupported records and lookup feed records.",
+            "description": "What only ENSv1 holds about the name; present exactly while the row's `authority` is `ens_v1` or `ens_v0`; a child with no name row holds no lease, so its `expires_at` is null.\n\nPresence condition: The name's served authority is ens_v1 or ens_v0. The object is absent under ens_v2, with no authority, and on identity-only unsupported records and lookup feed records.",
             "x-presence": "when ens_v1_authority"
           },
           "subregistry": {

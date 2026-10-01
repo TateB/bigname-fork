@@ -56,6 +56,8 @@ pub(super) fn push_address_names_current_grouped_entries_cte<'a>(
                 anc.manifest_version,
                 anc.last_recomputed_at,
                 anc.served_owner,
+                anc.served_authority,
+                anc.served_lifecycle_shadow,
                 CASE anc.relation
                     WHEN 'registrant' THEN 0
                     WHEN 'token_holder' THEN 1
@@ -88,12 +90,22 @@ pub(super) fn push_address_names_current_grouped_entries_cte<'a>(
         builder.push(" ESCAPE '\\'");
     }
     if let Some(authorities) = authorities.filter(|authorities| !authorities.is_empty()) {
+        // A surface-less registry child has no name row; it matches by its registry's authority.
+        builder.push(" AND (anc.registry_child IS TRUE AND anc.served_authority = ANY(");
+        builder.push_bind(
+            authorities
+                .iter()
+                .map(|authority| (*authority).to_owned())
+                .collect::<Vec<_>>(),
+        );
+        builder.push(") OR anc.registry_child IS NOT TRUE");
         crate::name_current::push_public_authority_filter_in(
             builder,
             source.names(),
             "anc.logical_name_id",
             authorities,
         );
+        builder.push(")");
     }
     if let Some(is_migrated) = is_migrated {
         if is_migrated {
@@ -142,7 +154,9 @@ pub(super) fn push_address_names_current_grouped_entries_cte<'a>(
                 canonicality_summary,
                 manifest_version,
                 last_recomputed_at,
-                served_owner
+                served_owner,
+                served_authority,
+                served_lifecycle_shadow
             FROM filtered
             ORDER BY
                 address ASC,
@@ -186,7 +200,9 @@ pub(super) fn push_address_names_current_grouped_entries_cte<'a>(
                 representatives.canonicality_summary,
                 representatives.manifest_version,
                 representatives.last_recomputed_at,
-                representatives.served_owner
+                representatives.served_owner,
+                representatives.served_authority,
+                representatives.served_lifecycle_shadow
             FROM representatives
             JOIN relation_facets
               ON relation_facets.address = representatives.address
@@ -215,7 +231,9 @@ pub(super) fn push_address_names_current_grouped_entries_cte<'a>(
                 canonicality_summary,
                 manifest_version,
                 last_recomputed_at,
-                served_owner
+                served_owner,
+                served_authority,
+                served_lifecycle_shadow
             FROM filtered
             ORDER BY
                 address ASC,
@@ -260,7 +278,9 @@ pub(super) fn push_address_names_current_grouped_entries_cte<'a>(
                 representatives.canonicality_summary,
                 representatives.manifest_version,
                 representatives.last_recomputed_at,
-                representatives.served_owner
+                representatives.served_owner,
+                representatives.served_authority,
+                representatives.served_lifecycle_shadow
             FROM representatives
             JOIN relation_facets
               ON relation_facets.address = representatives.address
@@ -516,19 +536,19 @@ fn push_json_timestamp_coalesce_expr(builder: &mut QueryBuilder<'_, Postgres>, p
 fn timestamp_rank_expr(column: &str, order: AddressNamesCurrentOrder) -> String {
     match order {
         AddressNamesCurrentOrder::Asc => {
-            format!("CASE WHEN {column} IS NULL THEN 1 ELSE 0 END")
+            format!("CASE WHEN {column} IS NULL THEN 0 ELSE 1 END")
         }
         AddressNamesCurrentOrder::Desc => {
-            format!("CASE WHEN {column} IS NULL THEN 0 ELSE 1 END")
+            format!("CASE WHEN {column} IS NULL THEN 1 ELSE 0 END")
         }
     }
 }
 
 fn timestamp_null_rank(value: Option<UnixSeconds>, order: AddressNamesCurrentOrder) -> i32 {
     match (value.is_none(), order) {
-        (true, AddressNamesCurrentOrder::Asc) => 1,
-        (false, AddressNamesCurrentOrder::Asc) => 0,
-        (true, AddressNamesCurrentOrder::Desc) => 0,
-        (false, AddressNamesCurrentOrder::Desc) => 1,
+        (true, AddressNamesCurrentOrder::Asc) => 0,
+        (false, AddressNamesCurrentOrder::Asc) => 1,
+        (true, AddressNamesCurrentOrder::Desc) => 1,
+        (false, AddressNamesCurrentOrder::Desc) => 0,
     }
 }

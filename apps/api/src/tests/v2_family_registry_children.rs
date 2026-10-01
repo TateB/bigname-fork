@@ -15,6 +15,20 @@ async fn insert_registry_child(
     block: i64,
     resource: Uuid,
 ) -> Result<String> {
+    insert_registry_child_from(database, parent, label, owner, block, resource, "registry").await
+}
+
+/// [`insert_registry_child`] from the registry `emitter_role` names: `registry`, the current
+/// ENSv1 registry, or `registry_old`, the 2017 registry.
+async fn insert_registry_child_from(
+    database: &TestDatabase,
+    parent: &str,
+    label: &str,
+    owner: &str,
+    block: i64,
+    resource: Uuid,
+    emitter_role: &str,
+) -> Result<String> {
     upsert_test_resources(
         &database.pool,
         &[Resource {
@@ -52,7 +66,7 @@ async fn insert_registry_child(
             0,
             json!({"source_event": "NewOwner", "node": node, "child_node": child,
                    "labelhash": labelhash, "owner": owner, "owner_getter": owner,
-                   "emitter_role": "registry"}),
+                   "emitter_role": emitter_role}),
         )],
     )
     .await?;
@@ -230,7 +244,13 @@ async fn v2_registry_children_are_listed_for_their_registry_owner() -> Result<()
             .unwrap_or_else(|| panic!("{name} is a subname: {subnames:#?}"));
         assert_eq!(row["name"], json!(name), "{row:#}");
         assert_eq!(row["display_name"], json!(name), "{row:#}");
-        for field in ["name", "display_name", "owner", "registration_status"] {
+        for field in [
+            "name",
+            "display_name",
+            "owner",
+            "registration_status",
+            "authority",
+        ] {
             assert_eq!(
                 row[field], subname[field],
                 "{field}: {row:#} vs {subname:#}"
@@ -244,12 +264,13 @@ async fn v2_registry_children_are_listed_for_their_registry_owner() -> Result<()
         );
         assert_eq!(row["relations"], json!(["manager"]), "{row:#}");
         assert_eq!(row["is_primary"], json!(false), "{row:#}");
+        assert_eq!(row["registration_status"], json!("unregistered"), "{row:#}");
+        assert_eq!(row["authority"], json!("ens_v1"), "{row:#}");
         for absent in [
             "registrant",
             "registered_at",
             "created_at",
             "expires_at",
-            "authority",
             "migrated_at",
         ] {
             assert!(row.get(absent).is_none(), "{absent}: {row:#}");
@@ -320,31 +341,341 @@ async fn v2_registry_children_follow_the_address_names_filters() -> Result<()> {
         "sort=name&order=desc",
         "include=counts",
         "include=role_summary",
+        "authority=ens_v1",
+        "authority=ens_v0,ens_v1",
     ] {
         let rows = read(query.to_owned()).await?;
         assert!(listed(&rows, "known.alpha.eth"), "{query}: {rows:#?}");
         assert!(listed(&rows, &unknown_name), "{query}: {rows:#?}");
     }
-    for query in ["relation=owner", "authority=ens_v1", "is_migrated=true"] {
+    for query in [
+        "relation=owner",
+        "authority=ens_v0",
+        "authority=ens_v2",
+        "is_migrated=true",
+    ] {
         let rows = read(query.to_owned()).await?;
         assert!(!listed(&rows, "known.alpha.eth"), "{query}: {rows:#?}");
         assert!(!listed(&rows, &unknown_name), "{query}: {rows:#?}");
     }
-    // An unknown expiry sorts last ascending, as for any row without one.
+    // An unknown expiry sorts first ascending, as for any row without one.
     let by_expiry = read("sort=expires_at".to_owned()).await?;
-    let first_unknown = by_expiry
+    let first_dated = by_expiry
         .iter()
-        .position(|row| row.get("expires_at").is_none())
-        .expect("a row without an expiry");
+        .position(|row| row.get("expires_at").is_some())
+        .expect("a row with an expiry");
+    assert!(first_dated > 0, "{by_expiry:#?}");
     assert!(
-        by_expiry[first_unknown..]
+        by_expiry[first_dated..]
             .iter()
-            .all(|row| row.get("expires_at").is_none()),
+            .all(|row| row.get("expires_at").is_some()),
         "{by_expiry:#?}"
     );
     // `q` matches the served text.
     let rows = read("q=kno".to_owned()).await?;
     assert_eq!(names_of(&rows), ["known.alpha.eth"], "{rows:#?}");
+
+    database.cleanup().await
+}
+
+/// A registry child with no surface carries the authority of the registry that owns its node:
+/// `ens_v1` for one the current ENSv1 registry recorded, `ens_v0` for one only the 2017 registry
+/// did (docs/glossary.md#registry-generation): the current registry answers `owner(node)` and
+/// `resolver(node)` from the 2017 registry while its own `recordExists(node)`, a nonzero stored
+/// owner, is false
+/// (upstream: .refs/ens_v1/contracts/registry/ENSRegistryWithFallback.sol:L18-L35 @ ens_v1@91c966f)
+/// (upstream: .refs/ens_v1/contracts/registry/ENSRegistry.sol:L153-L157 @ ens_v1@91c966f).
+/// Address names and subnames serve the same value, and the address-names `authority` filter
+/// matches it.
+#[tokio::test]
+async fn v2_registry_children_serve_the_authority_of_their_registry() -> Result<()> {
+    let database = TestDatabase::new_migrated().await?;
+    seed_bounded_membership_blocks(&database, 240).await?;
+    let (alpha, alpha_resource) =
+        seed_family_name(&database, "alpha.eth", 0x7a1_0000, "ens_v1").await?;
+    let current = insert_registry_child(
+        &database,
+        "alpha.eth",
+        "current",
+        RC_OWNER,
+        202,
+        Uuid::from_u128(0x7e1_0001),
+    )
+    .await?;
+    let old = insert_registry_child_from(
+        &database,
+        "alpha.eth",
+        "old",
+        RC_OWNER,
+        203,
+        Uuid::from_u128(0x7e1_0002),
+        "registry_old",
+    )
+    .await?;
+    bigname_storage::insert_normalized_event_fixtures(
+        &database.pool,
+        &[family_event(
+            "rc-authority-alpha-grant",
+            Some(&alpha),
+            Some(alpha_resource),
+            "RegistrationGranted",
+            "ens_v1_registrar_l1",
+            201,
+            0,
+            json!({"authority_kind": "registrar", "registrant": RC_OWNER,
+                   "expiry": 1_900_000_000i64}),
+        )],
+    )
+    .await?;
+    publish_test_families(&database, 240).await?;
+
+    let read = |query: &str| {
+        let uri = format!("/v1/addresses/{RC_OWNER}/names?namespace=ens&page_size=10{query}");
+        let database = &database;
+        async move { anyhow::Ok(rows_of(&read_family_pages(database, &uri).await?)) }
+    };
+    let rows = read("").await?;
+    let subnames =
+        rows_of(&read_family_pages(&database, "/v1/names/alpha.eth/subnames?page_size=10").await?);
+    for (node, authority) in [(&current, "ens_v1"), (&old, "ens_v0")] {
+        let row = rows
+            .iter()
+            .find(|row| row["namehash"] == json!(node))
+            .unwrap_or_else(|| panic!("{node} is listed: {rows:#?}"));
+        assert_eq!(row["authority"], json!(authority), "{row:#}");
+        assert_eq!(row["registration_status"], json!("unregistered"), "{row:#}");
+        assert_eq!(row["relations"], json!(["manager"]), "{row:#}");
+        let subname = subnames
+            .iter()
+            .find(|row| row["namehash"] == json!(node))
+            .unwrap_or_else(|| panic!("{node} is a subname: {subnames:#?}"));
+        assert_eq!(subname["authority"], row["authority"], "{subname:#}");
+        // No lease, so ENSv1's own object carries only a null expiry.
+        assert_eq!(row["ens_v1"], json!({"expires_at": null}), "{row:#}");
+        assert_eq!(subname["ens_v1"], row["ens_v1"], "{subname:#}");
+    }
+    let alpha_row = rows
+        .iter()
+        .find(|row| row["name"] == json!("alpha.eth"))
+        .expect("alpha.eth is listed");
+    assert_eq!(alpha_row["authority"], json!("ens_v1"), "{alpha_row:#}");
+
+    let nodes = |rows: &[Value]| {
+        let mut nodes: Vec<String> = rows
+            .iter()
+            .filter(|row| row["name"] != json!("alpha.eth"))
+            .map(|row| row["namehash"].as_str().expect("namehash").to_owned())
+            .collect();
+        nodes.sort();
+        nodes
+    };
+    let mut both = vec![current.clone(), old.clone()];
+    both.sort();
+    for (query, expected) in [
+        ("&authority=ens_v1", vec![current.clone()]),
+        ("&authority=ens_v0", vec![old.clone()]),
+        ("&authority=ens_v0,ens_v1", both),
+        ("&authority=ens_v2", Vec::new()),
+    ] {
+        let filtered = read(query).await?;
+        assert_eq!(nodes(&filtered), expected, "{query}: {filtered:#?}");
+    }
+
+    database.cleanup().await
+}
+
+/// The shadow surface Interpret writes for `<label>.alpha.eth`, a name whose label fails
+/// normalization (crates/adapters/src/schema_v2/identity.rs, `materialize`), with the
+/// `PreimageObserved` event of the `family` observer that named it, at `block`. Returns the
+/// child's name id.
+async fn insert_shadow_child_surface(
+    database: &TestDatabase,
+    child: &str,
+    label: &str,
+    family: &str,
+    source_event: &str,
+    block: i64,
+) -> Result<String> {
+    let id = format!("ens:{child}");
+    let labels = [label, "alpha", "eth"];
+    let mut dns = Vec::new();
+    for label in labels {
+        dns.push(u8::try_from(label.len())?);
+        dns.extend_from_slice(label.as_bytes());
+    }
+    dns.push(0);
+    sqlx::query(
+        "INSERT INTO bigname_phase.name_surfaces (
+             logical_name_id, namespace, raw_name, raw_labels, dns_encoded_name, namehash,
+             labelhashes, normalizer_version, visibility_state, normalization_errors,
+             deactivation_reason, deactivated_at, chain_id, block_hash, block_number,
+             provenance, canonicality_state)
+         VALUES ($1, 'ens', $2, $3, $4, $5, $6, $7, 'shadow',
+                 '[{\"error\": \"raw label is not byte-identical to its normalized form\"}]',
+                 'normalization_gate', to_timestamp(1700000000 + $9), $8,
+                 '0xhistory' || $9, $9, jsonb_build_object('source_event', $10::text),
+                 'canonical')",
+    )
+    .bind(&id)
+    .bind(labels.join("."))
+    .bind(labels.to_vec())
+    .bind(dns)
+    .bind(child)
+    .bind(
+        labels
+            .iter()
+            .map(|label| child_labelhash(label))
+            .collect::<Vec<_>>(),
+    )
+    .bind(bigname_domain::normalization::ENS_NORMALIZER_VERSION)
+    .bind(FAMILY_CHAIN)
+    .bind(block)
+    .bind(source_event)
+    .execute(&database.pool)
+    .await?;
+    bigname_storage::insert_normalized_event_fixtures(
+        &database.pool,
+        &[family_event(
+            &format!("rc-shadow-preimage-{label}"),
+            Some(&id),
+            None,
+            "PreimageObserved",
+            family,
+            block,
+            2,
+            json!({"source_event": source_event, "logical_name_id": id, "namehash": child,
+                   "visibility_state": "shadow", "deactivation_reason": "normalization_gate"}),
+        )],
+    )
+    .await?;
+    Ok(id)
+}
+
+/// A child NameWrapper wrapped under a label that fails normalization has only a shadow surface
+/// (crates/adapters/src/schema_v2/protocol/v1/wrapper.rs, `name_wrapped`), so no name row
+/// composes and both routes serve it from its registry. Its wrapper state and any lease are
+/// projected without a composed name, so its `ens_v1` object claims no lifecycle: no `expires_at`
+/// and no wrapper fields. A child whose only shadow a resolver `NameChanged` wrote has no such
+/// state and, like a sibling no label-bearing event named, keeps `expires_at: null`.
+#[tokio::test]
+async fn v2_shadowed_registry_child_serves_ens_v1_without_lifecycle() -> Result<()> {
+    let database = TestDatabase::new_migrated().await?;
+    seed_bounded_membership_blocks(&database, 240).await?;
+    let (alpha, alpha_resource) =
+        seed_family_name(&database, "alpha.eth", 0x7f1_0000, "ens_v1").await?;
+    for label in [b"Wrapped".as_slice(), b"Named".as_slice()] {
+        insert_family_label_preimage(&database.pool, label).await?;
+    }
+    let mut children = Vec::new();
+    for (index, label) in ["Wrapped", "Named", "plain"].into_iter().enumerate() {
+        let offset = i64::try_from(index)?;
+        children.push(
+            insert_registry_child(
+                &database,
+                "alpha.eth",
+                label,
+                RC_OWNER,
+                202 + offset,
+                Uuid::from_u128(0x7f1_0011 + u128::try_from(index)?),
+            )
+            .await?,
+        );
+    }
+    let (wrapped, named, plain) = (&children[0], &children[1], &children[2]);
+    let wrapped_id = insert_shadow_child_surface(
+        &database,
+        wrapped,
+        "Wrapped",
+        "ens_v1_wrapper_l1",
+        "NameWrapped",
+        202,
+    )
+    .await?;
+    // An admitted PublicResolver's `setName` takes any string for a node its caller controls
+    // (upstream: .refs/ens_v1/contracts/resolvers/profiles/NameResolver.sol:L13-L19 @ ens_v1@91c966f),
+    // so a reverse record can name the registry child under a label that fails normalization.
+    insert_shadow_child_surface(
+        &database,
+        named,
+        "Named",
+        "ens_v1_resolver_l1",
+        "NameChanged",
+        203,
+    )
+    .await?;
+    // The NameWrapper resource the adapter writes beside the shadow surface.
+    let wrapper_resource = Uuid::from_u128(0x7f1_0021);
+    upsert_test_resources(
+        &database.pool,
+        &[Resource {
+            resource_id: wrapper_resource,
+            token_lineage_id: None,
+            chain_id: FAMILY_CHAIN.to_owned(),
+            block_hash: "0xhistory202".to_owned(),
+            block_number: 202,
+            provenance: json!({"authority_kind": "wrapper"}),
+            canonicality_state: CanonicalityState::Canonical,
+        }],
+    )
+    .await?;
+    bigname_storage::insert_normalized_event_fixtures(
+        &database.pool,
+        &[
+            family_event(
+                "rc-shadow-alpha-grant",
+                Some(&alpha),
+                Some(alpha_resource),
+                "RegistrationGranted",
+                "ens_v1_registrar_l1",
+                201,
+                0,
+                json!({"authority_kind": "registrar", "registrant": RC_OWNER,
+                       "expiry": 1_900_000_000i64}),
+            ),
+            family_event(
+                "rc-shadow-wrapped-fuses",
+                Some(&wrapped_id),
+                Some(wrapper_resource),
+                "PermissionScopeChanged",
+                "ens_v1_wrapper_l1",
+                202,
+                1,
+                json!({"source_event": "NameWrapped", "node": wrapped,
+                       "wrapper_state": "emancipated", "fuses": 65_536,
+                       "expiry": 1_900_000_000i64}),
+            ),
+        ],
+    )
+    .await?;
+    publish_test_families(&database, 240).await?;
+
+    let rows = rows_of(
+        &read_family_pages(
+            &database,
+            &format!("/v1/addresses/{RC_OWNER}/names?namespace=ens&page_size=10"),
+        )
+        .await?,
+    );
+    let subnames =
+        rows_of(&read_family_pages(&database, "/v1/names/alpha.eth/subnames?page_size=10").await?);
+    for (node, ens_v1) in [
+        (wrapped, json!({})),
+        (named, json!({"expires_at": null})),
+        (plain, json!({"expires_at": null})),
+    ] {
+        let row = rows
+            .iter()
+            .find(|row| row["namehash"] == json!(node))
+            .unwrap_or_else(|| panic!("{node} is listed: {rows:#?}"));
+        let subname = subnames
+            .iter()
+            .find(|row| row["namehash"] == json!(node))
+            .unwrap_or_else(|| panic!("{node} is a subname: {subnames:#?}"));
+        for served in [row, subname] {
+            assert_eq!(served["authority"], json!("ens_v1"), "{served:#}");
+            assert_eq!(served["ens_v1"], ens_v1, "{served:#}");
+        }
+    }
 
     database.cleanup().await
 }
@@ -545,5 +876,66 @@ async fn v2_legacy_ownership_cursor_continues_but_wrong_filter_and_bad_anchor_fa
         assert_eq!(error["error"]["code"], json!("invalid_input"), "{case}: {error:#}");
     }
 
+    database.cleanup().await
+}
+
+/// A missing sort timestamp is the smallest value: undated rows come first ascending and last
+/// descending, and a walk of two-row pages lists exactly the one-page answer.
+async fn assert_undated_rows_are_smallest(database: &TestDatabase, base: &str, key: &str) -> Result<()> {
+    for order in ["asc", "desc"] {
+        let uri = format!("{base}&order={order}");
+        let (status, body) = read_family_response(database, &format!("{uri}&page_size=50")).await?;
+        anyhow::ensure!(status == StatusCode::OK, "{uri}: {body:#}");
+        let whole = rows_of(&[body]);
+        let walked = rows_of(&read_family_pages(database, &format!("{uri}&page_size=2")).await?);
+        assert_eq!(walked, whole, "{uri}");
+
+        let dated: Vec<bool> = whole
+            .iter()
+            .map(|row| row.get(key).is_some_and(|value| !value.is_null()))
+            .collect();
+        assert!(dated.contains(&true) && dated.contains(&false), "{uri}: {whole:#?}");
+        // Ascending, the rows from the first dated one on are all dated; descending, the rows from
+        // the first undated one on are all undated.
+        let tail_dated = order == "asc";
+        let boundary = dated.iter().position(|dated| *dated == tail_dated).expect("both kinds");
+        assert!(
+            dated[boundary..].iter().all(|dated| *dated == tail_dated),
+            "{uri}: {whole:#?}"
+        );
+        let stamps: Vec<i64> = whole
+            .iter()
+            .filter_map(|row| row.get(key)?.as_str()?.parse().ok())
+            .collect();
+        let mut sorted = stamps.clone();
+        sorted.sort();
+        if order == "desc" {
+            sorted.reverse();
+        }
+        assert_eq!(stamps, sorted, "{uri}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn v2_undated_address_names_sort_as_the_smallest_value_across_pages() -> Result<()> {
+    let database = TestDatabase::new_migrated().await?;
+    seed_registry_children_fixture(&database).await?;
+    // A surface-less registry child serves no timestamp, `created_at` included.
+    for key in ["registered_at", "expires_at", "created_at"] {
+        let base = format!("/v1/addresses/{RC_OWNER}/names?namespace=ens&sort={key}");
+        assert_undated_rows_are_smallest(&database, &base, key).await?;
+    }
+    database.cleanup().await
+}
+
+#[tokio::test]
+async fn v2_undated_subnames_sort_as_the_smallest_value_across_pages() -> Result<()> {
+    let database = TestDatabase::new_migrated().await?;
+    seed_family_children_fixture(&database).await?;
+    for key in ["registered_at", "expires_at"] {
+        let base = format!("/v1/names/alpha.eth/subnames?sort={key}");
+        assert_undated_rows_are_smallest(&database, &base, key).await?;
+    }
     database.cleanup().await
 }

@@ -203,6 +203,8 @@ pub(crate) async fn load_address_names_page_from(
             manifest_version,
             last_recomputed_at,
             served_owner,
+            served_authority,
+            served_lifecycle_shadow,
         "#,
     );
     if sort.is_timestamp() {

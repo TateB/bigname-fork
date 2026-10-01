@@ -4981,7 +4981,11 @@ async fn v2_get_subnames_sorts_by_timestamps_and_binds_cursors_to_sort_and_order
     let (database, payload) =
         v2_subnames_payload("/v1/names/Parent.eth/subnames?sort=expires_at&order=asc&page_size=1")
             .await?;
-    assert_eq!(v2_subname_names(&payload), vec!["alpha.parent.eth"]);
+    assert_eq!(
+        v2_subname_names(&payload),
+        vec!["beta.parent.eth"],
+        "rows without an expiry are the smallest value, ties broken by name"
+    );
     assert_eq!(payload["page"]["total_count"], json!(3));
     assert_eq!(payload["page"]["has_more"], json!(true));
     let first_cursor = payload["page"]["next_cursor"]
@@ -4996,11 +5000,7 @@ async fn v2_get_subnames_sorts_by_timestamps_and_binds_cursors_to_sort_and_order
         ),
     )
     .await?;
-    assert_eq!(
-        v2_subname_names(&payload),
-        vec!["beta.parent.eth"],
-        "rows without an expiry sort after every dated row, ties broken by name"
-    );
+    assert_eq!(v2_subname_names(&payload), vec!["gamma.parent.eth"]);
     let second_cursor = payload["page"]["next_cursor"]
         .as_str()
         .expect("second page must carry a cursor")
@@ -5012,7 +5012,7 @@ async fn v2_get_subnames_sorts_by_timestamps_and_binds_cursors_to_sort_and_order
         ),
     )
     .await?;
-    assert_eq!(v2_subname_names(&payload), vec!["gamma.parent.eth"]);
+    assert_eq!(v2_subname_names(&payload), vec!["alpha.parent.eth"]);
     assert_eq!(payload["page"]["has_more"], json!(false));
 
     let payload = v2_subnames_payload_for_database(
@@ -5022,8 +5022,8 @@ async fn v2_get_subnames_sorts_by_timestamps_and_binds_cursors_to_sort_and_order
     .await?;
     assert_eq!(
         v2_subname_names(&payload),
-        vec!["beta.parent.eth", "gamma.parent.eth", "alpha.parent.eth"],
-        "descending timestamp order lists rows without an expiry first"
+        vec!["alpha.parent.eth", "beta.parent.eth", "gamma.parent.eth"],
+        "descending timestamp order lists rows without an expiry last"
     );
 
     let payload = v2_subnames_payload_for_database(
@@ -5033,7 +5033,7 @@ async fn v2_get_subnames_sorts_by_timestamps_and_binds_cursors_to_sort_and_order
     .await?;
     assert_eq!(
         v2_subname_names(&payload),
-        vec!["alpha.parent.eth", "beta.parent.eth", "gamma.parent.eth"]
+        vec!["beta.parent.eth", "gamma.parent.eth", "alpha.parent.eth"]
     );
     let payload = v2_subnames_payload_for_database(
         &database,
@@ -5042,7 +5042,7 @@ async fn v2_get_subnames_sorts_by_timestamps_and_binds_cursors_to_sort_and_order
     .await?;
     assert_eq!(
         v2_subname_names(&payload),
-        vec!["beta.parent.eth", "gamma.parent.eth", "alpha.parent.eth"]
+        vec!["alpha.parent.eth", "beta.parent.eth", "gamma.parent.eth"]
     );
 
     let payload = v2_subnames_payload_for_database(
@@ -5070,7 +5070,7 @@ async fn v2_get_subnames_sorts_by_timestamps_and_binds_cursors_to_sort_and_order
     }
     assert_eq!(
         registered_walk,
-        vec!["beta.parent.eth", "gamma.parent.eth", "alpha.parent.eth"]
+        vec!["alpha.parent.eth", "beta.parent.eth", "gamma.parent.eth"]
     );
 
     for uri in [
@@ -5204,7 +5204,7 @@ async fn v2_get_subnames_include_expired_false_omits_past_expiry_rows() -> Resul
     .await?;
     assert_eq!(
         v2_subname_names(&payload),
-        vec!["beta.parent.eth", "gamma.parent.eth", "alpha.parent.eth"]
+        vec!["alpha.parent.eth", "beta.parent.eth", "gamma.parent.eth"]
     );
 
     let payload = v2_subnames_payload_for_database(
