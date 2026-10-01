@@ -108,7 +108,7 @@ jobs:
         run: |
           refs="$(git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}")"
           current="$(awk -v peeled="refs/tags/$TAG^{}" '$2 == peeled { print $1; found = 1 } END { if (!found) exit 1 }' <<<"$refs" \
-            || awk 'NR == 1 { print $1 }' <<<"$refs")"
+            || awk -v want="refs/tags/$TAG" '$2 == want { print $1 }' <<<"$refs")"
           if [[ "$current" != "$HEAD_SHA" ]]; then
             echo "::error::tag $TAG now points at ${current:-nothing}, not $HEAD_SHA"
             exit 1
