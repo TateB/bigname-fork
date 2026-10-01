@@ -29,6 +29,7 @@ const LOCKED_CONTROLLER: &str = "0xab1b57c6ee5e91e6090595c0af14cb9b8bc7773f";
 const GRAVEYARD: &str = "0x950b93885b33ce4c7e8571be2c88a1aa93d82f49";
 const VERIFIABLE_FACTORY: &str = "0x9e726eb570beb6bceb495ab8cda7df517d4e841c";
 const WRAPPER_REGISTRY_IMPLEMENTATION: &str = "0x2741543c3b14640b97bc70a233318032f7e35bac";
+const ROOT_REGISTRY: &str = "0x9703dbd26dab89504490994138cf2c575251a9ce";
 const MIGRATION_REGISTRY: &str = "0x0000000000000000000000000000000000000771";
 /// The role bitmap the unlocked controller grants a migrated name's owner.
 const MIGRATED_ROLES: &str = "97409655027181761882228017414928043062435250176";
@@ -63,6 +64,7 @@ mod v2 {
         event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value);
         event EACRolesChanged(uint256 indexed resource, address indexed account, uint256 oldRoleBitmap, uint256 newRoleBitmap);
         event RegistryCreated();
+        event ParentUpdated(address indexed parent, string label, address indexed sender);
         event ProxyDeployed(address indexed sender, address indexed proxyAddress, uint256 salt, address implementation);
         event AddrChanged(bytes32 indexed node, address a);
         event TextChanged(bytes32 indexed node, string indexed indexedKey, string key, string value);
@@ -206,6 +208,14 @@ async fn seed_history(pool: &PgPool, lineage: &[i64]) -> TestResult {
     let mut seed = seeder(pool);
 
     seed.block(FIRST_BLOCK).await?;
+    // The deployment points the ETH registry at the root registry
+    // (upstream: .refs/ens_v2_sepolia_20260916/contracts/deploy/01_ETHRegistry.ts:L54-64 @ ens_v2_sepolia_20260916@366de741).
+    let parent = v2::ParentUpdated {
+        parent: ROOT_REGISTRY.parse()?,
+        label: "eth".to_owned(),
+        sender: owner,
+    };
+    seed.log(ETH_REGISTRY, parent.encode_log_data()).await?;
     seed.register_v1("alice", START + 10 * GRACE).await?;
     seed.register_v1("carol", START + 1_000).await?;
     seed.register_v2("bob", START + 2_000, OWNER).await?;
@@ -333,6 +343,7 @@ async fn ensv2_lookahead_matches_full_state_for_every_batch() -> TestResult {
         seed_history(database.pool(), &OFFSETS).await?;
         stamp_interpreter_hash(database.pool()).await?;
         super::RETRIES.set(0);
+        super::WHOLE_REGISTRY_BATCHES.take();
         let walk = walk_seeded(
             database.pool(),
             CHAIN,
@@ -347,6 +358,12 @@ async fn ensv2_lookahead_matches_full_state_for_every_batch() -> TestResult {
         database.cleanup().await?;
         // The walk runs the lookahead loader beside the engine's choice. This history reads
         // names no log or stored event mentions, so it must exercise the retry.
+        // Only the batch that sets the ETH registry's parent renames every token in it.
+        assert_eq!(
+            super::WHOLE_REGISTRY_BATCHES.take(),
+            BTreeSet::from([FIRST_BLOCK]),
+            "batches that loaded a whole ENSv2 registry at {blocks_per_batch} blocks per batch"
+        );
         assert!(
             super::RETRIES.get() > 0,
             "no lookahead attempt was retried for {blocks_per_batch} blocks per batch"

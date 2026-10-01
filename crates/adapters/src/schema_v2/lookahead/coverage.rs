@@ -49,6 +49,11 @@ use std::{cell::RefCell, collections::BTreeSet};
 //   loaded (`v2_due_window`). A refresh that ends at or before the window's start is the
 //   restore's own catch-up to the batch's predecessor: it changes only loaded tokens, and
 //   each of those reports its key again when the batch reads it.
+// - A restore re-derives the names of the loaded tokens of a registry it marks dirty, such as
+//   one whose restored `ParentChanged` or crossed expiry renames its tokens, without loading
+//   the whole registry: a token it did not load is not read by the batch, and if the batch
+//   does read it the retry loads it and restores again. A batch that marks a registry dirty
+//   reads every token in it, because each of them emits its new name.
 // - Restore finish and `replace_v2_suffix_anchors` re-derive the name of every loaded token.
 //   Each derivation reads the token's ancestors through the reporting maps, and a token that
 //   is not loaded is not read by the batch.
@@ -67,6 +72,7 @@ struct Coverage {
     names: BTreeSet<String>,
     v2_keys: BTreeSet<String>,
     v2_due_window: Option<(i64, i64)>,
+    restoring: bool,
     missing_names: BTreeSet<String>,
     missing_v2_keys: BTreeSet<String>,
     uncovered_window: Option<(i64, i64)>,
@@ -80,6 +86,7 @@ impl Drop for Clear {
 
 pub(super) fn checked<T>(
     loaded: &V1BatchDependencies,
+    restoring: bool,
     operation: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     COVERAGE.with_borrow_mut(|scope| {
@@ -92,6 +99,7 @@ pub(super) fn checked<T>(
                 .collect(),
             v2_keys: loaded.v2_keys.clone(),
             v2_due_window: loaded.v2_due_window,
+            restoring,
             missing_names: BTreeSet::new(),
             missing_v2_keys: BTreeSet::new(),
             uncovered_window: None,
@@ -160,6 +168,11 @@ impl std::error::Error for UnloadedKeys {}
 
 fn active() -> bool {
     COVERAGE.with_borrow(Option::is_some)
+}
+
+/// Whether a lookahead restore, rather than a batch, is running.
+pub(in crate::schema_v2) fn restoring() -> bool {
+    COVERAGE.with_borrow(|scope| scope.as_ref().is_some_and(|scope| scope.restoring))
 }
 
 /// Report a read of name-keyed state shared between the ENSv1-model and ENSv2 code

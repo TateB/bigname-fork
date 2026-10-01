@@ -360,7 +360,7 @@ pub fn prepare_schema_v2_batch_lookahead(
                 .all(|key| v2_key_loaded(loaded, key)),
         "lookahead dependencies were not completely loaded"
     );
-    coverage::checked(loaded, || {
+    coverage::checked(loaded, false, || {
         super::prepare_schema_v2_batch_incremental_with_provenance(
             input,
             provenance_manifests,
@@ -381,7 +381,7 @@ pub fn restore_schema_v2_lookahead_session(
     latest_v2_topology: Option<time::OffsetDateTime>,
     loaded: &V1BatchDependencies,
 ) -> anyhow::Result<AdapterSession> {
-    coverage::checked(loaded, || {
+    coverage::checked(loaded, true, || {
         restore.apply_prior_events(prior_events)?;
         restore.include_v2_topology_timestamp(latest_v2_topology);
         Ok(restore.finish(resume_predecessor_timestamp))
@@ -399,5 +399,5 @@ pub fn v2_key_loaded(loaded: &V1BatchDependencies, key: &str) -> bool {
 pub use coverage::{UnloadedKeys, v2_key, v2_registry_key};
 pub(super) use coverage::{
     observe_name, observe_node, observe_v2, observe_v2_expiry_window, observe_v2_registry,
-    v2_observation_id,
+    restoring, v2_observation_id,
 };

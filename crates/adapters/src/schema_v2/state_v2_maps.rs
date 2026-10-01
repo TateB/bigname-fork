@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::{
     evm_abi::hex_string,
     schema_v2::lookahead::{
-        observe_name, observe_v2, observe_v2_expiry_window, observe_v2_registry,
+        observe_name, observe_v2, observe_v2_expiry_window, observe_v2_registry, restoring,
     },
 };
 
@@ -205,9 +205,12 @@ impl<'a, K: Ord + Clone, V: Clone + Default> CoveredEntry<'a, K, V> {
 }
 
 impl<V: Clone> Covered<TokenKey, String, V> {
-    /// The keys of every token `registry` holds.
+    /// The keys of every token `registry` holds, or during a lookahead restore every loaded
+    /// one (see lookahead/coverage.rs).
     pub(in crate::schema_v2) fn registry_keys(&self, registry: &str) -> Vec<String> {
-        observe_v2_registry(registry);
+        if !restoring() {
+            observe_v2_registry(registry);
+        }
         let prefix = format!("{registry}:");
         self.map
             .range(prefix.clone()..)

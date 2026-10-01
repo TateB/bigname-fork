@@ -177,7 +177,13 @@ pub(crate) async fn batch_input(
                             .any(|key| v2_key_loaded(&dependencies, key)) =>
                 {
                     #[cfg(test)]
-                    RETRIES.set(RETRIES.get() + 1);
+                    {
+                        RETRIES.set(RETRIES.get() + 1);
+                        if unloaded.v2_keys.iter().any(|key| key.ends_with(":*")) {
+                            WHOLE_REGISTRY_BATCHES
+                                .with_borrow_mut(|batches| batches.insert(from_block));
+                        }
+                    }
                     dependencies.nodes.extend(unloaded.names.iter().cloned());
                     dependencies
                         .v2_keys
@@ -343,6 +349,8 @@ fn invalid_dependencies(operation: &str, error: anyhow::Error) -> InterpretError
 thread_local! {
     /// Lookahead attempts discarded because they read an unloaded key, on this thread.
     pub(super) static RETRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static WHOLE_REGISTRY_BATCHES: std::cell::RefCell<std::collections::BTreeSet<i64>> =
+        const { std::cell::RefCell::new(std::collections::BTreeSet::new()) };
 }
 
 #[cfg(test)]
