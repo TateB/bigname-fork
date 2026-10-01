@@ -108,7 +108,7 @@ pub(crate) async fn get_history(
         params: &params,
         child_registrations,
     };
-    let (snapshot, request_cursor) =
+    let (mut snapshot, request_cursor) =
         super::collection_snapshot::CollectionSnapshot::capture_history(
             &state,
             Some(&namespace),

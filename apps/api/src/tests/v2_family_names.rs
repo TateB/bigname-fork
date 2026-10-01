@@ -580,9 +580,10 @@ async fn v2_get_with_marker_flip_after_fence(
 }
 
 // The composed listings answer the stale 409 when the marker stops being servable after their
-// fence passed and before their composed read (a window the fence cannot close): a rebuild
-// starting, or a marker written by another interpreter build. They answer it as every other
-// composed read does, not with a server error.
+// fence passed and before their read snapshot begins (a window the fence cannot close): a
+// rebuild starting, or a marker written by another interpreter build. Search refuses at its
+// composed read; the expiring list and bound names refuse at their snapshot's publication
+// check. None answers with a server error.
 #[tokio::test]
 async fn v2_composed_listings_answer_409_when_the_marker_changes_after_their_fence() -> Result<()> {
     let database = TestDatabase::new_migrated().await?;

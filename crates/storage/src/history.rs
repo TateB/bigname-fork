@@ -531,8 +531,11 @@ pub async fn load_address_history_page_for_relations(
 
 /// Load canonical normalized events by row id in the shared chain-position
 /// order, for callers that already hold event ids from projection provenance.
-pub async fn load_history_events_by_ids(pool: &PgPool, ids: &[i64]) -> Result<Vec<HistoryEvent>> {
-    paging::load_history_events_by_ids(pool, ids)
+pub async fn load_history_events_by_ids(
+    db: impl Into<crate::ReadDb<'_>>,
+    ids: &[i64],
+) -> Result<Vec<HistoryEvent>> {
+    paging::load_history_events_by_ids(db, ids)
         .await
         .context("failed to load normalized events by id")
 }

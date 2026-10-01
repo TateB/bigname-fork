@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
-use sqlx::{PgConnection, PgPool, Row};
+use sqlx::{PgConnection, Row};
 
 use super::{
     FamilyPosition,
@@ -45,7 +45,7 @@ use crate::{
 /// `load_address_names_current_page_filtered` over the families.
 #[allow(clippy::too_many_arguments)]
 pub async fn load_family_address_names_page(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     address: &str,
     namespace: Option<&str>,
     relations: Option<&[AddressNameRelation]>,
@@ -58,7 +58,7 @@ pub async fn load_family_address_names_page(
     cursor: Option<&AddressNamesCurrentSortedCursor>,
     page_size: u64,
 ) -> Result<AddressNamesCurrentSortedPage> {
-    let mut snapshot = crate::families::read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     let (mut rows, names) =
         compose_address_name_rows(&mut snapshot, address, namespace, relations, false).await?;
     // The surface-less ENSv1 registry children the address owns, which compose no name row.
@@ -87,7 +87,7 @@ pub async fn load_family_address_names_page(
         page_size,
     )
     .await?;
-    snapshot.commit().await?;
+    snapshot.close().await?;
     Ok(page)
 }
 

@@ -1,5 +1,5 @@
-// The role-summary grant read is not pinned to the captured publication. These tests hold a
-// request between membership selection and that read, so a publication change lands mid-request.
+// The role-summary grant read runs on the page's snapshot. These tests hold a request between
+// membership selection and that read, so a publication change lands mid-request.
 
 const ADDRESS_NAME_FENCE_ROUTES: [&str; 3] = [
     "q=alpha",
@@ -51,7 +51,7 @@ async fn address_name_fence_resource(database: &TestDatabase, uri: &str) -> Resu
     Ok(Uuid::parse_str(id)?)
 }
 
-async fn assert_overflow_after_publication_change_is_stale(route: &str) -> Result<()> {
+async fn assert_grants_published_mid_read_are_not_served(route: &str) -> Result<()> {
     let database = TestDatabase::new_migrated().await?;
     seed_v2_address_names_fixture(&database).await?;
     seed_v2_resolves_to_records(&database).await?;
@@ -59,35 +59,36 @@ async fn assert_overflow_after_publication_change_is_stale(route: &str) -> Resul
     let resource = address_name_fence_resource(&database, &uri).await?;
     // The captured publication is within budget; the next one takes the page over it.
     seed_address_name_budget_grants(&database, resource, 1000).await?;
-    let response = address_name_role_summary_response_across_pause(
-        &database,
-        &format!("{uri}&include=role_summary"),
-        resource,
-        Some(1001),
-    )
-    .await?;
+    let uri = format!("{uri}&include=role_summary");
+    let captured = v2_address_names_payload_for_database(&database, &uri).await?;
+    let response =
+        address_name_role_summary_response_across_pause(&database, &uri, resource, Some(1001))
+            .await?;
     let status = response.status();
-    let error: Value = read_json(response).await?;
-    assert_eq!(status, StatusCode::CONFLICT, "{route}: {error}");
-    assert_eq!(error["error"]["code"], json!("stale"), "{route}");
-    assert!(error.get("data").is_none(), "{route}");
+    let payload: Value = read_json(response).await?;
+    assert_eq!(status, StatusCode::OK, "{route}: {payload}");
+    assert_eq!(
+        address_name_inline_grants(&payload["data"][0]).len(),
+        1000,
+        "{route}"
+    );
+    assert_eq!(payload["meta"]["as_of"], captured["meta"]["as_of"], "{route}");
     database.cleanup().await
 }
 
 #[tokio::test]
-async fn v2_address_names_grant_budget_overflow_after_publication_change_is_stale() -> Result<()> {
-    assert_overflow_after_publication_change_is_stale(ADDRESS_NAME_FENCE_ROUTES[0]).await
+async fn v2_address_names_grants_published_mid_read_are_not_served() -> Result<()> {
+    assert_grants_published_mid_read_are_not_served(ADDRESS_NAME_FENCE_ROUTES[0]).await
 }
 
 #[tokio::test]
-async fn v2_resolves_to_grant_budget_overflow_after_publication_change_is_stale() -> Result<()> {
-    assert_overflow_after_publication_change_is_stale(ADDRESS_NAME_FENCE_ROUTES[1]).await
+async fn v2_resolves_to_grants_published_mid_read_are_not_served() -> Result<()> {
+    assert_grants_published_mid_read_are_not_served(ADDRESS_NAME_FENCE_ROUTES[1]).await
 }
 
 #[tokio::test]
-async fn v2_resolves_to_evm_grant_budget_overflow_after_publication_change_is_stale() -> Result<()>
-{
-    assert_overflow_after_publication_change_is_stale(ADDRESS_NAME_FENCE_ROUTES[2]).await
+async fn v2_resolves_to_evm_grants_published_mid_read_are_not_served() -> Result<()> {
+    assert_grants_published_mid_read_are_not_served(ADDRESS_NAME_FENCE_ROUTES[2]).await
 }
 
 #[tokio::test]

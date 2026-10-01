@@ -334,14 +334,14 @@ async fn v2_resolver_overview_cursor_continues_across_a_same_height_republish() 
     database.cleanup().await
 }
 
-/// Runs one request, republishes the collection publication once the handler reaches
-/// `finish()` (after its last generation check), and returns the stale error message.
-async fn resolver_publication_replaced_before_finish(
+/// Runs one request, republishes the collection publication after admission but before the
+/// handler begins its read snapshot, and returns the stale error message.
+async fn resolver_publication_replaced_before_read(
     database: &TestDatabase,
     uri: String,
 ) -> Result<String> {
-    let (_guard, control) =
-        crate::v2::collection_snapshot::finish_test_hooks::install(&database.pool).await?;
+    use crate::v2::collection_snapshot::finish_test_hooks::{Stage, install_at};
+    let (_guard, control) = install_at(&database.pool, Stage::BeforeRead).await?;
     let state = database.app_state();
     let request = tokio::spawn(async move {
         app_router(state)
@@ -358,7 +358,7 @@ async fn resolver_publication_replaced_before_finish(
         control.wait_until_reached(),
     )
     .await
-    .context("request never reached the collection publication finish")?;
+    .context("request never reached its read snapshot")?;
     commit_family_block(&database.pool).await?;
     control.resume().await;
     let response = request
@@ -374,11 +374,11 @@ async fn resolver_publication_replaced_before_finish(
 
 const RETRY_REQUEST: &str = "collection publication changed during the read; retry the request";
 
-// A publication during the continuation's own read still refuses it, but its cursor is
+// A publication between the continuation's admission and its read refuses it, but its cursor is
 // not bound to the publication it replaced, so the answer asks for a retry, and the same cursor
 // then continues.
 #[tokio::test]
-async fn v2_resolver_overview_continuation_retries_when_publication_changes_before_finish()
+async fn v2_resolver_overview_continuation_retries_when_publication_changes_before_its_read()
 -> Result<()> {
     let database = TestDatabase::new_migrated().await?;
     seed_v2_resolver_bound_names_fixture(&database).await?;
@@ -390,17 +390,17 @@ async fn v2_resolver_overview_continuation_retries_when_publication_changes_befo
         .expect("overview first page carries a cursor")
         .to_owned();
     let continued =
-        resolver_publication_replaced_before_finish(&database, format!("{base}&cursor={cursor}"))
+        resolver_publication_replaced_before_read(&database, format!("{base}&cursor={cursor}"))
             .await?;
     assert_eq!(continued, RETRY_REQUEST);
     v2_resolver_payload_for_database(&database, &format!("{base}&cursor={cursor}")).await?;
-    let cursorless = resolver_publication_replaced_before_finish(&database, base).await?;
+    let cursorless = resolver_publication_replaced_before_read(&database, base).await?;
     assert_eq!(cursorless, RETRY_REQUEST);
     database.cleanup().await
 }
 
 #[tokio::test]
-async fn v2_resolver_collection_continuation_retries_when_publication_changes_before_finish()
+async fn v2_resolver_collection_continuation_retries_when_publication_changes_before_its_read()
 -> Result<()> {
     let database = TestDatabase::new_migrated().await?;
     seed_v2_resolver_roles_pages(&database).await?;
@@ -411,11 +411,11 @@ async fn v2_resolver_collection_continuation_retries_when_publication_changes_be
         .expect("roles first page carries a cursor")
         .to_owned();
     let continued =
-        resolver_publication_replaced_before_finish(&database, format!("{base}&cursor={cursor}"))
+        resolver_publication_replaced_before_read(&database, format!("{base}&cursor={cursor}"))
             .await?;
     assert_eq!(continued, RETRY_REQUEST);
     v2_resolver_payload_for_database(&database, &format!("{base}&cursor={cursor}")).await?;
-    let cursorless = resolver_publication_replaced_before_finish(&database, base).await?;
+    let cursorless = resolver_publication_replaced_before_read(&database, base).await?;
     assert_eq!(cursorless, RETRY_REQUEST);
     database.cleanup().await
 }

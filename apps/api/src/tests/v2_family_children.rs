@@ -446,8 +446,9 @@ async fn v2_get_with_marker_flip_at(
 
 // Every route that reads the child families answers the stale 409, never a server error or an
 // empty list, when the marker is not servable: before the request (a rebuild in flight, where the
-// fence refuses first), and when it stops being servable after the route's fence, at each of the
-// route's composed and child reads in turn, which reaches every child read's error mapping.
+// fence refuses first), and when it stops being servable after the route's fence, at each read
+// snapshot the route begins in turn. A route that reads on its one collection snapshot refuses
+// there, at that snapshot's publication check.
 #[tokio::test]
 async fn v2_child_reads_answer_409_when_the_marker_is_not_servable() -> Result<()> {
     let database = TestDatabase::new_migrated().await?;

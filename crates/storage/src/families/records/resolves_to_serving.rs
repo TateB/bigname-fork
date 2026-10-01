@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
-use sqlx::{PgConnection, PgPool};
+use sqlx::PgConnection;
 use uuid::Uuid;
 
 use super::{
@@ -38,7 +38,7 @@ use crate::{
 /// `load_address_records_current_page` over the families.
 #[allow(clippy::too_many_arguments)]
 pub async fn load_family_resolves_to_page(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     address: &str,
     coin_type: &str,
     namespaces: Option<&[String]>,
@@ -54,7 +54,7 @@ pub async fn load_family_resolves_to_page(
     if may_fall_back(coin_type) {
         coin_types.push(ENSIP19_DEFAULT_ADDRESS_RECORD_KEY["addr:".len()..].to_owned());
     }
-    let mut snapshot = crate::families::read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     let (rows, names) =
         compose_address_record_rows(&mut snapshot, address, &coin_types, namespaces).await?;
     let page = load_address_records_page_from(
@@ -75,14 +75,14 @@ pub async fn load_family_resolves_to_page(
         page_size,
     )
     .await?;
-    snapshot.commit().await?;
+    snapshot.close().await?;
     Ok(page)
 }
 
 /// `load_address_records_current_evm_page` over the families.
 #[allow(clippy::too_many_arguments)]
 pub async fn load_family_resolves_to_evm_page(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     address: &str,
     namespaces: Option<&[String]>,
     dedupe_by: AddressNamesCurrentDedupe,
@@ -93,7 +93,7 @@ pub async fn load_family_resolves_to_evm_page(
     cursor: Option<&AddressNamesCurrentSortedCursor>,
     page_size: u64,
 ) -> Result<AddressRecordsCurrentEvmPage> {
-    let mut snapshot = crate::families::read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     // Every coin type the index holds for the address; the page statement keeps the EVM ones.
     let coin_types: Vec<String> = sqlx::query_scalar(
         "/* storage:families.records.address_index_coin_types */
@@ -126,7 +126,7 @@ pub async fn load_family_resolves_to_evm_page(
         page_size,
     )
     .await?;
-    snapshot.commit().await?;
+    snapshot.close().await?;
     Ok(page)
 }
 

@@ -35,8 +35,9 @@ mod scoped {
         });
     }
 
-    /// Runs `future` so that every composed read in it, before it opens its snapshot, notifies
-    /// `reached` and waits for `resume`.
+    /// Runs `future` so that every composed read in it, and every request read snapshot
+    /// ([`crate::begin_read_snapshot`]), before it opens its snapshot, notifies `reached` and
+    /// waits for `resume`.
     pub async fn with_pause_before_snapshot<F: Future>(
         reached: Arc<Notify>,
         resume: Arc<Notify>,
@@ -60,7 +61,7 @@ mod scoped {
         BATCH_SIZE.scope(size.max(1), future).await
     }
 
-    pub(in crate::families::name) async fn before_snapshot() {
+    pub(crate) async fn before_snapshot() {
         if let Ok((reached, resume)) = PAUSE_BEFORE.try_with(Clone::clone) {
             reached.notify_one();
             resume.notified().await;
@@ -80,7 +81,9 @@ mod scoped {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-pub(super) use scoped::{after_publication, batch_size, before_snapshot, note_submitted_rows};
+pub(crate) use scoped::before_snapshot;
+#[cfg(any(test, feature = "test-support"))]
+pub(super) use scoped::{after_publication, batch_size, note_submitted_rows};
 #[cfg(any(test, feature = "test-support"))]
 pub use scoped::{
     with_batch_size, with_pause_after_publication, with_pause_before_snapshot,
@@ -88,7 +91,7 @@ pub use scoped::{
 };
 
 #[cfg(not(any(test, feature = "test-support")))]
-pub(super) async fn before_snapshot() {}
+pub(crate) async fn before_snapshot() {}
 
 #[cfg(not(any(test, feature = "test-support")))]
 pub(super) async fn after_publication() {}
