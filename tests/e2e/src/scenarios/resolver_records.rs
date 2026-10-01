@@ -1287,6 +1287,7 @@ fn assert_zero_name_shape(record: &Value, namespace: &str, name: &str) {
         "registration_id",
         "registrant",
         "owner",
+        "manager",
         "registered_at",
         "created_at",
         "expires_at",
@@ -1319,6 +1320,7 @@ fn assert_zero_name_shape(record: &Value, namespace: &str, name: &str) {
     }
     // An active registration serves its registry owner, here the registrant.
     assert_eq!(record["owner"], record["registrant"]);
+    assert_eq!(record["manager"], record["owner"]);
     assert_eq!(record["status"], "ok");
     assert_eq!(record["name"], name);
     assert_eq!(record["namespace"], namespace);

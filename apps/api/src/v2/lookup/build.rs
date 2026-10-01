@@ -202,8 +202,12 @@ fn build_detail_record(
             })
             .flatten(),
         token_id,
+        manager: name_record::served_manager(
+            &record.row.declared_summary,
+            registration.owner.as_ref(),
+            registration.registrant.as_ref(),
+        ),
         owner: registration.owner,
-        manager: None,
         registrant: registration.registrant,
         registered_at: registration.registered_at,
         created_at: registration.created_at,
