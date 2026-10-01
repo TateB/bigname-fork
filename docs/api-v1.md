@@ -1104,23 +1104,24 @@ the registry owner of its node; on an unwrapped `.eth` second-level name that
 is the controller, while `registrant` stays the BaseRegistrar token holder. A
 wrapped name's registry owner is the NameWrapper contract
 (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L372 @ ens_v1@91c966f),
-which lets its token holder change the record
+and the NameWrapper lets its token holder, or an operator the holder
+approved, change the record
 (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L202-L205 @ ens_v1@91c966f)
-(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L666-L669 @ ens_v1@91c966f)
+(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L666-L669 @ ens_v1@91c966f),
 whatever the name's `ens_v1.wrapper_state`
-(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L214-L222 @ ens_v1@91c966f),
-so a wrapped name serves the NameWrapper token holder, the row's `registrant`.
+(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L214-L222 @ ens_v1@91c966f);
+a burned fuse can still forbid a particular change. A wrapped name therefore
+serves the NameWrapper token holder, the row's `registrant`.
 `manager` is omitted wherever the address it copies is omitted, such as on a
-released name. It can equal `owner` or `registrant`; the ENS app shows only an
-owner for an `emancipated` or `locked` name, and a client that wants that
-display hides `manager` when it equals the holder it shows as the owner.
+released name. It can equal `owner` or `registrant`.
 
 Two known gaps remain. NameWrapper refuses the holder while a wrapped `.eth`
 name is inside its registrar grace period
 (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L1082-L1089 @ ens_v1@91c966f);
 the field still serves the holder then, while the `manager` relation omits it.
-The `manager` relation also omits a `locked` name, which the field serves. See
-[known divergences](upstream.md#known-divergences).
+The first is listed under [known divergences](upstream.md#known-divergences).
+The `manager` relation also omits a `locked` name, which the field serves;
+aligning both is tracked as TYR-136.
 
 ## Status Vocabulary
 
