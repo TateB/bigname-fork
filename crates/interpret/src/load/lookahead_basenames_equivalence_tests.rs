@@ -92,7 +92,16 @@ fn seeder(pool: &PgPool) -> Seeder<'_> {
 }
 
 impl Seeder<'_> {
-    /// The declared logs one Basenames controller registration emits, in contract order.
+    /// The token mint, registry `NewOwner` and controller `NameRegistered` of one Basenames
+    /// controller registration, in the order the contracts emit them
+    /// (upstream: .refs/basenames/src/L2/RegistrarController.sol:L536 @ basenames@1809bbc)
+    /// (upstream: .refs/basenames/src/L2/BaseRegistrar.sol:L272-L274 @ basenames@1809bbc)
+    /// (upstream: .refs/basenames/src/L2/BaseRegistrar.sol:L445 @ basenames@1809bbc)
+    /// (upstream: .refs/basenames/src/L2/Registry.sol:L90 @ basenames@1809bbc)
+    /// (upstream: .refs/basenames/src/L2/Registry.sol:L122 @ basenames@1809bbc)
+    /// (upstream: .refs/basenames/src/L2/RegistrarController.sol:L548 @ basenames@1809bbc).
+    /// The registry's resolver and TTL logs and the registrar's `NameRegisteredWithRecord`
+    /// between them are left out.
     async fn register_basename(&mut self, label: &str, owner: &str, expires: i64) -> TestResult {
         let owner: Address = owner.parse()?;
         let minted = registrar::Transfer {

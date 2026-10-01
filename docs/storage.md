@@ -1649,8 +1649,8 @@ readable in the same input snapshot.
 On a chain whose manifests all belong to ENSv1 or Basenames Base source
 families (or to the families that interpret no logs), Interpret instead
 restores state for each batch with the [lookahead loader](glossary.md#lookahead-loader).
-The Basenames Base families are interpreted by the ENSv1 protocol code, so they
-share its name model and dependency rules. Before
+Interpret's adapter handles the Basenames Base families with its ENSv1 protocol
+code, so the loader applies the same name model and dependency rules to them. Before
 interpreting, the adapter decodes the batch's logs without interpreting them
 and lists every name (by namehash) and resource the logs can touch.
 Interpret adds the names whose registrar expiry plus the 90-day grace period
