@@ -1655,7 +1655,7 @@ events mention join the set. Interpret restores a fresh adapter state from exact
 same canonical-lineage and pre-batch boundary rules as a cold restore, and
 interprets the batch against it in the same input snapshot. ENSv2
 interpretation derives names from registry state, such as the ENSv1 predecessor
-a migration retires, so the collector cannot list them all in advance: when
+an [ENSv1→ENSv2 migration](glossary.md#ensv1ensv2-migration) retires, so the collector cannot list them all in advance: when
 restore or interpretation reads a name that was not loaded, Interpret discards
 that attempt, adds the name, repeats the rounds above and interprets again.
 Every attempt that continues adds a name not loaded before, and the names a
