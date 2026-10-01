@@ -54,7 +54,7 @@ pub(crate) async fn load_on(
             &mut *conn,
             chain,
             &resources,
-            FamilyAttribution::Load,
+            FamilyAttribution::Omit,
         )
         .await?;
         for (resource, inventory) in loaded {

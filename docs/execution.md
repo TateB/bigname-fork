@@ -37,13 +37,14 @@ an answer at another position.
 Lookup captures the participating family publications: block number, block hash,
 interpreter content hash and marker sequence, together with the selected input
 revision, bindings, inventory boundary and real manifest provenance. A live
-publication may trail the stored execution head by the API's
+publication may trail the stored head by the API's
 [publication lag tolerance](glossary.md#publication-lag-tolerance) (`BIGNAME_API_PUBLICATION_LAG_TOLERANCE_BLOCKS`, one
 block by default). The database guard requires the same head and the same
 publication the lookup captured, so the lag admitted at capture still holds
-when it checks. Provider calls remain pinned to the
-captured execution head; the indexed comparison retains its own published
-position. The snapshot contains the full declared topology, including
+when it checks. Same-chain record calls are pinned to the captured
+publication's block hash, the position the indexed comparison also uses; a
+Basenames record call runs on Ethereum at the position the projected name
+carries, and primary-name calls stay pinned to the stored head. The snapshot contains the full declared topology, including
 wildcards and any admitted cross-chain transport context.
 
 API revalidation begins a fresh `REPEATABLE READ, READ ONLY` transaction after
@@ -105,7 +106,7 @@ arm-scoped. The supported topology classes are:
   resolution on the profile's Ethereum L1 (Mainnet or Sepolia) with a null
   exact resolver and no linked-subregistry, projected wildcard, or
   transport path, executed through that chain's manifest-admitted Universal
-  Resolver at its readable head. This last route has no indexed comparison and retains the exact resolver
+  Resolver at the captured family publication's block. This last route has no indexed comparison and retains the exact resolver
   as null in the API response. The entrypoint walks to the nearest nonzero
   ancestor and accepts it only when it implements ENSIP-10
   `(upstream: .refs/ens_v1/contracts/universalResolver/RegistryUtils.sol:L25-L38 @ ens_v1@91c966f)`
