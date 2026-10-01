@@ -322,10 +322,12 @@ pub enum ProviderKind {
     Coinbase,
 }
 
-/// Whether `endpoint` is a well-formed URL for a transport other than HTTP(S), such as a
-/// fixture placeholder. A malformed URL is not: the JSON-RPC provider refuses it.
+/// Whether `endpoint` is a well-formed URL with a host for a transport other than HTTP(S), such
+/// as a fixture placeholder. A malformed URL, or a bare `host:port` that parses with the host as
+/// its scheme, is not: the JSON-RPC provider refuses it.
 pub fn names_another_transport(endpoint: &str) -> bool {
-    reqwest::Url::parse(endpoint).is_ok_and(|url| !matches!(url.scheme(), "http" | "https"))
+    reqwest::Url::parse(endpoint)
+        .is_ok_and(|url| url.has_host() && !matches!(url.scheme(), "http" | "https"))
 }
 
 pub fn normalized_kind(kind: &str) -> ProviderKind {

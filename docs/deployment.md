@@ -566,9 +566,10 @@ that it serves the chain it is configured for. That covers each `BIGNAME_PHASE_R
 entry with an RPC kind, whatever its role, and each
 `BIGNAME_PHASE_RUNNER_HYDRATION_RPC_URLS` entry; hydration URLs are checked and
 reported under the source key `hydration`, which no configured source may use.
-Only a source whose endpoint is a well-formed URL for another scheme, such as a
-fixture placeholder, is skipped; a malformed endpoint refuses the start. Replay and rebuild never hydrate, so `redo` checks no
-hydration URL, and a Project redo reads no source provider, so it checks
+Only a source whose endpoint is a well-formed URL with a host for another
+scheme, such as a fixture placeholder, is skipped; a malformed endpoint, or a
+bare `host:port` without `http://`, refuses the start. Replay and rebuild never
+hydrate, so `redo` checks no hydration URL, and a Project redo reads no source provider, so it checks
 nothing. An Interpret redo checks its sources, because its discovery repair can
 run Ingest. The endpoint must answer `eth_chainId` with the chain's EIP-155 id
 and, in the default `full` mode, return block 0; a wrong chain id is refused
@@ -578,10 +579,10 @@ must be that chain's genesis hash (`crates/domain/src/chain_identity.rs`);
 readable block 0. A chain slug with no known chain id is refused. A mismatch
 exits with code 1 and one error log naming the chain, source key, expected
 and observed chain id, the expected genesis hash where one is pinned, and the
-observed genesis hash when the chain id matched. An
-endpoint that cannot be read, including one that still does not answer after
-the provider's usual retries, also exits with code 1, and its error log names
-the chain, source key and the error only. Neither log carries the URL's path,
+observed genesis hash when block 0 was read. An endpoint that cannot be read,
+including one that still does not answer after the provider's usual retries,
+also exits with code 1, and its error log names the chain, source key and the
+error only. Neither log carries the URL's path,
 key or query.
 
 `BIGNAME_PHASE_RUNNER_RPC_CHAIN_CHECK=chain-id-only` skips the block 0 read,

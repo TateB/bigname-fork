@@ -36,8 +36,8 @@ pub struct VerifiedRpcEndpoint {
 /// Checks every RPC source of every chain, whatever its role, and every hydration URL. Direct
 /// Reth DB sources compare their stored genesis when they open, and Coinbase SQL is not an RPC
 /// endpoint; nor is a source whose endpoint is a URL for another transport, such as a fixture
-/// placeholder. A malformed endpoint is checked, so it refuses the start. Any failure refuses the start; the error and log name the chain, source and both
-/// identities, never the URL.
+/// placeholder. Any failure, including a malformed endpoint, refuses the start; the error and
+/// log name the chain and source, never the URL.
 pub async fn verify_all<'a>(
     sources: impl IntoIterator<Item = &'a SourceConfig>,
     hydration: &ChainRpcUrls,
@@ -223,7 +223,7 @@ mod tests {
         };
         let placeholder = source("fixture://upfront".to_owned());
         let noncanonical = source(format!(" HTTP:/127.0.0.1:{port}/"));
-        let malformed = source("https://bad host".to_owned());
+        let malformed = ["https://bad host", "localhost:8545"].map(|url| source(url.to_owned()));
 
         let none = ChainRpcUrls::default();
         let skipped = verify_all([&placeholder], &none, RpcChainCheck::Full).await;
@@ -232,9 +232,12 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("chain id"), "{error}");
-        verify_all([&malformed], &none, RpcChainCheck::Full)
-            .await
-            .unwrap_err();
+        for malformed in &malformed {
+            let error = verify_all([malformed], &none, RpcChainCheck::Full)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("RPC chain check"), "{error}");
+        }
     }
 
     #[test]
