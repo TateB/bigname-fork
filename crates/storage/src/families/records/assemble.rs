@@ -48,7 +48,8 @@ pub(crate) struct Assembly<'a> {
     pub(crate) links: Option<&'a LinkSelection>,
     /// Every retained write of the selected record id, eligible or not.
     pub(crate) linked: &'a [RecordCandidate],
-    pub(crate) attributed: BTreeSet<i64>,
+    /// `None` leaves `provenance.attributed_event_ids` out.
+    pub(crate) attributed: Option<BTreeSet<i64>>,
 }
 
 fn change(
@@ -394,7 +395,6 @@ pub(crate) fn assemble(
         "resolver_pointer_event_id": pointer.pointer_event_id,
         "record_event_ids": record_ids.iter().chain(&link_ids).collect::<Vec<_>>(),
         "record_link_event_ids": link_ids,
-        "attributed_event_ids": attributed,
         "read_rules": read_rules,
         // ABI admission must use the classification read in this inventory's snapshot.
         "abi_observation_classification": classification.map(|row| json!({
@@ -402,6 +402,9 @@ pub(crate) fn assemble(
         })),
         "coverage": {"status": "projected", "exhaustiveness": "not_asserted"},
     });
+    if let Some(attributed) = attributed {
+        provenance["attributed_event_ids"] = json!(attributed);
+    }
     if !zero_keys.is_empty() {
         provenance["exact_nonempty_not_found_record_keys"] = Value::Array(zero_keys);
     }

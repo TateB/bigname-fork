@@ -73,7 +73,7 @@ pub(super) async fn load_inventory(
         transaction,
         &chain_id,
         resource_id,
-        FamilyAttribution::Load,
+        FamilyAttribution::Omit,
     )
     .await
     .map_err(composition)?
