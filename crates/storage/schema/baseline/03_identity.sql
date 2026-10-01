@@ -308,11 +308,10 @@ CREATE INDEX IF NOT EXISTS name_surfaces_block_idx
 CREATE INDEX IF NOT EXISTS name_surfaces_chain_block_number_idx
     ON name_surfaces (chain_id, block_number);
 
--- The name-ordered readers (storage:families.name.search_candidates,
--- storage:families.name.bound_candidates and storage:families.records.reverse_candidates)
--- walk readable surfaces in this order. A name's label count is unbounded, and an index entry
--- larger than about 2.7 KB fails the insert, so longer names stay out of the index and those
--- readers carry the same bound.
+-- The name-ordered readers (storage:families.name.search_candidates and
+-- storage:families.name.bound_candidates) walk readable surfaces in this order. raw_name has
+-- no length bound, and an index entry larger than about 2.7 KB fails the insert, so longer
+-- names stay out of the index and those readers carry the same bound.
 CREATE INDEX IF NOT EXISTS name_surfaces_name_order_idx
     ON name_surfaces (raw_name, namespace, namehash, logical_name_id)
     WHERE visibility_state = 'active'

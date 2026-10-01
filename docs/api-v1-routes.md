@@ -452,8 +452,7 @@ collection route carry neither header.
   one completed projection-phase generation. For each reverse result, the
   readable name fetched with the candidate row is the common source for the
   emitted normalized and display names, label-derived fields, primary-name
-  ordering, the `is_primary` result, and the reverse cursor. A name longer than
-  2000 bytes is never a reverse result, as for [search](#get-v1search). A `resolves_to`
+  ordering, the `is_primary` result, and the reverse cursor. A `resolves_to`
   input additionally requires each resolver-record relation it serves to be
   published at or before the selected head and omits unreadable current names. Unsupported rows are also omitted except for the documented TLD
   [root-registry resolver pointer](glossary.md#root-registry-resolver-pointer)

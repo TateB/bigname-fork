@@ -1,16 +1,11 @@
 //! Plan-shape tests for the readers that walk readable name surfaces in name order: the search
-//! candidates, a resolver's bound-name candidates and the reverse lookup candidates.
+//! candidates and a resolver's bound-name candidates.
 //!
 //! Search and bound names must be able to read `name_surfaces_name_order_idx` in page order, with
 //! the keyset cursor as its index condition and no Sort, under either plan. The fixture is small,
 //! so `enable_sort` is off to stand in for a large table: the assertions are about which access
 //! paths the planner can use at all, not about costs. A `LIKE` prefix becomes an index range only
 //! on a C-collated database, so it stays a filter on the ordered scan here.
-//!
-//! The reverse lookup keeps its cost-based plan: for an address with three names it must start
-//! from `project_address_name_index` rather than walk every name in order. Its statement is never
-//! prepared (`persistent(false)`), so it is always planned with its values and only the custom plan
-//! is checked.
 //!
 //! Every walk returns the same rows in batches as in one sorted read, and none returns the name
 //! longer than 2000 bytes, which inserts although the index leaves it out.
@@ -21,7 +16,6 @@ use sqlx::{PgConnection, raw_sql};
 use super::{
     id_index_plan_tests::{PLAN_MODES, Probe, explain_execute, missing_probes, with_database},
     name::{BOUND_CANDIDATES_SQL, SEARCH_CANDIDATES_SQL},
-    records::REVERSE_CANDIDATES_SQL,
 };
 
 const CHAIN: &str = "ethereum-sepolia";
@@ -44,7 +38,6 @@ async fn name_ordered_walks_read_the_name_order_index() -> Result<()> {
         install_fixture(connection).await?;
         prepare(connection).await?;
         check_ordered_plans(connection).await?;
-        check_reverse_plan(connection).await?;
         check_walks(connection).await
     })
     .await
@@ -62,11 +55,6 @@ async fn prepare(connection: &mut PgConnection) -> Result<()> {
             "text, text, text, text, text, text, bigint",
             BOUND_CANDIDATES_SQL,
         ),
-        (
-            "reverse_candidates",
-            "text, text[], jsonb, boolean, text[], text, text, text, bigint, text[]",
-            REVERSE_CANDIDATES_SQL,
-        ),
     ] {
         raw_sql(&format!("PREPARE {label} ({types}) AS {sql}"))
             .execute(&mut *connection)
@@ -76,13 +64,15 @@ async fn prepare(connection: &mut PgConnection) -> Result<()> {
     Ok(())
 }
 
-fn walks() -> [Walk; 4] {
+fn walks() -> [Walk; 3] {
     [
         Walk {
             label: "search_candidates",
             statement: "search prefix",
             values: "'{ens}', NULL, 'a%', {after}, {limit}".to_owned(),
         },
+        // The long name contains an `a` and is reached by resolver 0xaa..; only the length bound
+        // keeps it out of these two walks.
         Walk {
             label: "search_candidates",
             statement: "search contains",
@@ -92,15 +82,6 @@ fn walks() -> [Walk; 4] {
             label: "bound_candidates",
             statement: "bound names",
             values: format!("'{CHAIN}', '{}', NULL, {{after}}, {{limit}}", address('a')),
-        },
-        Walk {
-            label: "reverse_candidates",
-            statement: "reverse lookup",
-            values: format!(
-                "'{}', '{{ens,basenames}}', '{{}}', false, '{{registrant,token_holder}}', \
-                 {{after}}, {{limit}}, NULL",
-                address('d')
-            ),
         },
     ]
 }
@@ -114,10 +95,7 @@ async fn check_ordered_plans(connection: &mut PgConnection) -> Result<()> {
         conditions: &[KEYSET],
     }];
     let mut failures = Vec::new();
-    for walk in walks()
-        .iter()
-        .filter(|walk| walk.label != "reverse_candidates")
-    {
+    for walk in &walks() {
         // The first batch and a continuation both bind the cursor as the index condition.
         for after in [None, Some(("a", "ens", "0x"))] {
             let values = values(walk, after, 201);
@@ -138,39 +116,6 @@ async fn check_ordered_plans(connection: &mut PgConnection) -> Result<()> {
         failures.is_empty(),
         "name-ordered plans:\n{}",
         failures.join("\n\n")
-    );
-    Ok(())
-}
-
-async fn check_reverse_plan(connection: &mut PgConnection) -> Result<()> {
-    let values = format!(
-        "'{}', '{{ens,basenames}}', '{{}}', false, '{{registrant,token_holder}}', \
-         NULL, NULL, NULL, 65, NULL",
-        address('c')
-    );
-    let plan = explain_execute(
-        connection,
-        "force_custom_plan",
-        "reverse_candidates",
-        &values,
-    )
-    .await?;
-    let mut failures = missing_probes(
-        "reverse lookup",
-        &plan,
-        &[Probe {
-            index: "project_address_name_index_pkey",
-            conditions: &["(address = "],
-        }],
-    );
-    if plan.iter().any(|line| line.contains(ORDER_INDEX)) {
-        failures.push("reverse lookup: walks the name order index".to_owned());
-    }
-    ensure!(
-        failures.is_empty(),
-        "{}\n{}",
-        failures.join("\n"),
-        plan.join("\n")
     );
     Ok(())
 }
@@ -263,9 +208,9 @@ fn address(fill: char) -> String {
 
 async fn install_fixture(connection: &mut PgConnection) -> Result<()> {
     // Name n is active unless n is a multiple of 50 and readable unless its block, every 70th, is
-    // orphaned; even names are ens and odd names basenames. One more ens name is about 6.6 KB of
+    // orphaned; even names are ens and odd names basenames. One more name is about 6.6 KB of
     // incompressible labels, past the btree entry limit. Resolver 0xbb.. names the first three
-    // names and 0xaa.. all others; address 0xcc.. holds the first six and 0xdd.. all others.
+    // names and 0xaa.. all others.
     raw_sql(&format!(
         "INSERT INTO chain_lineage
              (chain_id, block_hash, block_number, block_timestamp, canonicality_state)
@@ -305,11 +250,6 @@ async fn install_fixture(connection: &mut PgConnection) -> Result<()> {
                 block_number, 'pointer:' || block_number,
                 '0x' || repeat(CASE WHEN block_number <= 3 THEN 'b' ELSE 'a' END, 40),
                 'ens_v1_registry_l1'
-         FROM name_surfaces;
-
-         INSERT INTO project_address_name_index (address, logical_name_id, relation, chain_id)
-         SELECT '0x' || repeat(CASE WHEN block_number <= 6 THEN 'c' ELSE 'd' END, 40),
-                logical_name_id, 'registrant', chain_id
          FROM name_surfaces;
 
          ANALYZE"

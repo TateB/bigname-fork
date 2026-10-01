@@ -57,8 +57,6 @@ pub use pointer::{FamilyResourcePointer, load_family_resource_pointer};
 pub use primary::{load_family_primary_name_snapshot, load_family_primary_name_snapshots};
 pub use resolves_to_serving::{load_family_resolves_to_evm_page, load_family_resolves_to_page};
 pub use reverse::{FamilyReverseClaim, load_family_reverse_claim};
-#[cfg(test)]
-pub(crate) use reverse_page::REVERSE_CANDIDATES_SQL;
 pub use reverse_page::{
     load_family_reverse_identity_groups, load_family_reverse_primary_snapshots,
 };

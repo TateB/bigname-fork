@@ -1,10 +1,9 @@
--- Existing schema-v2 databases gain the index the name-ordered readers walk:
--- the /v1/search candidates (storage:families.name.search_candidates), a resolver's
--- bound names (storage:families.name.bound_candidates) and reverse lookup candidates
--- (storage:families.records.reverse_candidates) all read readable surfaces by raw
+-- Existing schema-v2 databases gain the index the name-ordered readers walk: the
+-- /v1/search candidates (storage:families.name.search_candidates) and a resolver's
+-- bound names (storage:families.name.bound_candidates) read readable surfaces by raw
 -- name, namespace and namehash, which no index served, so each batch sorted every
--- match. Names longer than 2000 bytes stay out: an index entry larger than about
--- 2.7 KB fails the insert, and those readers carry the same bound.
+-- match. Names longer than 2000 bytes stay out: raw_name has no length bound, an index
+-- entry larger than about 2.7 KB fails the insert, and both readers carry the same bound.
 -- Index only; no column or row changes. An empty schema-migration database has no
 -- phase baseline yet, so this schema-migration is a no-op there and phase-runner
 -- init-schema installs the same index.
