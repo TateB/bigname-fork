@@ -192,7 +192,7 @@ async fn load_request_scope_snapshot(
     pool: &PgPool,
     scope: &SnapshotSelectionScope,
 ) -> ApiResult<Option<PublicNamespaceReadToken>> {
-    let input = SnapshotSelectorInput::new(None, None, SnapshotConsistency::Head)
+    let input = crate::v2::snapshots::selector_input(None, None, SnapshotConsistency::Head)
         .map_err(snapshot_selection_api_error)?;
     let selected = match resolve_exact_name_snapshot_selection(pool, scope, &input).await {
         Ok(selected) => selected,
@@ -402,6 +402,7 @@ pub(crate) async fn load_selected_project_generations_on(
             &position.block_hash,
             true,
             require_interpret_not_redo,
+            crate::state::publication_lag_tolerance_blocks(),
         )
         .await?;
         let Some(generation) = generation else {

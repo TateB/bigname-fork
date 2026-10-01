@@ -37,8 +37,11 @@ an answer at another position.
 Lookup captures the participating family publications: block number, block hash,
 interpreter content hash and marker sequence, together with the selected input
 revision, bindings, inventory boundary and real manifest provenance. A live
-publication may trail the stored execution head by one block, matching
-`PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS`. Provider calls remain pinned to the
+publication may trail the stored execution head by the API's
+[publication lag tolerance](glossary.md#publication-lag-tolerance) (`BIGNAME_API_PUBLICATION_LAG_TOLERANCE_BLOCKS`, one
+block by default). The database guard requires the same head and the same
+publication the lookup captured, so the lag admitted at capture still holds
+when it checks. Provider calls remain pinned to the
 captured execution head; the indexed comparison retains its own published
 position. The snapshot contains the full declared topology, including
 wildcards and any admitted cross-chain transport context.

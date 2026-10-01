@@ -126,6 +126,7 @@ struct HeadRow {
 pub(crate) async fn load_snapshot(
     pool: &PgPool,
     request: &LookupRequest,
+    lag_tolerance_blocks: i64,
 ) -> Result<LookupSnapshot> {
     let mut transaction = pool.begin().await.map_err(database("start lookup read"))?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
@@ -215,7 +216,8 @@ pub(crate) async fn load_snapshot(
     };
     let resolver_head = load_head(&mut transaction, resolver_chain_id.as_str()).await?;
     let project_publication =
-        positions::ensure_project_at_head(&mut transaction, &resolver_head).await?;
+        positions::ensure_project_at_head(&mut transaction, &resolver_head, lag_tolerance_blocks)
+            .await?;
     let resolver_position =
         positions::position_for_chain(&name.chain_positions, resolver_chain_id.as_str())?;
     positions::ensure_canonical(&mut transaction, &resolver_position).await?;
@@ -419,6 +421,7 @@ pub async fn admitted_verified_authority_arms(
 pub(crate) async fn load_ens_primary_name_authority(
     pool: &PgPool,
     chain_id: &str,
+    lag_tolerance_blocks: i64,
 ) -> Result<EnsPrimaryNameAuthority> {
     if ens_l1_chain(chain_id).is_none() {
         return Err(LookupError::unsupported(format!(
@@ -434,7 +437,8 @@ pub(crate) async fn load_ens_primary_name_authority(
         .await
         .map_err(database("set primary-name authority read isolation"))?;
     let head = load_head(&mut transaction, chain_id).await?;
-    let project_publication = positions::ensure_project_at_head(&mut transaction, &head).await?;
+    let project_publication =
+        positions::ensure_project_at_head(&mut transaction, &head, lag_tolerance_blocks).await?;
     let registry_manifest = manifests::load_entrypoint(
         &mut transaction,
         manifests::EntrypointQuery {

@@ -23,16 +23,13 @@ pub async fn load_phase_expected_status_chain_ids(pool: &PgPool) -> Result<Vec<S
 }
 
 /// The serving fence requires a live family marker from this build on readable lineage,
-/// within [`PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS`](crate::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS)
-/// of the stored head. At the head, its hash must match the head's hash.
-fn family_marker_generation_current() -> String {
-    let lag_tolerance = crate::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS;
-    format!(
-        r#"            COALESCE(
+/// within the serving lag tolerance (`$3`) of the stored head. At the head, its hash must
+/// match the head's hash.
+const FAMILY_MARKER_GENERATION_CURRENT: &str = r#"            COALESCE(
                 marker.state = 'live'
                 AND marker.input_content_hash = $1
                 AND head.latest_block_number - marker.current_block_number
-                    BETWEEN 0 AND {lag_tolerance}
+                    BETWEEN 0 AND $3
                 AND (
                     marker.current_block_number < head.latest_block_number
                     OR marker.current_block_hash = head.latest_block_hash
@@ -47,17 +44,19 @@ fn family_marker_generation_current() -> String {
                 ),
                 false
             ) AS project_generation_current,
-"#
-    )
-}
+"#;
 const FAMILY_MARKER_JOIN: &str = r#"
         LEFT JOIN bigname_phase.project_family_marker marker
           ON marker.chain_id = known_chains.chain_id"#;
 
 /// `/v1/status` readiness: indexed block, timestamp and generation come from the family marker.
 /// Lifecycle state and redo flags continue to come from the corresponding phase rows.
-pub async fn load_phase_indexing_status(pool: &PgPool) -> Result<IndexingStatusRead> {
-    let project_generation_current = family_marker_generation_current();
+/// `lag_tolerance_blocks` is the serving fence's tolerance, so `project_generation_current`
+/// agrees with what snapshot selection would serve.
+pub async fn load_phase_indexing_status(
+    pool: &PgPool,
+    lag_tolerance_blocks: i64,
+) -> Result<IndexingStatusRead> {
     let rows = sqlx::query(&format!(
         r#"
         WITH known_chains AS ({PHASE_EXPECTED_CHAIN_IDS_SELECT})
@@ -78,7 +77,7 @@ pub async fn load_phase_indexing_status(pool: &PgPool) -> Result<IndexingStatusR
             COALESCE(settlement.any_phase_settled_while_unconfigured, false)
                 AS any_phase_settled_while_unconfigured,
             known_chains.chain_id = $2 AS provider_trusted_verification_required,
-{project_generation_current}            COALESCE(interpret.redo_in_progress, false) AS interpret_redo_in_progress,
+{FAMILY_MARKER_GENERATION_CURRENT}            COALESCE(interpret.redo_in_progress, false) AS interpret_redo_in_progress,
             COALESCE(project.redo_in_progress, false) AS project_redo_in_progress,
             heartbeat.age_seconds AS phase_runner_heartbeat_age_seconds
         FROM known_chains
@@ -129,6 +128,7 @@ pub async fn load_phase_indexing_status(pool: &PgPool) -> Result<IndexingStatusR
     ))
     .bind(bigname_content_hash::INTERPRETER_CONTENT_HASH)
     .bind(bigname_domain::vocabulary::ChainId::EthereumSepolia.as_str())
+    .bind(lag_tolerance_blocks)
     .fetch_all(pool)
     .await
     .context("failed to load schema-v2 indexing status")?;
