@@ -7,8 +7,9 @@
 //! paths the planner can use at all, not about costs. A `LIKE` prefix becomes an index range only
 //! on a C-collated database, so it stays a filter on the ordered scan here.
 //!
-//! Every walk returns the same rows in batches as in one sorted read, and none returns the name
-//! longer than 2000 bytes, which inserts although the index leaves it out.
+//! Every walk returns the same rows in batches as in one sorted read, including a name of exactly
+//! 2000 bytes, and none returns the name longer than 2000 bytes, which inserts although the index
+//! leaves it out.
 
 use anyhow::{Context, Result, ensure};
 use sqlx::{PgConnection, raw_sql};
@@ -72,7 +73,7 @@ fn walks() -> [Walk; 3] {
             values: "'{ens}', NULL, 'a%', {after}, {limit}".to_owned(),
         },
         // The long name contains an `a` and is reached by resolver 0xaa..; only the length bound
-        // keeps it out of these two walks.
+        // keeps it out of these two walks. The 2000-byte name is in all three.
         Walk {
             label: "search_candidates",
             statement: "search contains",
@@ -121,13 +122,13 @@ async fn check_ordered_plans(connection: &mut PgConnection) -> Result<()> {
 }
 
 async fn check_walks(connection: &mut PgConnection) -> Result<()> {
-    let long: Vec<String> = sqlx::query_scalar(
-        "SELECT logical_name_id FROM name_surfaces
-         WHERE visibility_state = 'active' AND octet_length(raw_name) > 2000",
+    let (long, boundary) = sqlx::query_as::<_, (String, String)>(
+        "SELECT
+             (SELECT logical_name_id FROM name_surfaces WHERE octet_length(raw_name) > 2000),
+             (SELECT logical_name_id FROM name_surfaces WHERE octet_length(raw_name) = 2000)",
     )
-    .fetch_all(&mut *connection)
+    .fetch_one(&mut *connection)
     .await?;
-    ensure!(long.len() == 1, "long names: {long:?}");
     for walk in walks() {
         let sorted = read(connection, &walk, None, ROWS * 2).await?;
         ensure!(
@@ -137,8 +138,13 @@ async fn check_walks(connection: &mut PgConnection) -> Result<()> {
             sorted.len()
         );
         ensure!(
-            sorted.iter().all(|(id, ..)| *id != long[0]),
+            sorted.iter().all(|(id, ..)| *id != long),
             "{}: returned the long name",
+            walk.statement
+        );
+        ensure!(
+            sorted.iter().any(|(id, ..)| *id == boundary),
+            "{}: missed the 2000-byte name",
             walk.statement
         );
         raw_sql("SET enable_sort = off")
@@ -208,19 +214,19 @@ fn address(fill: char) -> String {
 
 async fn install_fixture(connection: &mut PgConnection) -> Result<()> {
     // Name n is active unless n is a multiple of 50 and readable unless its block, every 70th, is
-    // orphaned; even names are ens and odd names basenames. One more name is about 6.6 KB of
-    // incompressible labels, past the btree entry limit. Resolver 0xbb.. names the first three
-    // names and 0xaa.. all others.
+    // orphaned; even names are ens and odd names basenames. Name ROWS + 1 is about 6.6 KB of
+    // incompressible labels, past the btree entry limit, and name ROWS + 2 is exactly 2000 bytes.
+    // Resolver 0xbb.. names the first three names and 0xaa.. all others.
     raw_sql(&format!(
         "INSERT INTO chain_lineage
              (chain_id, block_hash, block_number, block_timestamp, canonicality_state)
          SELECT '{CHAIN}', 'block-' || n, n, to_timestamp(n),
                 (CASE WHEN n % 70 = 0 THEN 'orphaned' ELSE 'canonical' END)::canonicality_state
-         FROM generate_series(1, {ROWS} + 1) n;
+         FROM generate_series(1, {ROWS} + 2) n;
 
          INSERT INTO project_family_marker (chain_id, current_block_number, current_block_hash,
              state)
-         VALUES ('{CHAIN}', {ROWS} + 1, 'block-' || ({ROWS} + 1), 'live');
+         VALUES ('{CHAIN}', {ROWS} + 2, 'block-' || ({ROWS} + 2), 'live');
 
          INSERT INTO name_surfaces (logical_name_id, namespace, raw_name, raw_labels,
              dns_encoded_name, namehash, labelhashes, normalizer_version, visibility_state,
@@ -232,13 +238,16 @@ async fn install_fixture(connection: &mut PgConnection) -> Result<()> {
                 CASE WHEN n % 50 = 0 THEN 'invalid' END, CASE WHEN n % 50 = 0 THEN now() END,
                 '{CHAIN}', 'block-' || n, n,
                 (CASE WHEN n % 70 = 0 THEN 'orphaned' ELSE 'canonical' END)::canonicality_state
-         FROM generate_series(1, {ROWS} + 1) n,
+         FROM generate_series(1, {ROWS} + 2) n,
          LATERAL (
              SELECT CASE WHEN n % 2 = 0 THEN 'ens' ELSE 'basenames' END AS namespace,
                     '0x' || lpad(to_hex(n), 64, '0') AS namehash,
-                    CASE WHEN n > {ROWS}
+                    CASE WHEN n = {ROWS} + 1
                          THEN (SELECT string_agg(md5(i::text), '.')
                                FROM generate_series(1, 200) i) || '.eth'
+                         WHEN n = {ROWS} + 2
+                         THEN 'a' || left((SELECT string_agg(md5(i::text), '.')
+                                           FROM generate_series(1, 200) i), 1995) || '.eth'
                          ELSE substr(md5(n::text), 1, 8)
                               || CASE WHEN n % 2 = 0 THEN '.eth' ELSE '.base.eth' END
                     END AS raw_name
