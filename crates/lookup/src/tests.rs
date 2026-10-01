@@ -40,6 +40,7 @@ const ETHEREUM_FAR_HASH: &str =
 const ETHEREUM_FARTHER_HASH: &str =
     "0x6666666666666666666666666666666666666666666666666666666666666666";
 const BASE_HASH: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
+const BASE_LATER_HASH: &str = "0x7777777777777777777777777777777777777777777777777777777777777777";
 const UNIVERSAL_RESOLVER: &str = "0xeeeeeeee14d718c2b47d9923deab1335e144eeee";
 const ENS_REGISTRY: &str = "0x00000000000c2e074ec69a0dfb2997ba6c7d2e1e";
 const BASE_L1_RESOLVER: &str = "0xde9049636f4a1dfe0a64d1bfe3155c0a14c54f31";
@@ -2781,58 +2782,70 @@ async fn ccip_result_rejects_a_concurrent_inventory_change() -> AnyResult<()> {
 
 #[tokio::test]
 async fn basenames_uses_projected_auxiliary_execution_position() -> AnyResult<()> {
-    let (rpc_url, rpc_handle) = spawn_mock_rpc(vec![RpcResponse::Result(
-        encoded_basenames_text_result(INDEXED_VALUE),
-    )])
-    .await?;
-    let fixture = setup_fixture(FixtureKind::Basenames, INDEXED_VALUE).await?;
-    sqlx::query(
-        "INSERT INTO chain_lineage
-            (chain_id, block_hash, block_number, block_timestamp, canonicality_state)
-         VALUES ($1, $2, 11, '2026-08-03T00:00:01Z', 'canonical')",
-    )
-    .bind(ETHEREUM)
-    .bind(ETHEREUM_LATER_HASH)
-    .execute(fixture.pool())
-    .await?;
-    sqlx::query(
-        "UPDATE chain_heads
-         SET latest_block_hash = $2, latest_block_number = 11
-         WHERE chain_id = $1",
-    )
-    .bind(ETHEREUM)
-    .bind(ETHEREUM_LATER_HASH)
-    .execute(fixture.pool())
-    .await?;
-
-    let response = lookup_engine(fixture.pool(), &rpc_url)?
-        .lookup_at_positions(
-            lookup_request(&fixture.logical_name_id)?,
-            &[
-                LookupPosition {
-                    chain_id: BASE.to_owned(),
-                    block_number: 10,
-                    block_hash: BASE_HASH.to_owned(),
-                    timestamp: "2026-08-03T00:00:00Z".to_owned(),
-                },
-                LookupPosition {
-                    chain_id: ETHEREUM.to_owned(),
-                    block_number: 11,
-                    block_hash: ETHEREUM_LATER_HASH.to_owned(),
-                    timestamp: "2026-08-03T00:00:01Z".to_owned(),
-                },
-            ],
-        )
+    // With the Base head one block past the Base publication, the authoritative position is still
+    // the publication the caller admits, and Ethereum execution keeps the projected position.
+    for base_head_advanced in [false, true] {
+        let (rpc_url, rpc_handle) = spawn_mock_rpc(vec![RpcResponse::Result(
+            encoded_basenames_text_result(INDEXED_VALUE),
+        )])
         .await?;
-    assert_eq!(
-        response.observed_positions["ethereum"]["block_hash"],
-        ETHEREUM_HASH
-    );
-    assert_eq!(response.execution_position.block_hash, ETHEREUM_HASH);
-    assert_eq!(response.execution_position.block_number, 10);
-    fixture.cleanup().await?;
-    let requests = join_rpc(rpc_handle).await?;
-    assert_hash_pinned(&requests, ETHEREUM_HASH);
+        let fixture = setup_fixture(FixtureKind::Basenames, INDEXED_VALUE).await?;
+        let mut heads = vec![(ETHEREUM, ETHEREUM_LATER_HASH)];
+        if base_head_advanced {
+            heads.push((BASE, BASE_LATER_HASH));
+        }
+        for (chain_id, block_hash) in heads {
+            sqlx::query(
+                "INSERT INTO chain_lineage
+                    (chain_id, block_hash, block_number, block_timestamp, canonicality_state)
+                 VALUES ($1, $2, 11, '2026-08-03T00:00:01Z', 'canonical')",
+            )
+            .bind(chain_id)
+            .bind(block_hash)
+            .execute(fixture.pool())
+            .await?;
+            sqlx::query(
+                "UPDATE chain_heads
+                 SET latest_block_hash = $2, latest_block_number = 11
+                 WHERE chain_id = $1",
+            )
+            .bind(chain_id)
+            .bind(block_hash)
+            .execute(fixture.pool())
+            .await?;
+        }
+
+        let response = lookup_engine(fixture.pool(), &rpc_url)?
+            .lookup_at_positions(
+                lookup_request(&fixture.logical_name_id)?,
+                &[
+                    LookupPosition {
+                        chain_id: BASE.to_owned(),
+                        block_number: 10,
+                        block_hash: BASE_HASH.to_owned(),
+                        timestamp: "2026-08-03T00:00:00Z".to_owned(),
+                    },
+                    LookupPosition {
+                        chain_id: ETHEREUM.to_owned(),
+                        block_number: 11,
+                        block_hash: ETHEREUM_LATER_HASH.to_owned(),
+                        timestamp: "2026-08-03T00:00:01Z".to_owned(),
+                    },
+                ],
+            )
+            .await?;
+        assert_eq!(response.authoritative_position.chain_id, BASE);
+        assert_eq!(response.authoritative_position.block_hash, BASE_HASH);
+        assert_eq!(
+            response.observed_positions["ethereum"]["block_hash"],
+            ETHEREUM_HASH
+        );
+        assert_eq!(response.execution_position.block_hash, ETHEREUM_HASH);
+        assert_eq!(response.execution_position.block_number, 10);
+        fixture.cleanup().await?;
+        let requests = join_rpc(rpc_handle).await?;
+        assert_hash_pinned(&requests, ETHEREUM_HASH);
+    }
     Ok(())
 }
 
