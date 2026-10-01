@@ -1290,10 +1290,11 @@ change snapshot identity, filter boundaries, or keyset continuation.
 
 The API selects current `latest`, `safe`, and `finalized` positions from
 `bigname_phase.chain_heads` and obtains their timestamps from readable
-`bigname_phase.chain_lineage`. Every selection is available only when the current
-`project` phase is completed with the API's compiled interpreter content hash on
-the readable lineage at most the publication lag tolerance behind the latest
-head (see the publication-lag rule above). Timestamp `at` selection and opaque-token replay
+`bigname_phase.chain_lineage`. Every selection is available only when a live
+[family marker](glossary.md#family-marker) carries the API's compiled
+interpreter content hash on readable lineage at most the publication lag
+tolerance behind the latest head (see the publication-lag rule above); the
+Project phase may be running meanwhile. Timestamp `at` selection and opaque-token replay
 still choose historical positions: every supplied or resolved position must
 exist in `bigname_phase.chain_lineage` and satisfy the requested finality
 floor, and an authoritative cross-chain selection bounds auxiliary positions
@@ -1305,9 +1306,10 @@ returns `409 conflict`.
 API startup discovers the status chain set from the union of
 `bigname_phase.chain_heads` and `bigname_phase.chain_phase_state`. `/v1/status` uses
 those same relations for its chain set and reads stored head/finality positions
-from `chain_heads`, project progress from the `project` row in
-`chain_phase_state`, and both timestamps from the matching readable
-`chain_lineage` rows.
+from `chain_heads`, the indexed block from the
+[family marker](glossary.md#family-marker), Project lifecycle and redo state
+from the `project` row in `chain_phase_state`, and both timestamps from the
+matching readable `chain_lineage` rows.
 
 Latest-only collections (names, subnames, address names, permissions, search,
 registry labels and product history) page over current data. They omit
