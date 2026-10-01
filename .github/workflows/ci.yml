@@ -39,6 +39,12 @@ env:
 # Main requires the merge queue with no bypass actors and required static,
 # test, and artifacts-and-smoke gates. This policy permits push-only cache and
 # artifact work; revisit the event split if either requirement changes.
+#
+# A pull request cannot enter the queue until the full suite has passed on it.
+# The queue's merge_group run then repeats only the fast gates on the merged
+# result: static, schema v2, the core and site tests, and artifacts-and-smoke.
+# The API, phase-runner and e2e suites are skipped there, and `test` accepts
+# their aggregates as skipped on merge_group only.
 jobs:
   static:
     runs-on: ubuntu-latest
@@ -327,6 +333,7 @@ jobs:
         run: cargo test --no-run ${{ matrix.packages }} --features bigname-adapters/test-activation,bigname-storage/test-support
 
   api_shard:
+    if: github.event_name != 'merge_group'
     name: test (api shard ${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -398,7 +405,7 @@ jobs:
     timeout-minutes: 5
     needs:
       - api_shard
-    if: always()
+    if: always() && github.event_name != 'merge_group'
     steps:
       - name: Check API shards
         run: |
@@ -408,7 +415,7 @@ jobs:
           fi
 
   phase_runner_shard_1:
-    if: github.event_name != 'push'
+    if: github.event_name == 'pull_request'
     name: test (phase-runner shard 1/3)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -522,7 +529,7 @@ jobs:
           --doc
 
   phase_runner_shard_2:
-    if: github.event_name != 'push'
+    if: github.event_name == 'pull_request'
     name: test (phase-runner shard 2/3)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -622,7 +629,7 @@ jobs:
           --partition slice:2/3
 
   phase_runner_shard_3:
-    if: github.event_name != 'push'
+    if: github.event_name == 'pull_request'
     name: test (phase-runner shard 3/3)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -729,7 +736,7 @@ jobs:
       - phase_runner_shard_1
       - phase_runner_shard_2
       - phase_runner_shard_3
-    if: always() && github.event_name != 'push'
+    if: always() && github.event_name == 'pull_request'
     steps:
       - name: Check phase-runner shards
         run: |
@@ -743,6 +750,7 @@ jobs:
           fi
 
   e2e_build:
+    if: github.event_name != 'merge_group'
     name: build (e2e phase-runner)
     runs-on: ubuntu-24.04
     timeout-minutes: 18
@@ -908,7 +916,7 @@ jobs:
     needs:
       - e2e_build
     # Start after the artifact and cache build; e2e results remain independently aggregated.
-    if: ${{ !cancelled() && needs.e2e_build.result == 'success' && github.event_name != 'push' }}
+    if: ${{ !cancelled() && needs.e2e_build.result == 'success' && github.event_name == 'pull_request' }}
     services:
       postgres:
         image: postgres:16-alpine
@@ -1036,7 +1044,7 @@ jobs:
     timeout-minutes: 90
     # Start immediately and use any available dependency cache. A cache miss only
     # means the prerequisite below compiles locally; it does not require e2e_build.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.event_name != 'merge_group' }}
     services:
       postgres:
         image: postgres:16-alpine
@@ -1192,7 +1200,7 @@ jobs:
       - e2e_build
       - e2e_shard
       - api_container_shutdown
-    if: always()
+    if: always() && github.event_name != 'merge_group'
     steps:
       - name: Check e2e builder and shards
         run: |
@@ -1220,6 +1228,10 @@ jobs:
     steps:
       - name: Check test shards
         run: |
+          full_suite_result=success
+          if [ "${{ github.event_name }}" = "merge_group" ]; then
+            full_suite_result=skipped
+          fi
           if [ "${{ github.event_name }}" != "push" ] && [ "${{ needs.schema_v2.result }}" != "success" ]; then
             echo "schema v2 finished with result: ${{ needs.schema_v2.result }}"
             exit 1
@@ -1228,15 +1240,15 @@ jobs:
             echo "test shards finished with result: ${{ needs.test_shard.result }}"
             exit 1
           fi
-          if [ "${{ needs.api.result }}" != "success" ]; then
+          if [ "${{ needs.api.result }}" != "$full_suite_result" ]; then
             echo "API tests finished with result: ${{ needs.api.result }}"
             exit 1
           fi
-          if [ "${{ github.event_name }}" != "push" ] && [ "${{ needs.phase_runner.result }}" != "success" ]; then
+          if [ "${{ github.event_name }}" != "push" ] && [ "${{ needs.phase_runner.result }}" != "$full_suite_result" ]; then
             echo "phase-runner finished with result: ${{ needs.phase_runner.result }}"
             exit 1
           fi
-          if [ "${{ needs.e2e.result }}" != "success" ]; then
+          if [ "${{ needs.e2e.result }}" != "$full_suite_result" ]; then
             echo "e2e finished with result: ${{ needs.e2e.result }}"
             exit 1
           fi
