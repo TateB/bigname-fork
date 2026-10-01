@@ -564,7 +564,8 @@ Before `run` opens its database, before `redo` writes anything, and before
 `source-transport` connects, every RPC endpoint the runner is given must show
 that it serves the chain it is configured for. That covers each `BIGNAME_PHASE_RUNNER_SOURCES`
 entry with an RPC kind and an http(s) endpoint, whatever its role, and each
-`BIGNAME_PHASE_RUNNER_HYDRATION_RPC_URLS` entry. A source whose endpoint is not
+`BIGNAME_PHASE_RUNNER_HYDRATION_RPC_URLS` entry; hydration URLs are checked and
+reported under the source key `hydration`, which no configured source may use. A source whose endpoint is not
 an http(s) URL, such as a fixture placeholder, is not an RPC endpoint and no
 RPC provider accepts it. Replay and rebuild never hydrate, so `redo` checks no
 hydration URL, and a Project redo reads no source provider, so it checks

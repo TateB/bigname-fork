@@ -133,6 +133,15 @@ impl SourceConfig {
                 format!("source {} start block must be nonnegative", self.source_key),
             ));
         }
+        if self.source_key == crate::rpc_chain_check::HYDRATION_SOURCE {
+            return Err(RunnerError::new(
+                ErrorKind::Configuration,
+                format!(
+                    "source key {} is reserved for hydration URLs in the RPC chain check",
+                    self.source_key
+                ),
+            ));
+        }
         Ok(())
     }
 }

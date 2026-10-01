@@ -245,8 +245,13 @@ async fn the_check_repeats_after_the_interval_and_after_a_client_rebuild() -> Re
     provider.resolve(&[9]).await?;
     provider.resolve(&[9]).await?;
     assert_eq!(node.count("eth_chainId"), 1);
+    assert!(provider.chain_verified_for(provider.client.client_id()));
 
     tokio::time::sleep(Duration::from_millis(350)).await;
+    assert!(
+        !provider.chain_verified_for(provider.client.client_id()),
+        "an expired check does not admit a request that waited for its permit"
+    );
     provider.resolve(&[9]).await?;
     assert_eq!(node.count("eth_chainId"), 2, "rechecked after the interval");
 

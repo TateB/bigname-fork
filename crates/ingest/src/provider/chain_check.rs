@@ -255,14 +255,14 @@ impl JsonRpcProvider {
         }
     }
 
-    /// Whether the last completed check verified `client_id`. A check in progress counts as
-    /// unverified, so the caller waits for it in [`Self::ensure_chain`].
+    /// Whether the last completed check verified `client_id` and has not expired. A check in
+    /// progress counts as unverified, so the caller waits for it in [`Self::ensure_chain`].
     pub(super) fn chain_verified_for(&self, client_id: u64) -> bool {
         self.chain_guard.as_ref().is_none_or(|guard| {
-            guard
-                .verified
-                .try_lock()
-                .is_ok_and(|verified| verified.is_some_and(|(_, id)| id == client_id))
+            guard.verified.try_lock().is_ok_and(|verified| {
+                verified
+                    .is_some_and(|(at, id)| id == client_id && at.elapsed() < guard.recheck_after)
+            })
         })
     }
 }

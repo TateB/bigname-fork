@@ -204,6 +204,21 @@ mod tests {
     }
 
     #[test]
+    fn the_hydration_label_cannot_be_a_source_key() {
+        let error = SourceConfig::new(
+            "ethereum-mainnet",
+            HYDRATION_SOURCE,
+            "rpc",
+            SeedBasis::EthereumHead,
+            0,
+            "https://node.invalid",
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Configuration);
+        assert!(error.to_string().contains("reserved"), "{error}");
+    }
+
+    #[test]
     fn an_interpret_redo_checks_its_sources_because_discovery_repair_can_ingest() {
         for (phase, reads) in [
             (RedoPhase::Phase(PhaseName::Ingest), true),
