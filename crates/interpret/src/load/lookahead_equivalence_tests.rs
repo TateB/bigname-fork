@@ -482,8 +482,8 @@ pub(super) async fn interpret(
     ))
 }
 
-/// Names released by name-scoped families. ENSv2 state is restored whole, so its releases
-/// need no due name.
+/// Names released by the ENSv1-model families. ENSv2 releases are loaded through the due
+/// ENSv2 state keys, not due names.
 fn released(output: &SchemaV2BatchOutput) -> BTreeSet<String> {
     output
         .normalized_events
