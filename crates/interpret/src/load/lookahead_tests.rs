@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use bigname_adapters::schema_v2::{StateCacheCapacity, prepare_schema_v2_batch_lookahead};
+use bigname_adapters::schema_v2::StateCacheCapacity;
 
 fn manifest(source_family: &str) -> bigname_adapters::schema_v2::ManifestInput {
     bigname_adapters::schema_v2::ManifestInput {
@@ -163,21 +163,12 @@ async fn readonly_mainnet_batches() -> anyhow::Result<()> {
         let load_ms = started.elapsed().as_millis();
         let count = loaded.restored_event_count;
         let raw = loaded.input.raw_logs.len();
-        let session = loaded
-            .adapter_session
-            .expect("both loaders restore a session");
-        let prepared = match &loaded.lookahead_nodes {
-            Some(nodes) => prepare_schema_v2_batch_lookahead(
-                loaded.input,
-                loaded.provenance_manifests,
-                session,
-                nodes,
-                capacity,
-            )?,
+        let prepared = match loaded.prepared {
+            Some(prepared) => *prepared,
             None => bigname_adapters::prepare_schema_v2_batch_incremental_with_provenance(
                 loaded.input,
                 loaded.provenance_manifests,
-                Some(session),
+                loaded.adapter_session,
                 capacity,
             )?,
         };
