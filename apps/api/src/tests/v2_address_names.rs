@@ -1980,3 +1980,107 @@ async fn v2_address_name_totals_match_filtered_deduplicated_pages() -> Result<()
     }
     database.cleanup().await
 }
+
+/// TYR-134: `manager` is the owner of an unwrapped name and the token holder of a wrapped one in
+/// any state, on every row that serves the name.
+#[tokio::test]
+async fn v2_manager_follows_the_wrapper_state_on_every_name_row() -> Result<()> {
+    for (wrap, field) in [
+        (None, "owner"),
+        (Some(("wrapped", 0, 1_900_000_000)), "registrant"),
+        (Some(("emancipated", 65_536, 1_900_000_000)), "registrant"),
+    ] {
+        let database = TestDatabase::new_migrated().await?;
+        seed_v2_address_names_fixture(&database).await?;
+        if let Some(state) = wrap {
+            wrap_address_name(&database, "beta.eth", 0xb300, Some(state)).await?;
+        }
+        let detail = assert_lookup_detail_matches_name_detail(&database, "beta.eth").await?;
+        let expected = Some(detail[field].clone());
+        assert!(detail[field].is_string(), "{wrap:?}: {detail}");
+        assert_eq!(detail.get("manager"), expected.as_ref(), "{wrap:?}: {detail}");
+
+        let rows = |payload: &Value| {
+            payload["data"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|row| row["name"] == json!("beta.eth"))
+                .cloned()
+        };
+        for uri in [
+            format!("/v1/addresses/{V2_ADDRESS}/names?q=beta"),
+            "/v1/names?namespace=ens&expires_after=0".to_owned(),
+            "/v1/search?q=beta".to_owned(),
+        ] {
+            let (status, payload) = read_family_response(&database, &uri).await?;
+            assert_eq!(status, StatusCode::OK, "{uri}: {payload}");
+            let row = rows(&payload).with_context(|| format!("{wrap:?} {uri}: no beta.eth row {payload}"))?;
+            assert_eq!(row.get("manager"), expected.as_ref(), "{wrap:?} {uri}: {row}");
+            assert_eq!(row.get("owner"), detail.get("owner"), "{wrap:?} {uri}: {row}");
+        }
+        database.cleanup().await?;
+    }
+    Ok(())
+}
+
+/// TYR-134: a wrapped subname serves its token holder as `manager` on name detail, lookup detail
+/// and its parent's subnames row, before and after it is emancipated, and the `manager` relation
+/// lists the subname for that holder.
+#[tokio::test]
+async fn v2_wrapped_subname_manager_is_the_token_holder_in_every_state() -> Result<()> {
+    for (state, fuses) in [("wrapped", 0), ("emancipated", 65_536)] {
+        let manager = Some(json!(V2_PERMISSIONS_SUBJECT));
+        let database = TestDatabase::new_migrated().await?;
+        seed_perms_wrapped_lease(&database, WrappedLeaseShape::LinkRecorded).await?;
+        // perms.eth created the child in the registry and the NameWrapper took its node.
+        insert_family_registry_child_edge(
+            &database.pool,
+            "ens",
+            "ethereum-mainnet",
+            "perms.eth",
+            &format!("{:#x}", alloy_primitives::keccak256(b"sub")),
+            "0x00000000000000000000000000000000000000e7",
+            120,
+            "0xperms120",
+        )
+        .await?;
+        let wrapper = Uuid::from_u128(0x5a_0505);
+        seed_wrapped_subname_inputs(&database, "sub.perms.eth", wrapper).await?;
+        if state != "wrapped" {
+            insert_permission_wrapper_state(&database, wrapper, state, fuses, 1_800_000_000, 125)
+                .await?;
+            rebuild_fixture_families(&database.pool, "ethereum-mainnet", 130, "0xperms130")
+                .await?;
+        }
+        let detail = assert_lookup_detail_matches_name_detail(&database, "sub.perms.eth").await?;
+        assert_eq!(detail["ens_v1"]["wrapper_state"], json!(state), "{detail}");
+        assert_eq!(detail.get("manager"), manager.as_ref(), "{state}: {detail}");
+        let (status, subnames) =
+            read_family_response(&database, "/v1/names/perms.eth/subnames").await?;
+        assert_eq!(status, StatusCode::OK, "{subnames}");
+        let row = subnames["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|row| row["namehash"] == detail["namehash"])
+            .with_context(|| format!("no sub.perms.eth row: {subnames}"))?;
+        assert_eq!(row.get("manager"), manager.as_ref(), "{state}: {row}");
+        let (status, managed) = read_family_response(
+            &database,
+            &format!("/v1/addresses/{V2_PERMISSIONS_SUBJECT}/names?relation=manager&namespace=ens"),
+        )
+        .await?;
+        assert_eq!(status, StatusCode::OK, "{managed}");
+        assert!(
+            managed["data"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|row| row["namehash"] == detail["namehash"]),
+            "{state}: {managed}"
+        );
+        database.cleanup().await?;
+    }
+    Ok(())
+}

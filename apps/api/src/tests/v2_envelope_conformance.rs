@@ -643,9 +643,9 @@ async fn v2_flat_record_shape_matches_profile_lookup_and_family_rows() -> Result
     assert_eq!(profile["data"]["owner"], address);
     assert_eq!(profile["data"]["registrant"], token_holder_address);
     assert_ne!(profile["data"]["owner"], token_holder_address);
-    assert!(
-        lookup["data"][0]["record"].get("manager").is_none(),
-        "forward relation context must not synthesize the flat manager field"
+    assert_eq!(
+        lookup["data"][0]["record"]["manager"], address,
+        "an unwrapped name's manager is its registry owner, not the token holder"
     );
     assert!(profile["data"].get("unsupported_fields").is_none());
     // Known-empty categories serve empty key lists and maps.
