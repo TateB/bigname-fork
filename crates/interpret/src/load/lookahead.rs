@@ -228,6 +228,7 @@ async fn load_closure(
         dependencies
             .include_prior_events(events.iter().map(|ordered| &ordered.event))
             .map_err(|error| invalid_dependencies("expand prior links", error))?;
+        dependencies.include_registry_only_resources(chain_id);
         validate_dependencies(dependencies)?;
         if previous == (dependencies.nodes.len(), dependencies.resource_ids.len()) {
             events.extend(v2_events.into_iter().flatten());

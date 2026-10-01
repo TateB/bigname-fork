@@ -42,6 +42,16 @@ impl V1BatchDependencies {
         Ok(())
     }
 
+    /// Add each name's registry-only resource, whose history can hold events that name no node.
+    pub fn include_registry_only_resources(&mut self, chain_id: &str) {
+        for request in &self.nodes {
+            self.resource_ids.insert(stable_uuid(&format!(
+                "resource:registry-only:{chain_id}:{}",
+                request.node
+            )));
+        }
+    }
+
     /// Expand stored explicit links before interpreting. The caller must fetch new requests
     /// to closure; an empty complete query certifies absence, a query not run does not.
     pub fn include_prior_events<'a>(
@@ -200,12 +210,7 @@ pub fn collect_v1_batch_dependencies(
             }
         }
     }
-    for request in &dependencies.nodes {
-        dependencies.resource_ids.insert(stable_uuid(&format!(
-            "resource:registry-only:{}:{}",
-            input.chain_id, request.node
-        )));
-    }
+    dependencies.include_registry_only_resources(&input.chain_id);
     Ok(dependencies)
 }
 
