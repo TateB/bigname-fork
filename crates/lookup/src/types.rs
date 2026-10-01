@@ -104,7 +104,8 @@ pub struct LookupResponse {
     pub resolver_address: String,
     pub entrypoint_chain_id: String,
     pub entrypoint_address: String,
-    /// Current readable resolver-chain head required by the lookup.
+    /// The resolver chain's family publication the lookup captured, within the publication lag
+    /// tolerance of the stored head.
     pub authoritative_position: LookupPosition,
     /// Exact hash-pinned block used for the live call.
     pub execution_position: LookupPosition,

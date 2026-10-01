@@ -336,6 +336,14 @@ another change discharges both with one redo pair. Names longer than 2000 bytes 
 listed by search or a resolver's `bound_names` ([routes](api-v1-routes.md#get-v1search));
 reverse lookup still lists them. Cursors issued before the change continue.
 
+The record inventory reads behind `GET /v1/names/{name}`, `GET /v1/names/{name}/records`,
+`POST /v1/lookup`, verified lookup and `GET /v1/diagnostics/names/{name}/records` no longer evaluate the history record attribution, which
+none of them serves or checks ([storage](storage.md#table-ownership)); a name on a resolver with
+many writes no longer holds a database connection for seconds on each read. Responses do not
+change. The edit is in `crates/storage/src/families`, so it rotates the [interpreter content
+hash](glossary.md#interpreter-content-hash) for every chain although no stored row changes; a
+release batch that rotates the hash for another change discharges both with one redo pair.
+
 The API binds to the configured `BIGNAME_API_HOST` and
 `BIGNAME_API_PORT`; `/healthz` remains its local readiness endpoint. Current
 runtime configuration is documented in
@@ -955,9 +963,10 @@ may trail the stored head and still be served, beside the status thresholds
 `BIGNAME_API_STATUS_MAX_BLOCK_LAG` and `BIGNAME_API_STATUS_MAX_LAG_SECS`. It is
 one count for every chain, so the same value covers six times as much time on a
 12-second chain as on a 2-second one. Set above the status thresholds, it lets
-`/v1/status` report `stale` while the API still serves. It widens indexed
-serving only: verified calls run at the stored head, so while the publication
-trails the head the verified section on combined routes reports `stale`. Every API path is read-only, including verified records, automatic
+`/v1/status` report `stale` while the API still serves. Same-chain verified
+record calls run at the publication's block, and Basenames calls at the
+Ethereum position the projected name carries, so verified records keep serving
+through the same lag; primary-name verification still runs at the stored head. Every API path is read-only, including verified records, automatic
 live fallback, primary names with an omitted `source`, and diagnostics.
 `BIGNAME_API_DATABASE_URL` may point at a primary or a physical streaming hot
 standby with the reviewed schema installed. Logical replicas are not supported:
@@ -1885,6 +1894,18 @@ than one block behind is refused at revalidation. Applying it also applies any
 earlier pending schema-migration, including those that build the lookahead
 indexes, so on a large initialized database finish the lookahead index steps
 below first.
+
+### Verified lookups at the publication block
+
+The build that runs verified record lookups at the captured family publication's
+block, rather than the stored head, changes only lookup read paths, none of them
+hashed sources, so the
+[interpreter content hash](glossary.md#interpreter-content-hash) does not
+rotate and no redo is needed. It adds no schema-migration: the lookup guard
+still requires the head the lookup pinned and the exact publication it
+captured. The lookup RPC provider must serve `eth_call` by block hash for blocks
+up to the publication lag tolerance behind its newest block; a lookup whose
+provider cannot serve that block is refused as `stale`, as before.
 
 ### Lookahead loader on Base
 
