@@ -62,8 +62,9 @@ same tests and static checks again.
 The main-branch follow-up still uploads the site and refreshes the shared Cargo
 and shutdown-image caches. A cache miss can compile dependencies or build an
 image, but does not execute the tests again. These caches must be saved on
-`main` so later pull requests can restore them. Docker publication continues
-after that successful push workflow. Revisit this event split if mandatory queue
+`main` so later pull requests can restore them. Docker images are published
+only from `v*` release tags on `main` commits whose CI passed, not from this
+push workflow. Revisit this event split if mandatory queue
 use or any required validation gate is removed.
 
 `scripts/test-container-shutdown --build-only` builds the image and exports its

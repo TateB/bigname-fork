@@ -46,13 +46,19 @@ jobs:
           fi
           # A tag pushed right after a merge can race main's own CI run.
           deadline=$((SECONDS + 3600))
+          # An empty listing or a failed query is retried until the deadline.
           while :; do
-            runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=100" \
-              --jq '[.workflow_runs[] | {status, conclusion}]')"
-            if jq -e 'any(.[]; .conclusion == "success")' <<<"$runs" >/dev/null; then
-              break
+            if runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=100" \
+              --jq '[.workflow_runs[] | {status, conclusion}]')"; then
+              if jq -e 'any(.[]; .conclusion == "success")' <<<"$runs" >/dev/null; then
+                break
+              fi
+              if ! jq -e 'length == 0 or any(.[]; .status != "completed")' <<<"$runs" >/dev/null; then
+                echo "::error::no successful CI run for $sha"
+                exit 1
+              fi
             fi
-            if ! jq -e 'any(.[]; .status != "completed")' <<<"$runs" >/dev/null || ((SECONDS >= deadline)); then
+            if ((SECONDS >= deadline)); then
               echo "::error::no successful CI run for $sha"
               exit 1
             fi
