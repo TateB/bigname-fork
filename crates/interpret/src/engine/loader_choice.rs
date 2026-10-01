@@ -6,7 +6,7 @@ use crate::{InterpretError, Result};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StateLoader {
-    /// Per-batch ENSv1 lookahead: load only the history of names the batch touches.
+    /// Per-batch lookahead: load only the history of names the batch touches.
     Lookahead,
     /// Restore all retained history once, then carry the session between batches.
     FullState { reason: FullStateReason },

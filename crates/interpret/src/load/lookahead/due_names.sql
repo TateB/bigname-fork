@@ -1,7 +1,12 @@
 -- Candidate superset, not a claim these registrations are still live. No LIMIT: every due
 -- name must be loaded, however many fall due at one timestamp.
--- The expiry expression must stay identical to normalized_events_v1_due_probe_idx in
+-- The expiry expression must stay identical to normalized_events_v1_due_probe_idx and
+-- normalized_events_basenames_due_probe_idx in
 -- crates/storage/schema/baseline/05_normalized_events.sql; numeric arithmetic avoids overflow.
+-- The first two branches differ only in the registrar family, one per partial index. The
+-- Basenames Base registrar has the same 90-day grace period as the ENSv1 registrar
+-- (upstream: .refs/basenames/src/util/Constants.sol:L15 @ basenames@1809bbc)
+-- (upstream: .refs/basenames/src/L2/BaseRegistrar.sol:L296 @ basenames@1809bbc).
 SELECT DISTINCT event.namespace || ':' || lower(COALESCE(
     event.after_state ->> 'child_node', event.after_state ->> 'namehash', event.after_state ->> 'node'
 )) AS name
@@ -42,6 +47,41 @@ WHERE event.chain_id = $1 AND event.block_number < $2
                                         AND '9223372036854775807'::numeric
   AND COALESCE(event.after_state ->> 'child_node', event.after_state ->> 'namehash', event.after_state ->> 'node') IS NOT NULL
 UNION
+SELECT event.namespace || ':' || lower(COALESCE(
+    event.after_state ->> 'child_node', event.after_state ->> 'namehash', event.after_state ->> 'node'
+)) AS name
+FROM normalized_events event
+CROSS JOIN LATERAL (
+    SELECT CASE WHEN jsonb_typeof(event.after_state -> 'expiry') IN ('number','string')
+        AND event.after_state ->> 'expiry' ~ '^[+-]?[0-9]+$'
+        AND length(ltrim(event.after_state ->> 'expiry', '+-0')) <= 19
+      THEN ((CASE WHEN left(event.after_state ->> 'expiry', 1) = '-' THEN '-' ELSE '' END)
+        || COALESCE(NULLIF(ltrim(event.after_state ->> 'expiry', '+-0'), ''), '0'))::numeric
+    END AS expiry
+) parsed
+JOIN LATERAL (
+    SELECT 1 FROM chain_lineage lineage
+    WHERE lineage.chain_id = event.chain_id
+      AND lineage.block_number = event.block_number
+      AND lineage.block_hash = event.block_hash
+      AND lineage.canonicality_state IN ('canonical','safe','finalized')
+    LIMIT 1
+) readable ON TRUE
+WHERE event.chain_id = $1 AND event.block_number < $2
+  AND event.canonicality_state IN ('canonical','safe','finalized')
+  AND event.source_family = 'basenames_base_registrar'
+  AND event.event_kind IN ('RegistrationGranted','RegistrationRenewed','TokenControlTransferred')
+  AND parsed.expiry >= COALESCE(
+      $3::bigint::numeric - $5::bigint::numeric,
+      '-9223372036854775808'::numeric
+  )
+  AND parsed.expiry < $4::bigint::numeric - $5::bigint::numeric
+  AND parsed.expiry >= '-9223372036854775808'::numeric
+  AND parsed.expiry <= '9223372036854775807'::numeric
+  AND parsed.expiry + $5::bigint::numeric BETWEEN '-9223372036854775808'::numeric
+                                        AND '9223372036854775807'::numeric
+  AND COALESCE(event.after_state ->> 'child_node', event.after_state ->> 'namehash', event.after_state ->> 'node') IS NOT NULL
+UNION
 -- A registrar event can record an expiry that had already lapsed, grace period included,
 -- before its own block. The adapter releases such a name at the next block boundary, so
 -- when that block opens this batch the name is below the expiry window above. Only events in
@@ -74,7 +114,7 @@ CROSS JOIN LATERAL (
         || COALESCE(NULLIF(ltrim(previous.after_state ->> 'expiry', '+-0'), ''), '0'))::numeric
     END AS expiry
 ) parsed
-WHERE previous.source_family = 'ens_v1_registrar_l1'
+WHERE previous.source_family IN ('ens_v1_registrar_l1','basenames_base_registrar')
   -- Only an expiry below the first branch's lower bound; the same i64 rules apply.
   AND parsed.expiry < $3::bigint::numeric - $5::bigint::numeric
   AND parsed.expiry >= '-9223372036854775808'::numeric

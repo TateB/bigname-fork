@@ -1,12 +1,15 @@
-# ENSv1 lookahead loader indexes
+# Lookahead loader indexes
+
+The directory keeps its original name, but the indexes now serve the ENSv1
+families on Ethereum and the Basenames Base families on Base.
 
 Interpret's [lookahead loader](../../docs/glossary.md#lookahead-loader) restores
 prior adapter state for one batch by reading only the history of the names and
 resources that batch can touch. It is chosen automatically for a chain whose
 `active` and `deprecated` manifests all belong to source families it covers and
 whose retained history holds no other family (see
-[`docs/deployment.md`](../../docs/deployment.md)). Two partial expression indexes
-on `normalized_events` serve its reads:
+[`docs/deployment.md`](../../docs/deployment.md)). Four partial expression indexes
+on `normalized_events` serve its reads, two per family group:
 
 - `normalized_events_v1_direct_node_probe_idx` selects every readable ENSv1 event
   of one name, keyed by chain, then `namespace:namehash`, then block. A registry
@@ -28,6 +31,15 @@ on `normalized_events` serve its reads:
   installer and its checks: a mainnet read-only comparison returned the same
   17 names in 7.2 milliseconds instead of 40.2 seconds. The figure has not been
   re-measured on the current tree.
+- `normalized_events_basenames_direct_node_probe_idx` and
+  `normalized_events_basenames_due_probe_idx` have the same expressions over the
+  `basenames_base_*` families and the `basenames_base_registrar` family. The
+  Basenames Base registrar has the same 90-day grace period
+  (upstream: .refs/basenames/src/util/Constants.sol:L15 @ basenames@1809bbc)
+  (upstream: .refs/basenames/src/L2/BaseRegistrar.sol:L296 @ basenames@1809bbc).
+  On Ethereum these two hold no rows, and on Base the ENSv1 two hold none, but
+  every lookahead chain runs both arms of each query, so every database that
+  runs the lookahead loader needs all four.
 
 These change access paths only: no normalized event, canonicality state, raw
 intake or [interpreter content hash](../../docs/glossary.md#interpreter-content-hash)
@@ -43,16 +55,18 @@ writer role and `psql -X -v ON_ERROR_STOP=1 -f install.sql`. Do not wrap it in a
 transaction. Concurrent creation permits writes, but can wait for an existing
 batch transaction; inspect `pg_stat_progress_create_index` rather than restarting
 that batch. The script permits that transaction wait and bounds each build to
-six hours, because both indexes cover most of a mainnet `normalized_events`
-table. Retain its output in the deployment receipt.
+six hours, because each pair covers most of its chain's `normalized_events`
+rows. A database that already holds the two ENSv1 indexes from an earlier
+release reruns the same script: it accepts them unchanged and builds only the
+Basenames pair. Retain its output in the deployment receipt.
 
-The script checks both names twice and fails, with a non-zero `psql` exit,
+The script checks every name twice and fails, with a non-zero `psql` exit,
 instead of reporting success over an index the loader cannot use. Before it
 builds anything, it refuses a name that is already taken by an index that is not
 both `indisvalid` and `indisready`, an index on another table, an index whose
 definition is not the reviewed one, or a table, view, or other relation that is
 not an index. Names that resolve to nothing pass this first check. After the
-builds it makes the same check and also requires both indexes to exist. It
+builds it makes the same check and also requires every index to exist. It
 prints the index rows before the last check, so the receipt shows the flags and
 definitions either way. The definition is compared exactly as `pg_get_indexdef`
 prints it, read with `search_path` set to `pg_catalog` and
@@ -78,27 +92,29 @@ index with the reviewed definition merely because an installation was retried,
 and never drop one while a runner that uses the lookahead loader is processing
 batches.
 
-After both builds finish, run `ANALYZE bigname_phase.normalized_events` (or
+After the builds finish, run `ANALYZE bigname_phase.normalized_events` (or
 confirm autovacuum has analyzed the table since). Expression indexes have no
 statistics until the table is analyzed, and the loader's queries depend on them:
 in a test database without statistics, reading the history of 100,000 names did
 not finish in several minutes, and took under four seconds after `ANALYZE`.
 
-The matching versioned schema-migration
-`20260917150000_normalized_events_v1_lookahead_indexes.sql` installs the same
-definitions on initialized databases and is a no-op before the phase schema
-exists; after a live prebuild, its `IF NOT EXISTS` is a no-op that adopts the
-indexes by name alone. It therefore ends with the script's final check, read
+The matching versioned schema-migrations
+`20260917150000_normalized_events_v1_lookahead_indexes.sql` (ENSv1) and
+`20261001120100_normalized_events_basenames_lookahead_indexes.sql` (Basenames
+Base) each install the same definitions of their pair on initialized databases
+and are no-ops before the phase schema exists; after a live prebuild, their
+`IF NOT EXISTS` is a no-op that adopts the indexes by name alone. Each therefore
+ends with the script's final check, read
 under the same settings and put back before the block returns, so the SQLx run
-fails rather than recording success if either name is not an index on
+fails rather than recording success if any of its names is not an index on
 `bigname_phase.normalized_events`, is not valid and ready, or does not have the
 reviewed definition; recover as described above, then run the schema-migrations
 again. `scripts/check-schema` proves each refusal for the script and for
-the schema-migration, and that the fresh baseline, the schema-migration, and
-the script build the same definitions. Apply that schema-migration through the
-usual SQLx release process when adopting this source revision. The fresh
-baseline also includes both indexes.
+each schema-migration, and that the fresh baseline, the schema-migrations, and
+the script build the same definitions. Apply them through the usual SQLx
+release process when adopting this source revision. The fresh baseline also
+includes all four indexes.
 
-An index with either name built from an earlier experimental script is kept only
+An index with any of these names built from an earlier experimental script is kept only
 if `pg_get_indexdef` matches the definition here; otherwise drop and rebuild it
 as above.

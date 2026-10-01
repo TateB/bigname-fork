@@ -17,16 +17,16 @@ use crate::{BatchRequest, Engine, FullStateReason, Marker, RunMode, StateLoader,
 type TestResult<T = ()> = anyhow::Result<T>;
 
 const CHAIN: &str = "ethereum-mainnet";
-const FIRST_BLOCK: i64 = 17_000_000;
-const START: i64 = 1_700_000_000;
-const GRACE: i64 = 90 * 24 * 60 * 60;
+pub(super) const FIRST_BLOCK: i64 = 17_000_000;
+pub(super) const START: i64 = 1_700_000_000;
+pub(super) const GRACE: i64 = 90 * 24 * 60 * 60;
 const ENS_REGISTRY: &str = "0x00000000000c2e074ec69a0dfb2997ba6c7d2e1e";
 const BASE_REGISTRAR: &str = "0x57f1887a8bf19b14fc0df6fd9b2acc9af147ea85";
 const LEGACY_CONTROLLER: &str = "0x283af0b28c62c092c9727f1ee09c02ca627eb7f5";
-const OWNER: &str = "0x0000000000000000000000000000000000000051";
-const SECOND_OWNER: &str = "0x0000000000000000000000000000000000000052";
+pub(super) const OWNER: &str = "0x0000000000000000000000000000000000000051";
+pub(super) const SECOND_OWNER: &str = "0x0000000000000000000000000000000000000052";
 const RESOLVER: &str = "0x4976fb03c32e5b8cfe2b6ccb31c09ba78ebaba41";
-const CAPACITY: StateCacheCapacity = StateCacheCapacity::Entries(65_536);
+pub(super) const CAPACITY: StateCacheCapacity = StateCacheCapacity::Entries(65_536);
 /// An ENSv2 family lookahead does not cover, under which the drift tests retain history.
 const UNCOVERED_FAMILY: &str = "ens_v2_registry_l1";
 
@@ -101,11 +101,11 @@ impl History {
     }
 }
 
-fn block_hash(number: i64) -> String {
+pub(super) fn block_hash(number: i64) -> String {
     format!("0x{:064x}", number + 1)
 }
 
-fn transaction_hash(number: i64) -> String {
+pub(super) fn transaction_hash(number: i64) -> String {
     format!("0x{:064x}", number + 10_000)
 }
 
@@ -113,7 +113,7 @@ fn eth_node() -> B256 {
     keccak256([B256::ZERO.as_slice(), keccak256(b"eth").as_slice()].concat())
 }
 
-fn child(parent: B256, label: &str) -> B256 {
+pub(super) fn child(parent: B256, label: &str) -> B256 {
     keccak256([parent.as_slice(), keccak256(label.as_bytes()).as_slice()].concat())
 }
 
@@ -121,11 +121,12 @@ fn name(label: &str) -> String {
     format!("ens:{:#x}", child(eth_node(), label))
 }
 
-fn token(label: &str) -> U256 {
+pub(super) fn token(label: &str) -> U256 {
     U256::from_be_bytes(keccak256(label.as_bytes()).0)
 }
 
-async fn database(prefix: &str) -> TestResult<TestDatabase> {
+/// A database holding every checked-in mainnet manifest: Ethereum and Base.
+pub(super) async fn database(prefix: &str) -> TestResult<TestDatabase> {
     let database = TestDatabase::create(TestDatabaseConfig::new(prefix)).await?;
     database.create_phase_schema().await?;
     for statement in [
@@ -153,15 +154,31 @@ async fn database(prefix: &str) -> TestResult<TestDatabase> {
     Ok(database)
 }
 
-struct Seeder<'a> {
-    pool: &'a PgPool,
-    block: i64,
-    log_index: i64,
+pub(super) struct Seeder<'a> {
+    pub(super) pool: &'a PgPool,
+    pub(super) chain: &'static str,
+    pub(super) block: i64,
+    pub(super) hash: String,
+    pub(super) transaction: String,
+    pub(super) log_index: i64,
 }
 
 impl Seeder<'_> {
-    async fn block(&mut self, number: i64) -> TestResult {
+    pub(super) async fn block(&mut self, number: i64) -> TestResult {
+        self.block_with_hash(number, &block_hash(number), &transaction_hash(number))
+            .await
+    }
+
+    /// Logs from here on go to the block with this hash, which may replace an orphaned one.
+    pub(super) async fn block_with_hash(
+        &mut self,
+        number: i64,
+        hash: &str,
+        transaction: &str,
+    ) -> TestResult {
         self.block = number;
+        self.hash = hash.to_owned();
+        self.transaction = transaction.to_owned();
         self.log_index = 0;
         sqlx::query(
             "INSERT INTO raw_transactions (
@@ -169,10 +186,10 @@ impl Seeder<'_> {
                  transaction_index, from_address, to_address
              ) VALUES ($1, $2, $3, $4, 0, $5, $6)",
         )
-        .bind(CHAIN)
-        .bind(block_hash(number))
+        .bind(self.chain)
+        .bind(hash)
         .bind(number)
-        .bind(transaction_hash(number))
+        .bind(transaction)
         .bind(OWNER)
         .bind(LEGACY_CONTROLLER)
         .execute(self.pool)
@@ -180,17 +197,21 @@ impl Seeder<'_> {
         Ok(())
     }
 
-    async fn log(&mut self, emitter: &str, encoded: alloy_primitives::LogData) -> TestResult {
+    pub(super) async fn log(
+        &mut self,
+        emitter: &str,
+        encoded: alloy_primitives::LogData,
+    ) -> TestResult {
         sqlx::query(
             "INSERT INTO raw_logs (
                  chain_id, block_hash, block_number, transaction_hash,
                  transaction_index, log_index, emitting_address, topics, data
              ) VALUES ($1, $2, $3, $4, 0, $5, $6, $7, $8)",
         )
-        .bind(CHAIN)
-        .bind(block_hash(self.block))
+        .bind(self.chain)
+        .bind(&self.hash)
         .bind(self.block)
-        .bind(transaction_hash(self.block))
+        .bind(&self.transaction)
         .bind(self.log_index)
         .bind(emitter)
         .bind(
@@ -241,8 +262,9 @@ impl Seeder<'_> {
     }
 }
 
-async fn seed_history(pool: &PgPool, history: History) -> TestResult {
-    for (offset, seconds) in history.offsets().iter().enumerate() {
+/// One canonical block per offset from `FIRST_BLOCK`, mined `START + offset` seconds.
+pub(super) async fn seed_lineage(pool: &PgPool, chain: &str, offsets: &[i64]) -> TestResult {
+    for (offset, seconds) in offsets.iter().enumerate() {
         let number = FIRST_BLOCK + i64::try_from(offset)?;
         sqlx::query(
             "INSERT INTO chain_lineage (
@@ -250,7 +272,7 @@ async fn seed_history(pool: &PgPool, history: History) -> TestResult {
                  block_timestamp, canonicality_state
              ) VALUES ($1, $2, $3, $4, to_timestamp($5), 'canonical')",
         )
-        .bind(CHAIN)
+        .bind(chain)
         .bind(block_hash(number))
         .bind((offset > 0).then(|| block_hash(number - 1)))
         .bind(number)
@@ -258,11 +280,19 @@ async fn seed_history(pool: &PgPool, history: History) -> TestResult {
         .execute(pool)
         .await?;
     }
+    Ok(())
+}
+
+async fn seed_history(pool: &PgPool, history: History) -> TestResult {
+    seed_lineage(pool, CHAIN, history.offsets()).await?;
     let owner: Address = OWNER.parse()?;
     let second_owner: Address = SECOND_OWNER.parse()?;
     let mut seed = Seeder {
         pool,
+        chain: CHAIN,
         block: 0,
+        hash: String::new(),
+        transaction: String::new(),
         log_index: 0,
     };
     if matches!(history, History::DeepSubname) {
@@ -399,8 +429,9 @@ async fn seed_history(pool: &PgPool, history: History) -> TestResult {
     Ok(())
 }
 
-async fn interpret(
+pub(super) async fn interpret(
     pool: &PgPool,
+    chain: &str,
     from: i64,
     loaded: load::LoadedBatch,
 ) -> TestResult<(SchemaV2BatchOutput, load::CachedPrior)> {
@@ -423,7 +454,7 @@ async fn interpret(
         )?,
     };
     let values =
-        load::prior_state_values(pool, CHAIN, from, prepared.state_value_requests()).await?;
+        load::prior_state_values(pool, chain, from, prepared.state_value_requests()).await?;
     let (output, adapter_session) = prepared.finish(values)?;
     let cache = load::fold_prior_cache(loaded.prior_cache, &output.normalized_events);
     Ok((
@@ -452,23 +483,23 @@ fn released(output: &SchemaV2BatchOutput) -> BTreeSet<String> {
         .collect()
 }
 
-struct Walk {
+pub(super) struct Walk {
     /// Every name a `RegistrationReleased` event was emitted for.
-    released: BTreeSet<String>,
+    pub(super) released: BTreeSet<String>,
     /// Releases of names no log in their batch mentioned: only the due-names query loads them.
-    quiet_releases: usize,
+    pub(super) quiet_releases: usize,
     /// Every stored normalized event, without its surrogate id and insertion time.
-    stored: Vec<String>,
+    pub(super) stored: Vec<String>,
 }
 
-async fn stored_events(pool: &PgPool) -> TestResult<Vec<String>> {
+pub(super) async fn stored_events(pool: &PgPool, chain: &str) -> TestResult<Vec<String>> {
     Ok(sqlx::query_scalar(
         "SELECT (to_jsonb(event) - 'normalized_event_id' - 'observed_at')::text
          FROM normalized_events event
          WHERE chain_id = $1
          ORDER BY block_number, transaction_index, log_index, event_identity",
     )
-    .bind(CHAIN)
+    .bind(chain)
     .fetch_all(pool)
     .await?)
 }
@@ -479,8 +510,27 @@ async fn stored_events(pool: &PgPool) -> TestResult<Vec<String>> {
 /// the due names the lookahead loader asks for.
 async fn walk(history: History, blocks_per_batch: u32, force_full_state: bool) -> TestResult<Walk> {
     let database = database("interpret_lookahead_equivalence").await?;
-    let pool = database.pool();
-    seed_history(pool, history).await?;
+    seed_history(database.pool(), history).await?;
+    let walk = walk_seeded(
+        database.pool(),
+        CHAIN,
+        history.offsets(),
+        blocks_per_batch,
+        force_full_state,
+    )
+    .await?;
+    database.cleanup().await?;
+    Ok(walk)
+}
+
+/// `walk` over a seeded database: `offsets` are the seeded blocks' times after `START`.
+pub(super) async fn walk_seeded(
+    pool: &PgPool,
+    chain: &'static str,
+    offsets: &[i64],
+    blocks_per_batch: u32,
+    force_full_state: bool,
+) -> TestResult<Walk> {
     let engine = Engine::new(pool.clone())
         .with_blocks_per_batch(NonZeroU32::new(blocks_per_batch).expect("positive batch"))
         .with_full_state_loader_forced(force_full_state);
@@ -489,14 +539,14 @@ async fn walk(history: History, blocks_per_batch: u32, force_full_state: bool) -
     let mut all_released = BTreeSet::new();
     let mut quiet_releases = 0;
     let mut from = FIRST_BLOCK;
-    let last_block = history.last_block();
+    let last_block = FIRST_BLOCK + i64::try_from(offsets.len())? - 1;
     while from <= last_block {
         let to = (from + i64::from(blocks_per_batch) - 1).min(last_block);
         let lookahead =
-            match super::batch_input(pool, CHAIN, from, to, None, CAPACITY, None).await? {
+            match super::batch_input(pool, chain, from, to, None, CAPACITY, None).await? {
                 super::Attempt::Loaded(loaded) => *loaded,
                 super::Attempt::FullStateRequired(choice) => {
-                    anyhow::bail!("mainnet manifests must choose lookahead, got {choice:?}")
+                    anyhow::bail!("{chain} manifests must choose lookahead, got {choice:?}")
                 }
             };
         // Names the batch's own logs mention are loaded whether or not they are due.
@@ -509,21 +559,21 @@ async fn walk(history: History, blocks_per_batch: u32, force_full_state: bool) -
             .into_iter()
             .map(|request| format!("{}:{}", request.namespace, request.node))
             .collect();
-        let (lookahead_output, _) = interpret(pool, from, lookahead).await?;
-        let cold = load::batch_input(pool, CHAIN, from, to, None, None, CAPACITY).await?;
-        let (cold_output, cold_session) = interpret(pool, from, cold).await?;
+        let (lookahead_output, _) = interpret(pool, chain, from, lookahead).await?;
+        let cold = load::batch_input(pool, chain, from, to, None, None, CAPACITY).await?;
+        let (cold_output, cold_session) = interpret(pool, chain, from, cold).await?;
         assert_eq!(
             lookahead_output, cold_output,
             "lookahead differs from a cold full-state restore for blocks {from}..={to}"
         );
         if let Some(carried) = carried.take() {
             let carried =
-                load::batch_input(pool, CHAIN, from, to, None, Some(carried), CAPACITY).await?;
+                load::batch_input(pool, chain, from, to, None, Some(carried), CAPACITY).await?;
             assert_eq!(
                 carried.restored_event_count, 0,
                 "the session must be reused"
             );
-            let (carried_output, _) = interpret(pool, from, carried).await?;
+            let (carried_output, _) = interpret(pool, chain, from, carried).await?;
             assert_eq!(
                 lookahead_output, carried_output,
                 "lookahead differs from the carried full-state session for blocks {from}..={to}"
@@ -532,12 +582,12 @@ async fn walk(history: History, blocks_per_batch: u32, force_full_state: bool) -
         carried = Some(cold_session);
 
         let mut connection = pool.acquire().await?;
-        let predecessor = load::resume::predecessor_timestamp(&mut connection, CHAIN, from).await?;
+        let predecessor = load::resume::predecessor_timestamp(&mut connection, chain, from).await?;
         let last = time::OffsetDateTime::from_unix_timestamp(
-            START + history.offsets()[usize::try_from(to - FIRST_BLOCK)?],
+            START + offsets[usize::try_from(to - FIRST_BLOCK)?],
         )?;
         let due: BTreeSet<String> =
-            load::lookahead_query::due_names(&mut connection, CHAIN, from, predecessor, last)
+            load::lookahead_query::due_names(&mut connection, chain, from, predecessor, last)
                 .await?
                 .into_iter()
                 .collect();
@@ -554,7 +604,7 @@ async fn walk(history: History, blocks_per_batch: u32, force_full_state: bool) -
 
         let outcome = engine
             .run_batch(BatchRequest {
-                chain_id: CHAIN.to_owned(),
+                chain_id: chain.to_owned(),
                 from_block: FIRST_BLOCK,
                 to_block: last_block,
                 resume_current: current.clone(),
@@ -575,15 +625,14 @@ async fn walk(history: History, blocks_per_batch: u32, force_full_state: bool) -
     };
     assert_eq!(
         engine
-            .chosen_loader(CHAIN)?
+            .chosen_loader(chain)?
             .map(|choice| choice.to_string()),
         Some(expected_choice.to_owned())
     );
     if !force_full_state {
-        assert_eq!(engine.chosen_loader(CHAIN)?, Some(StateLoader::Lookahead));
+        assert_eq!(engine.chosen_loader(chain)?, Some(StateLoader::Lookahead));
     }
-    let stored = stored_events(pool).await?;
-    database.cleanup().await?;
+    let stored = stored_events(pool, chain).await?;
     Ok(Walk {
         released: all_released,
         quiet_releases,
@@ -833,7 +882,7 @@ async fn walk_with_retained_uncovered_family(
         current = run_batch(&second, Some(current), last_block).await?;
     }
     let choices = vec![first.chosen_loader(CHAIN)?, second.chosen_loader(CHAIN)?];
-    let stored = stored_events(pool).await?;
+    let stored = stored_events(pool, CHAIN).await?;
     database.cleanup().await?;
     Ok((stored, choices))
 }

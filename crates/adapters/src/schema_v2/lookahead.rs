@@ -1,4 +1,6 @@
-//! ENSv1 per-batch working-set requests. Persistence and canonical selection stay in Interpret.
+//! ENSv1-model per-batch working-set requests, for the ENSv1 families and the Basenames Base
+//! families the same protocol code interprets. Persistence and canonical selection stay in
+//! Interpret.
 use std::collections::BTreeSet;
 
 use anyhow::{Context, ensure};
@@ -119,6 +121,10 @@ fn supported_family(family: &str) -> bool {
             | "ens_v1_wrapper_l1"
             | "ens_v1_reverse_l1"
             | "basenames_l1_compat"
+            | "basenames_base_registry"
+            | "basenames_base_registrar"
+            | "basenames_base_resolver"
+            | "basenames_base_primary"
     ) || family.ends_with("_execution")
 }
 
@@ -153,10 +159,12 @@ pub fn collect_v1_batch_dependencies(
             }
         } else {
             for manifest in &input.manifests {
-                let Some(source) = catalog
-                    .source(manifest.manifest_id)
-                    .filter(|source| source.source_family == "ens_v1_resolver_l1")
-                else {
+                let Some(source) = catalog.source(manifest.manifest_id).filter(|source| {
+                    matches!(
+                        source.source_family.as_str(),
+                        "ens_v1_resolver_l1" | "basenames_base_resolver"
+                    )
+                }) else {
                     continue;
                 };
                 for event in source.events.iter().filter(|event| {
