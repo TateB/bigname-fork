@@ -78,6 +78,7 @@ pub(super) async fn start_v2_api(
         let mut command = Command::new(&binary);
         command
             .current_dir(&root)
+            .env("BIGNAME_API_RPC_CHAIN_CHECK", "chain-id-only")
             .args(["serve", "--bind-addr"])
             .arg(&bind_addr)
             .args(["--metrics-bind-addr", "127.0.0.1:0", "--database-url"])

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use tokio::sync::Mutex;
 
 use crate::{
-    ErrorKind, IngestError, Result,
+    ErrorKind, ExpectedRpcChain, IngestError, Result, RpcChainCheck,
     manifest::WatchFilter,
     provider::{ChainProvider, Log, ResolvedBlock, provider_error},
 };
@@ -73,6 +73,23 @@ impl VerificationProvider {
             fetch_lock: std::sync::Arc::new(Mutex::new(())),
             declared_floor: None,
         })
+    }
+
+    /// Guards an RPC reference with the RPC chain check; a direct database reader already
+    /// compares its stored genesis when it opens.
+    pub fn with_rpc_chain_check(
+        mut self,
+        chain_id: &str,
+        source_key: &str,
+        mode: RpcChainCheck,
+        recorded_genesis: Option<&str>,
+    ) -> Result<Self> {
+        if self.kind == VerificationProviderKind::IndependentRpc {
+            let expected = ExpectedRpcChain::new(chain_id, source_key, mode)?
+                .with_recorded_genesis(recorded_genesis);
+            self.provider = self.provider.with_chain_check(expected);
+        }
+        Ok(self)
     }
 
     #[cfg(test)]

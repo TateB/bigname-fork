@@ -13,6 +13,7 @@ use phase_runner::{
     live_phase::LivePhase,
     phase::PhaseSet,
     project_phase::ProjectPhase,
+    rpc_chain_check,
     runner::{PhaseRunner, SupervisorReport},
     verify_phase::VerifyPhase,
 };
@@ -37,9 +38,14 @@ async fn main() -> Result<()> {
             database_url,
             old,
             new,
+            rpc_chain_check,
         } => {
+            let no_hydration = bigname_lookup::ChainRpcUrls::default();
+            rpc_chain_check::verify_all([&old, &new], &no_hydration, rpc_chain_check).await?;
             let database = RunnerDatabase::connect(&database_url, 2).await?;
-            let receipt = phase_runner::source_transport::transition(&database, &old, &new).await?;
+            let receipt =
+                phase_runner::source_transport::transition(&database, &old, &new, rpc_chain_check)
+                    .await?;
             println!("{}", serde_json::to_string(&receipt)?);
         }
         ResolvedCommand::InitSchema { database_url } => {
@@ -73,6 +79,14 @@ async fn main() -> Result<()> {
                     manifest_profile,
                     Arc::make_mut(&mut runtime.chains),
                 )?;
+                let rpc_mode = rpc_chain_check::mode(&runtime.capacity);
+                let sources = runtime.chains.iter().flat_map(|chain| chain.sources.iter());
+                let verified_rpc =
+                    rpc_chain_check::verify_all(sources, &hydration_rpc_urls, rpc_mode).await?;
+                rpc_chain_check::record_on_chains(
+                    Arc::make_mut(&mut runtime.chains),
+                    &verified_rpc,
+                )?;
                 let connections = u32::try_from(runtime.chains.len())
                     .unwrap_or(u32::MAX)
                     .saturating_mul(2)
@@ -85,6 +99,7 @@ async fn main() -> Result<()> {
                     manifest_profile,
                 )
                 .await?;
+                rpc_chain_check::persist(database.pool(), &runtime.chains).await?;
                 let (loop_heartbeat, phase_progress, metrics_feed) = start_metrics(
                     metrics_bind_addr,
                     &database,
@@ -94,6 +109,7 @@ async fn main() -> Result<()> {
                     true,
                 )
                 .await?;
+                rpc_chain_check::report(&metrics_feed, &verified_rpc);
                 let verification_database = VerificationDatabase::connect(
                     &verification_database_url,
                     &database,
@@ -107,7 +123,10 @@ async fn main() -> Result<()> {
                     runtime.capacity.ingest,
                 ));
                 let phases = PhaseSet::with_ingest_interpret_project_and_live(
-                    Arc::new(IngestPhase::with_engine(Arc::clone(&ingest_engine))),
+                    Arc::new(
+                        IngestPhase::with_engine(Arc::clone(&ingest_engine))
+                            .with_metrics(metrics_feed.clone()),
+                    ),
                     Arc::new(InterpretPhase::from_capacity(
                         database.pool().clone(),
                         &runtime.capacity,
@@ -117,8 +136,10 @@ async fn main() -> Result<()> {
                             .with_family_settings(project_families)
                             .with_metrics(metrics_feed.clone()),
                     ),
-                    Arc::new(VerifyPhase::new(verification_database)),
-                    Arc::new(LivePhase::with_engine(ingest_engine)),
+                    Arc::new(VerifyPhase::new(verification_database, rpc_mode)),
+                    Arc::new(
+                        LivePhase::with_engine(ingest_engine).with_metrics(metrics_feed.clone()),
+                    ),
                 )?;
                 anyhow::Ok(Arc::new(
                     PhaseRunner::new(
@@ -177,14 +198,28 @@ async fn main() -> Result<()> {
                 let (manifest_repository, manifest_profile) =
                     hash_manifests_off_runtime(manifests_root.clone()).await??;
                 bind_runtime_manifests(&manifest_repository, manifest_profile, &mut chains)?;
-                anyhow::Ok((database, chains, manifest_repository, manifest_profile))
+                let sources = chains
+                    .iter()
+                    .filter(|_| phase.reads_sources())
+                    .flat_map(|chain| chain.sources.iter());
+                let rpc_mode = rpc_chain_check::mode(&capacity);
+                // Replay and rebuild never hydrate, so a redo checks no hydration URL.
+                let verified_rpc = rpc_chain_check::verify_all(
+                    sources,
+                    &bigname_lookup::ChainRpcUrls::default(),
+                    rpc_mode,
+                )
+                .await?;
+                rpc_chain_check::record_on_chains(&mut chains, &verified_rpc)?;
+                let manifests = (manifest_repository, manifest_profile);
+                anyhow::Ok((database, chains, manifests, verified_rpc))
             };
             // Nothing durable happens before this point, so a stop here is a redo
             // that never started. Manifest synchronization is the first commit: a
             // changed manifest can retire hashes or install required Ingest work,
             // so a stop from here on is reported as something to rerun, never as a
             // no-op, whether or not the commit made it.
-            let Some((database, chains, manifest_repository, manifest_profile)) =
+            let Some((database, chains, (manifest_repository, manifest_profile), verified_rpc)) =
                 phase_runner::shutdown::until_cancelled(&cancellation, startup).await?
             else {
                 tracing::info!("stop requested during start-up; the redo never started");
@@ -208,6 +243,7 @@ async fn main() -> Result<()> {
             }
             let startup = async {
                 validate_redo_attestation_chains(&watch_set_coverage_attestations, &chains)?;
+                rpc_chain_check::persist(database.pool(), &chains).await?;
                 let (loop_heartbeat, phase_progress, metrics_feed) = start_metrics(
                     metrics_bind_addr,
                     &database,
@@ -217,11 +253,15 @@ async fn main() -> Result<()> {
                     false,
                 )
                 .await?;
+                rpc_chain_check::report(&metrics_feed, &verified_rpc);
+                let rpc_mode = rpc_chain_check::mode(&capacity);
                 let ingest_engine = Arc::new(bigname_ingest::Engine::with_config(
                     database.pool().clone(),
                     capacity.ingest,
                 ));
-                let ingest = Arc::new(IngestPhase::with_engine(ingest_engine));
+                let ingest = Arc::new(
+                    IngestPhase::with_engine(ingest_engine).with_metrics(metrics_feed.clone()),
+                );
                 let interpret = Arc::new(InterpretPhase::from_capacity(
                     database.pool().clone(),
                     &capacity,
@@ -245,7 +285,7 @@ async fn main() -> Result<()> {
                         ingest,
                         interpret,
                         project,
-                        Arc::new(VerifyPhase::new(verification_database)),
+                        Arc::new(VerifyPhase::new(verification_database, rpc_mode)),
                     )?
                 } else {
                     PhaseSet::with_ingest_interpret_and_project(ingest, interpret, project)?

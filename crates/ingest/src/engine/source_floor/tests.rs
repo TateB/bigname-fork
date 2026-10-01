@@ -164,6 +164,7 @@ async fn a_floor_rising_while_a_window_is_in_flight_stops_the_write() -> AnyResu
                 kind: "rpc".to_owned(),
                 start_block: 0,
                 endpoint: endpoint.clone(),
+                recorded_genesis: None,
             }],
             cursors: Vec::new(),
             redo_range: None,
@@ -227,6 +228,7 @@ async fn a_live_suffix_below_the_floor_is_refused_before_it_is_loaded() -> AnyRe
                 kind: "rpc".to_owned(),
                 start_block: 0,
                 endpoint: endpoint.clone(),
+                recorded_genesis: None,
             }],
             live_handoff: Marker {
                 number: 0,
@@ -264,6 +266,7 @@ async fn an_out_of_range_resume_marker_fails_the_batch_before_any_network_use() 
                 kind: "rpc".to_owned(),
                 start_block: 0,
                 endpoint: "http://127.0.0.1:9/".to_owned(),
+                recorded_genesis: None,
             }],
             cursors: Vec::new(),
             redo_range: Some((10, 20)),
@@ -305,6 +308,7 @@ async fn a_marker_at_the_top_of_the_block_space_completes_without_loading() -> A
                 kind: "rpc".to_owned(),
                 start_block: 0,
                 endpoint,
+                recorded_genesis: None,
             }],
             cursors: vec![SourceCursor {
                 key: "redo-rpc".to_owned(),
@@ -376,12 +380,14 @@ async fn a_warehouse_source_is_planned_without_asking_it_for_a_floor() -> AnyRes
                     kind: "coinbase-sql".to_owned(),
                     start_block: 0,
                     endpoint: "coinbase-sql://warehouse".to_owned(),
+                    recorded_genesis: None,
                 },
                 SourceDescriptor {
                     key: "base-rpc".to_owned(),
                     kind: "rpc".to_owned(),
                     start_block: crate::BASE_COINBASE_SEAM_BLOCK,
                     endpoint: "https://rpc.example.com/".to_owned(),
+                    recorded_genesis: None,
                 },
             ],
             cursors: Vec::new(),
@@ -419,12 +425,14 @@ async fn a_completed_multi_source_redo_reloads_an_earlier_source_boundary() -> A
                     kind: "coinbase-sql".to_owned(),
                     start_block: 0,
                     endpoint: coinbase_endpoint.to_owned(),
+                    recorded_genesis: None,
                 },
                 SourceDescriptor {
                     key: "base-rpc".to_owned(),
                     kind: "rpc".to_owned(),
                     start_block: seam,
                     endpoint,
+                    recorded_genesis: None,
                 },
             ],
             cursors: Vec::new(),
@@ -462,12 +470,14 @@ async fn a_coinbase_seam_configuration_failure_names_the_identity_check() -> Any
                     kind: "coinbase-sql".to_owned(),
                     start_block: 0,
                     endpoint: "coinbase-sql://unconfigured-seam".to_owned(),
+                    recorded_genesis: None,
                 },
                 SourceDescriptor {
                     key: "base-rpc".to_owned(),
                     kind: "rpc".to_owned(),
                     start_block: seam,
                     endpoint,
+                    recorded_genesis: None,
                 },
             ],
             cursors: Vec::new(),
@@ -548,12 +558,14 @@ async fn one_batch_redo_rejects_a_fork_switch_at_the_base_source_seam() -> AnyRe
                         kind: "coinbase-sql".to_owned(),
                         start_block: 0,
                         endpoint: "https://one-batch-seam.invalid/".to_owned(),
+                        recorded_genesis: None,
                     },
                     SourceDescriptor {
                         key: "base-rpc".to_owned(),
                         kind: "rpc".to_owned(),
                         start_block: seam,
                         endpoint,
+                        recorded_genesis: None,
                     },
                 ],
                 cursors: Vec::new(),
@@ -609,12 +621,14 @@ async fn one_batch_redo_rejects_a_fork_switch_at_the_base_source_seam() -> AnyRe
                         kind: "coinbase-sql".to_owned(),
                         start_block: 0,
                         endpoint: "https://one-batch-seam.invalid/".to_owned(),
+                        recorded_genesis: None,
                     },
                     SourceDescriptor {
                         key: "base-rpc".to_owned(),
                         kind: "rpc".to_owned(),
                         start_block: seam,
                         endpoint: consistent_endpoint,
+                        recorded_genesis: None,
                     },
                 ],
                 cursors: Vec::new(),
@@ -650,12 +664,14 @@ async fn production_resolver_path_compares_the_actual_coinbase_seam_marker() -> 
             kind: "coinbase-sql".to_owned(),
             start_block: seam - 1,
             endpoint: coinbase_endpoint.to_owned(),
+            recorded_genesis: None,
         },
         SourceDescriptor {
             key: "base-rpc".to_owned(),
             kind: "rpc".to_owned(),
             start_block: seam,
             endpoint: rpc_endpoint,
+            recorded_genesis: None,
         },
     ];
 
@@ -731,12 +747,14 @@ async fn an_equal_height_source_boundary_uses_loaded_evidence_without_reloading(
                     kind: "coinbase-sql".to_owned(),
                     start_block: 0,
                     endpoint: "coinbase-sql://must-not-be-reloaded".to_owned(),
+                    recorded_genesis: None,
                 },
                 SourceDescriptor {
                     key: "base-rpc".to_owned(),
                     kind: "rpc".to_owned(),
                     start_block: seam,
                     endpoint,
+                    recorded_genesis: None,
                 },
             ],
             cursors: vec![SourceCursor {
@@ -847,12 +865,14 @@ async fn a_cross_source_seam_mismatch_is_rejected_before_a_phase_summary() -> An
             kind: "coinbase-sql".to_owned(),
             start_block: 0,
             endpoint: "https://cross-source-seam.invalid/".to_owned(),
+            recorded_genesis: None,
         },
         SourceDescriptor {
             key: "base-rpc".to_owned(),
             kind: "rpc".to_owned(),
             start_block: seam,
             endpoint,
+            recorded_genesis: None,
         },
     ];
     let engine = Engine::new(database.pool().clone());
@@ -931,12 +951,14 @@ async fn a_cross_source_seam_mismatch_is_rejected_before_a_phase_summary() -> An
             kind: "coinbase-sql".to_owned(),
             start_block: 0,
             endpoint: "https://cross-source-seam.invalid/".to_owned(),
+            recorded_genesis: None,
         },
         SourceDescriptor {
             key: "base-rpc".to_owned(),
             kind: "rpc".to_owned(),
             start_block: seam,
             endpoint: consistent_endpoint,
+            recorded_genesis: None,
         },
     ];
     let retry_first = engine
@@ -998,6 +1020,7 @@ async fn resumed_redo_rejects_a_loaded_window_from_a_sibling_fork() -> AnyResult
         kind: "rpc".to_owned(),
         start_block: 0,
         endpoint,
+        recorded_genesis: None,
     };
     let loader = ScriptedRedoWindowLoader::new([
         (
@@ -1076,6 +1099,7 @@ async fn a_completed_range_below_every_source_start_resolves_its_summary_once() 
                 kind: "rpc".to_owned(),
                 start_block: 2,
                 endpoint,
+                recorded_genesis: None,
             }],
             cursors: Vec::new(),
             redo_range: Some((0, 1)),
@@ -1717,5 +1741,6 @@ fn source(endpoint: &str) -> SourceDescriptor {
         kind: "reth-db".to_owned(),
         start_block: V1_REGISTRY_START,
         endpoint: endpoint.to_owned(),
+        recorded_genesis: None,
     }
 }

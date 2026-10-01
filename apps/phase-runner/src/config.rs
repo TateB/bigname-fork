@@ -51,6 +51,8 @@ pub struct SourceConfig {
     pub seed_basis: SeedBasis,
     pub start_block_number: i64,
     pub role: SourceRole,
+    /// What the endpoint reported to this start's RPC chain check, when it was checked.
+    pub verified_rpc_chain: Option<bigname_ingest::ObservedRpcChain>,
     endpoint: Arc<str>,
 }
 
@@ -89,6 +91,7 @@ impl SourceConfig {
             seed_basis,
             start_block_number,
             role,
+            verified_rpc_chain: None,
             endpoint: Arc::from(endpoint.into()),
         };
         source.validate()?;
@@ -96,6 +99,12 @@ impl SourceConfig {
     }
     pub fn endpoint(&self) -> &str {
         &self.endpoint
+    }
+
+    /// The block 0 hash this start's RPC chain check observed, which `persist` holds equal to
+    /// the cursor's recorded one.
+    pub fn recorded_genesis(&self) -> Option<String> {
+        self.verified_rpc_chain.as_ref()?.genesis_hash.clone()
     }
 
     pub(crate) fn sepolia_start_is_admitted(&self) -> bool {
@@ -148,6 +157,7 @@ impl fmt::Debug for SourceConfig {
             .field("seed_basis", &self.seed_basis)
             .field("start_block_number", &self.start_block_number)
             .field("role", &self.role)
+            .field("verified_rpc_chain", &self.verified_rpc_chain)
             .field("endpoint", &"[redacted]")
             .finish()
     }

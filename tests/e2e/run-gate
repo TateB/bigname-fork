@@ -3,12 +3,12 @@ set -uo pipefail
 
 # Keep the inventory counts and assignments together. Test-list changes should
 # require edits only in this block; the checks below reject every other drift.
-expected_total=100
-expected_runnable=97
+expected_total=101
+expected_runnable=98
 expected_ignored=3
 shard_count=6
 # Per shard, in shard order.
-expected_shard_runnable=(16 16 16 16 16 17)
+expected_shard_runnable=(16 16 16 17 16 17)
 expected_shard_ignored=(1 1 1 0 0 0)
 
 expected_ignored_tests=(
@@ -88,6 +88,7 @@ shard_4_tests=(
     "scenarios::ens_v2_lifecycle::resolver_and_subregistry_edges_follow_set_change_zero"
     "scenarios::perturbations::rich_chain_successive_fixture_replays_match_single_pass"
     "scenarios::pre_surface_resolver::ownerless_pre_surface_resolver_records_serve_after_late_renewal_without_reselection"
+    "scenarios::provider_faults::an_endpoint_serving_another_chain_is_refused_before_ingest"
     "scenarios::record_families::remaining_record_families_derive_normalized_but_stay_unenumerated"
     "scenarios::registry_operator_permissions::registry_operator_approval_serving_lifecycle"
     "scenarios::resolver_records::pre_surface_record_history_follows_current_resolver_and_version_boundary"

@@ -868,6 +868,9 @@ fn pipeline_command(repo_root: &Path, executable: &Path) -> Command {
     let mut command = Command::new(executable);
     command.current_dir(repo_root);
     command.env("BIGNAME_DATABASE_MAX_CONNECTIONS", "4");
+    // Anvil runs under production chain ids but not production genesis blocks.
+    command.env("BIGNAME_PHASE_RUNNER_RPC_CHAIN_CHECK", "chain-id-only");
+    command.env("BIGNAME_API_RPC_CHAIN_CHECK", "chain-id-only");
     command
 }
 

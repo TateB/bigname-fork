@@ -8,6 +8,12 @@ pub(super) struct SourceTransportArgs {
     pub(super) from_source: String,
     #[arg(long)]
     pub(super) to_source: String,
+    #[arg(
+        long,
+        env = "BIGNAME_PHASE_RUNNER_RPC_CHAIN_CHECK",
+        default_value = "full"
+    )]
+    pub(super) rpc_chain_check: bigname_ingest::RpcChainCheck,
     /// Attest both endpoints belong to the same node, not an independent source.
     #[arg(long, required = true)]
     attest_same_node: bool,

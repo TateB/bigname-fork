@@ -407,3 +407,40 @@ fn family_loops_set_their_own_time_and_lag_and_observe_each_block() -> Result<()
     );
     Ok(())
 }
+
+#[test]
+fn rpc_chain_gauges_report_the_checked_id_and_a_runtime_mismatch() -> Result<()> {
+    let metrics = PipelineMetrics::new(
+        900,
+        RunnerLoopHeartbeat::default(),
+        RunnerPhaseProgress::default(),
+    )?;
+    let feed = RunnerMetricsFeed::default();
+    feed.rpc_chain_verified("ethereum-sepolia", "primary", Some(11_155_111));
+    feed.rpc_chain_verified("ethereum-sepolia", "hydration", Some(11_155_111));
+    let mismatch = bigname_ingest::RpcChainMismatch {
+        chain: "ethereum-sepolia".to_owned(),
+        source_key: "primary".to_owned(),
+        expected_chain_id: 11_155_111,
+        observed_chain_id: None,
+        expected_genesis_hash: None,
+        observed_genesis_hash: None,
+    };
+    feed.observe_ingest_error(&bigname_ingest::IngestError::with_source(
+        bigname_ingest::ErrorKind::Configuration,
+        "failed to fetch ingest target heads",
+        anyhow::Error::new(mismatch).context("RPC chain check failed"),
+    ));
+    metrics.rpc_chains.apply(feed.rpc_chains());
+
+    let scrape = metrics.registry.encode()?;
+    for line in [
+        "phase_runner_rpc_chain_id{chain=\"ethereum-sepolia\",source=\"hydration\"} 11155111\n",
+        "phase_runner_rpc_chain_mismatch{chain=\"ethereum-sepolia\",source=\"hydration\"} 0\n",
+        "phase_runner_rpc_chain_id{chain=\"ethereum-sepolia\",source=\"primary\"} -1\n",
+        "phase_runner_rpc_chain_mismatch{chain=\"ethereum-sepolia\",source=\"primary\"} 1\n",
+    ] {
+        assert!(scrape.contains(line), "missing {line}");
+    }
+    Ok(())
+}

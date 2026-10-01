@@ -6,8 +6,8 @@ use std::{
 };
 
 use bigname_ingest::{
-    BASE_COINBASE_SEAM_BLOCK, VerificationBatch, VerificationProvider, VerificationProviderKind,
-    WatchFilter,
+    BASE_COINBASE_SEAM_BLOCK, RpcChainCheck, VerificationBatch, VerificationProvider,
+    VerificationProviderKind, WatchFilter,
 };
 use tracing::info;
 
@@ -59,6 +59,7 @@ pub struct VerificationSource {
     source_key: String,
     source_kind: String,
     endpoint: Arc<str>,
+    recorded_genesis: Option<String>,
     provider_kind: VerificationProviderKind,
     level: VerificationLevel,
     cross_check_through: Option<i64>,
@@ -87,8 +88,12 @@ pub struct VerifyPhase {
 }
 
 impl VerifyPhase {
-    pub fn new(database: VerificationDatabase) -> Self {
-        Self::with_reference_provider(database, Arc::new(ProductionReferences::default()))
+    pub fn new(database: VerificationDatabase, rpc_chain_check: RpcChainCheck) -> Self {
+        let references = ProductionReferences {
+            rpc_chain_check,
+            ..ProductionReferences::default()
+        };
+        Self::with_reference_provider(database, Arc::new(references))
     }
 
     pub fn with_reference_provider(
@@ -415,6 +420,7 @@ fn verification_plan(chain_id: &str, sources: &[SourceConfig]) -> RunnerResult<V
 
 #[derive(Default)]
 struct ProductionReferences {
+    rpc_chain_check: RpcChainCheck,
     providers: Mutex<BTreeMap<(String, String, String, String), VerificationProvider>>,
 }
 
@@ -432,8 +438,13 @@ impl ProductionReferences {
         if let Some(provider) = providers.get(&key) {
             return Ok(provider.clone());
         }
+        let (source_key, mode) = (source.source_key(), self.rpc_chain_check);
+        let genesis = source.recorded_genesis.as_deref();
         let provider =
             VerificationProvider::new(source.chain_id(), source.source_kind(), &source.endpoint)
+                .and_then(|reader| {
+                    reader.with_rpc_chain_check(&source.chain_id, source_key, mode, genesis)
+                })
                 .map_err(|_| provider_configuration_error(source))?;
         if provider.kind() != source.provider_kind() {
             return Err(RunnerError::data_integrity(format!(
@@ -544,6 +555,7 @@ fn select_source(chain_id: &str, sources: &[SourceConfig]) -> RunnerResult<Verif
         source_key: source.source_key.clone(),
         source_kind: source.source_kind.clone(),
         endpoint: Arc::from(source.endpoint()),
+        recorded_genesis: source.recorded_genesis(),
         provider_kind,
         level,
         cross_check_through: (chain_id == "base-mainnet"

@@ -4,6 +4,9 @@
 //! `pg_advisory_lock`, so this drives the real binary against a held lock.
 #![cfg(unix)]
 
+#[path = "support/sepolia_rpc.rs"]
+mod sepolia_rpc;
+
 use std::{process::Stdio, time::Duration};
 
 use anyhow::{Context, Result, bail};
@@ -16,6 +19,7 @@ const MANIFEST_STARTUP_LOCK_NAME: &str = "phase-runner:manifest-startup";
 
 #[tokio::test]
 async fn a_stop_during_start_up_exits_instead_of_waiting_for_sigkill() -> Result<()> {
+    let rpc = sepolia_rpc::SepoliaIdentityRpc::start().await?;
     let database = TestDatabase::create(
         TestDatabaseConfig::new("startup_cancellation").pool_max_connections(2),
     )
@@ -106,7 +110,7 @@ async fn a_stop_during_start_up_exits_instead_of_waiting_for_sigkill() -> Result
             "BIGNAME_PHASE_RUNNER_VERIFICATION_DATABASE_URL",
             &runner_url,
         )
-        .env("STARTUP_CANCEL_RPC_URL", "http://127.0.0.1:1")
+        .env("STARTUP_CANCEL_RPC_URL", &rpc.endpoint)
         .env("RUST_LOG", "phase_runner=info")
         .stdout(Stdio::null())
         .stderr(Stdio::null())

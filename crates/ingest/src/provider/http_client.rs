@@ -43,6 +43,10 @@ impl RecoveringHttpClient {
         (state.client.clone(), state.client_id)
     }
 
+    pub(super) fn client_id(&self) -> u64 {
+        self.lock().client_id
+    }
+
     pub(super) fn record_error(&self, client_id: u64, error: &reqwest::Error) -> Result<()> {
         if !error.is_timeout() {
             return Ok(());
@@ -55,6 +59,12 @@ impl RecoveringHttpClient {
             state.client_id = state.client_id.saturating_add(1);
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn rebuild(&self) {
+        let mut state = self.lock();
+        state.client_id = state.client_id.saturating_add(1);
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {

@@ -94,6 +94,15 @@ impl PhaseRunner {
                     .await?;
             }
         }
+        if matches!(
+            phase,
+            PhaseName::Ingest | PhaseName::Live | PhaseName::Verify
+        ) {
+            // The startup check finds no cursor another start creates and completes after it.
+            self.store
+                .reconcile_verified_rpc_chains(&intake_sources)
+                .await?;
+        }
         Ok(())
     }
 
@@ -204,7 +213,10 @@ impl PhaseRunner {
         cancellation: &CancellationToken,
         error: RunnerError,
     ) -> RunnerResult<()> {
-        if error.is_retryable() || !matches!(mode, RunMode::Normal) {
+        if error.is_retryable()
+            || !matches!(mode, RunMode::Normal)
+            || !matches!(phase, PhaseName::Ingest | PhaseName::Verify)
+        {
             return Err(error);
         }
         // The status read, the probe, and the failure record all wait on the

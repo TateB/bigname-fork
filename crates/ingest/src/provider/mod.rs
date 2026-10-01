@@ -13,6 +13,9 @@ use tokio::sync::Semaphore;
 use crate::IngestConfig;
 
 mod bloom;
+mod chain_check;
+#[cfg(test)]
+mod chain_check_tests;
 mod decode;
 mod http_client;
 mod request;
@@ -23,10 +26,14 @@ mod tuning_tests;
 mod types;
 
 pub use bloom::bloom_contains;
+pub use chain_check::{
+    ExpectedRpcChain, ObservedRpcChain, RPC_CHAIN_RECHECK_INTERVAL, RpcChainCheck, RpcChainMismatch,
+};
 pub use types::{
     Block, BlockBundle, HeadSnapshot, Log, Receipt, ResolvedBlock, Transaction, TransactionPayload,
 };
 
+use chain_check::{ChainGuard, chain_mismatch_in};
 use http_client::RecoveringHttpClient;
 use request::validate_endpoint;
 pub use reth_db::RETH_DB_OPENED_STORAGE_CHILDREN;
@@ -57,6 +64,7 @@ pub struct JsonRpcProvider {
     request_attempts: Arc<AtomicUsize>,
     config: IngestConfig,
     in_flight: Arc<Semaphore>,
+    chain_guard: Option<Arc<ChainGuard>>,
 }
 
 impl JsonRpcProvider {
@@ -71,7 +79,20 @@ impl JsonRpcProvider {
             request_attempts: Arc::new(AtomicUsize::new(0)),
             config,
             in_flight: Arc::new(Semaphore::new(config.rpc_max_in_flight())),
+            chain_guard: None,
         })
+    }
+
+    /// Checks the endpoint against `expected` before its first request, and again once the
+    /// last check is older than [`RPC_CHAIN_RECHECK_INTERVAL`] or the HTTP client was rebuilt.
+    #[must_use]
+    pub fn with_chain_check(self, expected: ExpectedRpcChain) -> Self {
+        self.with_chain_check_every(expected, RPC_CHAIN_RECHECK_INTERVAL)
+    }
+
+    fn with_chain_check_every(mut self, expected: ExpectedRpcChain, interval: Duration) -> Self {
+        self.chain_guard = Some(Arc::new(ChainGuard::new(expected, interval)));
+        self
     }
 
     pub(super) fn request_attempts(&self) -> usize {
@@ -88,17 +109,37 @@ impl ChainProvider {
         }
     }
 
+    /// A provider for one configured source. An RPC endpoint is guarded by the RPC chain check
+    /// when `config` carries a mode.
     pub(crate) fn with_config(
         chain_id: &str,
+        source_key: &str,
         kind: &str,
         endpoint: &str,
+        recorded_genesis: Option<&str>,
         config: IngestConfig,
     ) -> Result<Self> {
         match normalized_kind(kind) {
-            ProviderKind::Rpc => Ok(Self::JsonRpc(JsonRpcProvider::with_config(
-                endpoint, config,
-            )?)),
+            ProviderKind::Rpc => {
+                let provider = JsonRpcProvider::with_config(endpoint, config)?;
+                let provider = match config.rpc_chain_check() {
+                    Some(mode) => provider.with_chain_check(
+                        ExpectedRpcChain::new(chain_id, source_key, mode)?
+                            .with_recorded_genesis(recorded_genesis),
+                    ),
+                    None => provider,
+                };
+                Ok(Self::JsonRpc(provider))
+            }
             _ => Self::new(chain_id, kind, endpoint),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn with_chain_check(self, expected: ExpectedRpcChain) -> Self {
+        match self {
+            Self::JsonRpc(provider) => Self::JsonRpc(provider.with_chain_check(expected)),
+            Self::RethDb(provider) => Self::RethDb(provider),
         }
     }
 
@@ -284,6 +325,14 @@ pub enum ProviderKind {
     Coinbase,
 }
 
+/// Whether `endpoint` is a well-formed URL with a host for a transport other than HTTP(S), such
+/// as a fixture placeholder. A malformed URL, or a bare `host:port` that parses with the host as
+/// its scheme, is not: the JSON-RPC provider refuses it.
+pub fn names_another_transport(endpoint: &str) -> bool {
+    reqwest::Url::parse(endpoint)
+        .is_ok_and(|url| url.has_host() && !matches!(url.scheme(), "http" | "https"))
+}
+
 pub fn normalized_kind(kind: &str) -> ProviderKind {
     match kind.trim().to_ascii_lowercase().replace('-', "_").as_str() {
         "reth" | "reth_db" => ProviderKind::Reth,
@@ -309,9 +358,76 @@ fn provider_error_text(error: &anyhow::Error) -> String {
     rendered
 }
 
+/// Runs the RPC chain check once against `endpoint`. Transport failures are retried with the
+/// provider's usual backoff before they are returned.
+pub async fn verify_rpc_chain(
+    endpoint: &str,
+    expected: &ExpectedRpcChain,
+) -> crate::Result<ObservedRpcChain> {
+    let context = format!(
+        "RPC chain check for chain {} source {}",
+        expected.chain(),
+        expected.source_key()
+    );
+    let provider = JsonRpcProvider::new(endpoint).map_err(|error| {
+        crate::IngestError::with_source(crate::ErrorKind::Configuration, context.as_str(), error)
+    })?;
+    provider.verify_chain(expected).await.map_err(|error| {
+        let redacted = redacted_text(&error, endpoint);
+        match provider_error(&context, error) {
+            error if error.rpc_chain_mismatch().is_some() => error,
+            error => crate::IngestError::with_source(
+                error.kind(),
+                context.as_str(),
+                anyhow::anyhow!(redacted),
+            ),
+        }
+    })
+}
+
+/// Startup errors and retry warnings never carry the endpoint's credentials, path or query: a
+/// provider's HTTP error body or JSON-RPC error message, which can echo any of them, is left out.
+fn redacted_text(error: &anyhow::Error, endpoint: &str) -> String {
+    let mut rendered = provider_error_text(error);
+    for cause in error.chain() {
+        if let Some(http) = cause.downcast_ref::<request::HttpStatusError>() {
+            rendered = rendered.replace(&http.to_string(), &http.without_body());
+        }
+        if let Some(rpc) = cause.downcast_ref::<request::JsonRpcError>() {
+            rendered = rendered.replace(&rpc.to_string(), &rpc.without_message());
+        }
+    }
+    let Ok(url) = reqwest::Url::parse(endpoint) else {
+        return rendered.replace(endpoint.trim(), "<redacted-endpoint>");
+    };
+    let mut secrets = [
+        endpoint.trim(),
+        url.as_str(),
+        url.path(),
+        url.query().unwrap_or_default(),
+        url.username(),
+        url.password().unwrap_or_default(),
+    ]
+    .into_iter()
+    .filter(|secret| secret.len() > 1)
+    .collect::<Vec<_>>();
+    secrets.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
+    for secret in secrets {
+        rendered = rendered.replace(secret, "<redacted>");
+    }
+    rendered
+}
+
 pub type SharedProvider = Arc<ChainProvider>;
 
 pub fn provider_error(context: &str, error: anyhow::Error) -> crate::IngestError {
+    if let Some(mismatch) = chain_mismatch_in(&error) {
+        return crate::IngestError::with_source(
+            crate::ErrorKind::Configuration,
+            context,
+            mismatch.clone(),
+        );
+    }
     let kind = if is_retryable(&error) {
         crate::ErrorKind::Transient
     } else {

@@ -37,6 +37,7 @@ mod redo_stamp;
 mod redo_state;
 mod redo_supersede;
 pub mod rewind;
+pub mod rpc_chain_check;
 pub mod runner;
 mod runner_support;
 pub mod schema;

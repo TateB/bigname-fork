@@ -228,6 +228,7 @@ fn reply(call: &Value) -> Result<Value> {
                 .context("unknown block hash")?
         }
         Some("eth_getLogs") => return Ok(json!([])),
+        Some("eth_chainId") => return Ok(json!("0xaa36a7")),
         method => bail!("unexpected RPC method {method:?}"),
     };
     ensure!((0..=HEAD).contains(&number), "unexpected block {number}");

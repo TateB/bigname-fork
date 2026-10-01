@@ -76,6 +76,7 @@ async fn engine(db: &TestDatabase, chain: TestChain) -> Result<(Engine, BatchReq
         kind: "rpc".into(),
         start_block: 0,
         endpoint: "test-node".into(),
+        recorded_genesis: None,
     };
     engine.providers.lock().await.insert(
         super::super::provider_key(CHAIN, &source),
@@ -104,6 +105,7 @@ async fn configured_windows_keep_normal_and_redo_progress_and_facts_complete() -
         kind: "rpc".into(),
         start_block: 0,
         endpoint: node.endpoint.clone(),
+        recorded_genesis: None,
     };
     let initial = BatchRequest {
         chain_id: CHAIN.into(),
