@@ -64,6 +64,7 @@ pub(crate) async fn execute_resolution_lookup(
         state.pool.clone(),
         state.lookup_chain_rpc_urls.clone(),
     )
+    .with_publication_lag_tolerance_blocks(crate::state::publication_lag_tolerance_blocks())
     .lookup_at_positions(request, &admitted_positions)
     .await;
     match response {

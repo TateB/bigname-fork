@@ -23,6 +23,7 @@ pub struct LookupEngine {
     pool: PgPool,
     rpc_urls: ChainRpcUrls,
     write_divergences: bool,
+    publication_lag_tolerance_blocks: i64,
 }
 
 impl LookupEngine {
@@ -31,6 +32,8 @@ impl LookupEngine {
             pool,
             rpc_urls,
             write_divergences: true,
+            publication_lag_tolerance_blocks:
+                bigname_storage::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS,
         }
     }
 
@@ -41,7 +44,16 @@ impl LookupEngine {
             pool,
             rpc_urls,
             write_divergences: false,
+            publication_lag_tolerance_blocks:
+                bigname_storage::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS,
         }
+    }
+
+    /// How many blocks the family publication may trail the head and still be compared, the
+    /// same tolerance the caller's snapshot selection serves with.
+    pub fn with_publication_lag_tolerance_blocks(mut self, blocks: i64) -> Self {
+        self.publication_lag_tolerance_blocks = blocks;
+        self
     }
 
     pub async fn lookup(&self, request: LookupRequest) -> Result<LookupResponse> {
@@ -107,7 +119,12 @@ impl LookupEngine {
         F: FnOnce() -> Fut,
         Fut: Future<Output = ()>,
     {
-        let authority = load_ens_primary_name_authority(&self.pool, chain_id).await?;
+        let authority = load_ens_primary_name_authority(
+            &self.pool,
+            chain_id,
+            self.publication_lag_tolerance_blocks,
+        )
+        .await?;
         let result = lookup_ens_primary_name(
             EnsPrimaryNameRequest {
                 normalized_address,
@@ -137,7 +154,8 @@ impl LookupEngine {
         F: FnOnce() -> Fut,
         Fut: Future<Output = ()>,
     {
-        let snapshot = load_snapshot(&self.pool, &request).await?;
+        let snapshot =
+            load_snapshot(&self.pool, &request, self.publication_lag_tolerance_blocks).await?;
         if let Some(admitted_positions) = admitted_positions {
             ensure_snapshot_positions_are_admitted(&snapshot, admitted_positions)?;
         }

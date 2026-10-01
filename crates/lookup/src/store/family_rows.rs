@@ -96,6 +96,7 @@ pub(super) async fn load_inventory(
 pub(super) async fn publication(
     transaction: &mut Transaction<'_, Postgres>,
     head: &HeadRow,
+    lag_tolerance_blocks: i64,
 ) -> Result<CapturedPublication> {
     let family: Option<Value> = sqlx::query_scalar(
         "SELECT jsonb_build_object('sequence',marker.sequence::text,'block_number',marker.current_block_number,
@@ -115,7 +116,7 @@ pub(super) async fn publication(
             )")
         .bind(&head.chain_id).bind(head.block_number).bind(&head.block_hash)
         .bind(bigname_content_hash::INTERPRETER_CONTENT_HASH)
-        .bind(bigname_storage::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS)
+        .bind(lag_tolerance_blocks)
         .fetch_optional(&mut **transaction).await.map_err(database("load lookup family publication"))?
         ;
     let family = family.ok_or_else(|| {

@@ -103,6 +103,14 @@ pub(crate) struct ServeArgs {
         default_value_t = crate::v2::support::status_freshness::DEFAULT_MAX_LAG_SECS
     )]
     pub(crate) status_max_lag_secs: i64,
+    /// How many blocks the family publication may trail the stored head and still be served.
+    #[arg(
+        long,
+        env = "BIGNAME_API_PUBLICATION_LAG_TOLERANCE_BLOCKS",
+        default_value_t = bigname_storage::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS,
+        value_parser = clap::value_parser!(i64).range(0..)
+    )]
+    pub(crate) publication_lag_tolerance_blocks: i64,
     #[command(flatten)]
     pub(crate) database: DatabaseConfig,
 }
@@ -131,4 +139,26 @@ fn validate_rpc_timeouts(connect_timeout_ms: u64, total_timeout_ms: u64) -> Resu
         "BIGNAME_API_RPC_CONNECT_TIMEOUT_MS must be less than BIGNAME_API_RPC_TIMEOUT_MS"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    #[test]
+    fn a_negative_publication_lag_tolerance_is_refused() {
+        let error = super::Cli::try_parse_from([
+            "bigname-api",
+            "serve",
+            "--publication-lag-tolerance-blocks=-1",
+        ])
+        .expect_err("a negative tolerance is refused");
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+        assert!(
+            error
+                .to_string()
+                .contains("publication-lag-tolerance-blocks"),
+            "{error}"
+        );
+    }
 }
