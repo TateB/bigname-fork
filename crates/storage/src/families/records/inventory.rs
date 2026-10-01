@@ -40,6 +40,9 @@ pub enum FamilyAttribution {
     Load,
     /// Use the given ids for every resource read, as read by the caller.
     Given(BTreeSet<i64>),
+    /// Leave the field out. Serving reads never consult it, and the history attribution costs
+    /// seconds per resource on a resolver with many writes.
+    Omit,
 }
 
 /// A family inventory row and the storage key of its record version boundary.
@@ -154,7 +157,7 @@ async fn family_record_inventory_for_key(
         &mut snapshot,
         &chain_id,
         resource_id,
-        FamilyAttribution::Load,
+        FamilyAttribution::Omit,
     )
     .await
     .map_err(internal)?;
@@ -313,8 +316,11 @@ pub async fn load_family_record_inventories_on(
         return Ok(out);
     }
     let served_ids: Vec<Uuid> = servings.keys().copied().collect();
-    let mut attributed: BTreeMap<Uuid, BTreeSet<i64>> = match attribution {
-        FamilyAttribution::Given(ids) => served_ids.iter().map(|id| (*id, ids.clone())).collect(),
+    let mut attributed: Option<BTreeMap<Uuid, BTreeSet<i64>>> = match attribution {
+        FamilyAttribution::Omit => None,
+        FamilyAttribution::Given(ids) => {
+            Some(served_ids.iter().map(|id| (*id, ids.clone())).collect())
+        }
         FamilyAttribution::Load => {
             // At the block the families stand at, as Project publishes it at its target.
             let marker: Option<i64> = sqlx::query_scalar(
@@ -326,7 +332,7 @@ pub async fn load_family_record_inventories_on(
             .await?
             .flatten();
             let bound = marker.map(|block| BTreeMap::from([(chain_id.to_owned(), block)]));
-            load_attribution_map(conn, &served_ids, bound.as_ref()).await?
+            Some(load_attribution_map(conn, &served_ids, bound.as_ref()).await?)
         }
     };
     let resolvers: Vec<String> = servings
@@ -514,8 +520,8 @@ pub async fn load_family_record_inventories_on(
             kind,
         });
         let attributed = attributed
-            .remove(&plan.pointer.resource_id)
-            .unwrap_or_default();
+            .as_mut()
+            .map(|map| map.remove(&plan.pointer.resource_id).unwrap_or_default());
         held.push((plan, classification, links, linked));
         owned.push((eligibility, boundary, served, attributed));
     }
@@ -572,9 +578,10 @@ pub async fn load_family_record_inventories_on(
             },
         );
     }
+    let attributing = attributed.is_some();
     for (serving, mirror) in unsupported {
         let (row, record_version_boundary_key) =
-            assemble::unsupported_mirror_row(chain_id, &serving, &mirror, &reads.stamps)?;
+            assemble::unsupported_mirror_row(chain_id, &serving, &mirror, &reads, attributing)?;
         out.insert(
             serving.resource_id,
             FamilyRecordInventory {

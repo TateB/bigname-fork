@@ -1,6 +1,6 @@
 //! Lookup inputs composed on the caller's snapshot, fenced by the family publication.
 use super::{HeadRow, InventoryRow, NameRow, positions::CapturedPublication};
-use crate::{LookupError, Result, error::database};
+use crate::{LookupError, LookupPosition, Result, error::database};
 use bigname_storage::families::{
     name::load_family_name_on,
     records::{FamilyAttribution, load_family_record_inventory_detail_on},
@@ -73,7 +73,7 @@ pub(super) async fn load_inventory(
         transaction,
         &chain_id,
         resource_id,
-        FamilyAttribution::Load,
+        FamilyAttribution::Omit,
     )
     .await
     .map_err(composition)?
@@ -98,9 +98,10 @@ pub(super) async fn publication(
     head: &HeadRow,
     lag_tolerance_blocks: i64,
 ) -> Result<CapturedPublication> {
-    let family: Option<Value> = sqlx::query_scalar(
+    let family: Option<(Value, i64, String, String)> = sqlx::query_as(
         "SELECT jsonb_build_object('sequence',marker.sequence::text,'block_number',marker.current_block_number,
-            'block_hash',marker.current_block_hash,'input_content_hash',marker.input_content_hash)
+            'block_hash',marker.current_block_hash,'input_content_hash',marker.input_content_hash),
+            marker.current_block_number, marker.current_block_hash, to_char(lineage.block_timestamp AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
          FROM project_family_marker marker JOIN chain_lineage lineage ON lineage.chain_id = marker.chain_id
             AND lineage.block_number = marker.current_block_number AND lineage.block_hash = marker.current_block_hash
             AND lineage.canonicality_state IN ('canonical','safe','finalized')
@@ -119,11 +120,17 @@ pub(super) async fn publication(
         .bind(lag_tolerance_blocks)
         .fetch_optional(&mut **transaction).await.map_err(database("load lookup family publication"))?
         ;
-    let family = family.ok_or_else(|| {
+    let (family, block_number, block_hash, timestamp) = family.ok_or_else(|| {
         LookupError::stale(format!(
             "owned key families have not reached the newest processed {} block",
             head.chain_id
         ))
     })?;
-    Ok(CapturedPublication { family })
+    let position = LookupPosition {
+        chain_id: head.chain_id.clone(),
+        block_number,
+        block_hash,
+        timestamp,
+    };
+    Ok(CapturedPublication { family, position })
 }
