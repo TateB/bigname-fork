@@ -277,6 +277,16 @@ Family indexes serve these concrete readers:
   node, and find a registry instance's ENSv2 registrations through
   `project_child_registration_state_registry_idx`; both primary keys lead with a column
   those lookups do not bind.
+- The name-ordered walks (`storage:families.name.search_candidates` and
+  `storage:families.name.bound_candidates`) can read `name_surfaces_name_order_idx` in page
+  order, `(raw_name, namespace, namehash, logical_name_id)` over active, readable surfaces, with
+  the keyset cursor as the index condition and no sort; the planner chooses it on cost. Its
+  predicate leaves out names longer than 2000 bytes, because a btree entry larger than about
+  2.7 KB fails the insert, and both walks carry the same bound, so those names are never listed
+  there. A `LIKE` prefix becomes an index range only on a database whose collation PostgreSQL
+  recognises as C (`C` or `POSIX`); under any other collation it filters the ordered scan. The
+  reverse lookup candidates (`storage:families.records.reverse_candidates`) keep long names and
+  start from `project_address_name_index`.
 - Permission pages use `project_grant_subject_idx`, `project_grant_scope_idx`,
   `project_account_approval_subject_idx`, `project_registry_binding_observation_resource_idx`
   and `project_registry_binding_observation_owner_idx`.
@@ -308,6 +318,14 @@ The owned key families add six, named for their reader:
 | `project_families_contract_instance_addresses_to_block_idx` | `project:families.classification.activated`: contract addresses that stop at the block |
 | `project_families_discovery_edges_resolver_destination_idx` | `project:families.classification.activated`: whether an address that starts or stops at the block is any resolver edge's destination, deactivated edges included |
 | `project_families_discovery_edges_resolver_admission_idx` | `project:families.classification.classify`: one active resolver edge per active manifest to each touched resolver's contract instance |
+
+Interpret also writes `name_surfaces`. The API's name-ordered readers add one read-only
+index on it, installed by the identity baseline and its own schema-migration and changing no
+row:
+
+| Index | Serves |
+| --- | --- |
+| `name_surfaces_name_order_idx` | `storage:families.name.search_candidates` and `storage:families.name.bound_candidates`: readable surfaces in name order after the keyset cursor |
 
 When an ENSv1 BaseRegistrar manifest admits ordinary numeric registration and renewal,
 Interpret retains the registrar resource, token lineage, owner and expiry independently of
