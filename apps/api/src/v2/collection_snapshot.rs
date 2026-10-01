@@ -211,12 +211,12 @@ impl CollectionSnapshot {
         self.meta()
     }
 
-    /// `error` for a page refused after its reads, unless the namespace authority changed
-    /// meanwhile, which is the retry 409 [`Self::finish`] answers.
+    /// `error` for a page refused after its reads, once [`Self::finish`] succeeds; otherwise
+    /// finish's own error, such as the retry 409 for a namespace manifest change.
     pub(crate) async fn refuse(&mut self, state: &AppState, error: V2Error) -> V2Error {
         match self.finish(state).await {
             Ok(_) => error,
-            Err(stale) => stale,
+            Err(finish_error) => finish_error,
         }
     }
 
