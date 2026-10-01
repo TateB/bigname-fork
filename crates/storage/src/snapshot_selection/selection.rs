@@ -391,7 +391,7 @@ async fn load_phase_head_position(
             .contains(&(latest_block_number - publication.block_number))
         {
             return Err(SnapshotSelectionError::stale(format!(
-                "{} (publication at {} lags head {} beyond tolerance)",
+                "{} (publication at {} is outside the lag tolerance of head {})",
                 super::project::unpublished_message(&requirement.chain_id),
                 publication.block_number,
                 latest_block_number

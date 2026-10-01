@@ -520,11 +520,11 @@ async fn the_stale_message_names_the_family_marker() -> Result<()> {
     move_marker(&pool, HASH_9).await?;
     assert_eq!(
         stale_message(select(&pool).await).message(),
-        format!("{families} (publication at 9 lags head 11 beyond tolerance)")
+        format!("{families} (publication at 9 is outside the lag tolerance of head 11)")
     );
     assert_eq!(
         stale_message(select_at_block_11(&pool).await).message(),
-        format!("{families} (publication at 9 lags head 11)")
+        format!("{families} (publication at 9 is outside the lag tolerance of head 11)")
     );
     drop(pool);
     database.cleanup().await

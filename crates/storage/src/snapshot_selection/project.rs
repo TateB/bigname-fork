@@ -201,7 +201,7 @@ pub(super) async fn validate_current_project_publications(
             .ok_or_else(|| SnapshotSelectionError::stale(unpublished_message(chain_id)))?;
         if !(0..=lag_tolerance_blocks).contains(&(latest_block_number - publication.block_number)) {
             return Err(SnapshotSelectionError::stale(format!(
-                "{} (publication at {} lags head {latest_block_number})",
+                "{} (publication at {} is outside the lag tolerance of head {latest_block_number})",
                 unpublished_message(chain_id),
                 publication.block_number
             )));
