@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
-use sqlx::{PgPool, Row, types::time::OffsetDateTime};
+use sqlx::{Row, types::time::OffsetDateTime};
 
 /// `provenance.authority_selection.proof_kind` written by Project when the name has an activated
 /// `MigrationApplied` boundary. It is migration history; it does not select authority.
@@ -20,13 +20,13 @@ pub fn name_current_authority_arm(provenance: &Value) -> Option<&str> {
 /// authority is the ENSv2 arm and that has an activated ENSv1→ENSv2 migration. Names without a
 /// migration, or on the ENSv1 arm, are absent from the map.
 pub async fn load_name_migration_transition_timestamps(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     logical_name_ids: &[String],
 ) -> Result<BTreeMap<String, OffsetDateTime>> {
     if logical_name_ids.is_empty() {
         return Ok(BTreeMap::new());
     }
-    let mut snapshot = crate::families::read_snapshot(pool).await?;
+    let mut snapshot = db.into().snapshot().await?;
     let names = crate::families::name::load_names_on(
         &mut snapshot,
         logical_name_ids,
@@ -71,7 +71,7 @@ pub async fn load_name_migration_transition_timestamps(
             logical_name_ids.len()
         )
     })?;
-    snapshot.commit().await?;
+    snapshot.close().await?;
     rows.into_iter()
         .map(|row| {
             Ok((

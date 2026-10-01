@@ -18,13 +18,13 @@ pub use types::{
 
 /// Bounded inline permission expansion using the published family state.
 pub async fn load_bounded_effective_permissions_by_resource_ids(
-    pool: &sqlx::PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     ids: &[uuid::Uuid],
     namespace: Option<&str>,
     max_rows: u64,
 ) -> anyhow::Result<Vec<EffectivePermissionRow>> {
     crate::families::control::permissions::page::load_family_bounded_permissions(
-        pool, ids, namespace, max_rows,
+        db, ids, namespace, max_rows,
     )
     .await
 }

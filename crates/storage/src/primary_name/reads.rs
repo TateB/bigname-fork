@@ -20,12 +20,12 @@ pub async fn load_primary_name_current(
 /// The claim is read from the families
 /// (`families::records::load_family_primary_name_snapshot`).
 pub async fn load_primary_name_current_snapshot(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     address: &str,
     namespace: &str,
     coin_type: &str,
 ) -> Result<Option<PrimaryNameCurrentSnapshot>> {
-    crate::families::records::load_family_primary_name_snapshot(pool, address, namespace, coin_type)
+    crate::families::records::load_family_primary_name_snapshot(db, address, namespace, coin_type)
         .await
 }
 
@@ -34,9 +34,9 @@ pub async fn load_primary_name_current_snapshot(
 /// and decoding rules as [`load_primary_name_current_snapshot`]. Keys without a readable row are
 /// absent from the result.
 pub async fn load_primary_name_current_snapshots(
-    pool: &PgPool,
+    db: impl Into<crate::ReadDb<'_>>,
     address: &str,
     keys: &[(String, String)],
 ) -> Result<BTreeMap<(String, String), PrimaryNameCurrentSnapshot>> {
-    crate::families::records::load_family_primary_name_snapshots(pool, address, keys).await
+    crate::families::records::load_family_primary_name_snapshots(db, address, keys).await
 }

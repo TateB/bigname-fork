@@ -116,7 +116,7 @@ pub(crate) async fn get_names(
         .map(|position| names_storage_cursor(&position))
         .transpose()?;
 
-    let snapshot =
+    let mut snapshot =
         CollectionSnapshot::capture_for_namespace(&state, None, Some(&namespace)).await?;
 
     let filter = NameCurrentExpiringFilter {
@@ -128,7 +128,7 @@ pub(crate) async fn get_names(
     let storage_page = {
         let chains: Vec<String> = snapshot.block_bounds().into_keys().collect();
         bigname_storage::families::name::load_family_expiring_page(
-            &state.pool,
+            snapshot.conn().await?,
             &filter,
             order_to_storage(order),
             storage_cursor.as_ref(),

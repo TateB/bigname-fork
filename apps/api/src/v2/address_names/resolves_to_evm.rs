@@ -15,8 +15,7 @@ use bigname_storage::{
 };
 
 use super::resolves_to::{AddressNameResolution, parse_resolves_to_coin_type};
-use crate::AppState;
-use crate::v2::{V2Error, V2Result, collection_snapshot::CollectionSnapshot};
+use crate::v2::{V2Error, V2Result};
 
 /// The only non-numeric `coin_type` spelling. It is matched exactly after the shared query-value
 /// trim, so `EVM` is rejected like any other non-numeric value.
@@ -53,20 +52,14 @@ pub(super) fn parse_resolves_to_coins(value: Option<&str>) -> V2Result<ResolvesT
 
 /// Reject an `evm` page when a served row's group matched more coin types than the storage read
 /// aggregates (`EVM_MATCHED_COIN_TYPES_PER_ROW_LIMIT`): such a row is never served with a
-/// truncated `resolutions` list. As with the inline role-summary budget, the overflow is reported
-/// only for a publication that is still the captured one.
-pub(super) async fn reject_rows_past_coin_type_limit(
-    state: &AppState,
-    snapshot: &CollectionSnapshot,
-    rows: &[AddressRecordEvmEntry],
-) -> V2Result<()> {
+/// truncated `resolutions` list.
+pub(super) fn reject_rows_past_coin_type_limit(rows: &[AddressRecordEvmEntry]) -> V2Result<()> {
     if rows
         .iter()
         .all(|row| row.matched_coin_type_count <= EVM_MATCHED_COIN_TYPES_PER_ROW_LIMIT)
     {
         return Ok(());
     }
-    snapshot.finish(state).await?;
     Err(V2Error::unsupported(format!(
         "coin_type=evm matched more than {EVM_MATCHED_COIN_TYPES_PER_ROW_LIMIT} EVM coin types on one row; request a single decimal coin_type instead"
     )))
@@ -133,7 +126,7 @@ impl ResolvesToRow {
 /// are read in one statement with the primary-name snapshot rules (canonicality, hydration
 /// fallback, normalized-spelling decoding).
 pub(super) async fn evm_primary_flags(
-    pool: &sqlx::PgPool,
+    db: impl Into<bigname_storage::ReadDb<'_>>,
     address: &str,
     rows: &[ResolvesToRow],
 ) -> V2Result<Vec<bool>> {
@@ -147,7 +140,7 @@ pub(super) async fn evm_primary_flags(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let claims = bigname_storage::load_primary_name_current_snapshots(pool, address, &keys)
+    let claims = bigname_storage::load_primary_name_current_snapshots(db, address, &keys)
         .await
         .map_err(crate::v2::name_rows_error(
             crate::v2::SnapshotReadResource::Resource,

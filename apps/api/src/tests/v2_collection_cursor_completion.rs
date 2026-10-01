@@ -39,7 +39,7 @@ async fn v2_collection_cursor_resolves_to_outlives_removed_record_and_retries_ra
         let continuation = format!("{base}&cursor={cursor}");
         let next = v2_resolver_payload_for_database(&database, &continuation).await?;
         assert_eq!(next["data"], fresh["data"]);
-        assert_eq!(resolver_publication_replaced_before_finish(&database, continuation.clone()).await?, RETRY_REQUEST);
+        assert_eq!(resolver_publication_replaced_before_read(&database, continuation.clone()).await?, RETRY_REQUEST);
         v2_resolver_payload_for_database(&database, &continuation).await?;
     }
     database.cleanup().await
@@ -64,7 +64,7 @@ async fn v2_collection_cursor_legacy_routes_retry_request_races_and_bind_queries
     let pinned = format!("{base}&registration_id={}", v2_permissions_current_resource_id());
     let continuation = format!("{pinned}&cursor={legacy}");
     let before = v2_resolver_payload_for_database(&database, &continuation).await?;
-    assert_eq!(resolver_publication_replaced_before_finish(&database, continuation.clone()).await?, RETRY_REQUEST);
+    assert_eq!(resolver_publication_replaced_before_read(&database, continuation.clone()).await?, RETRY_REQUEST);
     let after = v2_resolver_payload_for_database(&database, &continuation).await?;
     assert_eq!(before["data"], after["data"]);
     let wrong = format!("{base}&registration_id={}&cursor={legacy}", v2_permissions_stale_resource_id());
@@ -85,7 +85,7 @@ async fn v2_collection_cursor_subnames_and_labels_retry_same_position() -> Resul
         let first = v2_resolver_payload_for_database(&database, &base).await?;
         let cursor = collection_next_cursor(&first).context("second child")?;
         let continuation = format!("{base}&cursor={cursor}");
-        assert_eq!(resolver_publication_replaced_before_finish(&database, continuation.clone()).await?, RETRY_REQUEST);
+        assert_eq!(resolver_publication_replaced_before_read(&database, continuation.clone()).await?, RETRY_REQUEST);
         v2_resolver_payload_for_database(&database, &continuation).await?;
     }
     database.cleanup().await
@@ -136,7 +136,7 @@ async fn v2_collection_cursor_registry_references_select_current_block_unless_at
     let pinned_page = registry_payload(&database, &format!("{pinned_base}&cursor={pinned}")).await?;
     assert_eq!(pinned_page["meta"]["as_of"]["1"]["block_number"], 83);
     let continuation = format!("{base}&cursor={cursor}");
-    assert_eq!(resolver_publication_replaced_before_finish(&database, continuation.clone()).await?, RETRY_REQUEST);
+    assert_eq!(resolver_publication_replaced_before_read(&database, continuation.clone()).await?, RETRY_REQUEST);
     registry_payload(&database, &continuation).await?;
     database.cleanup().await
 }

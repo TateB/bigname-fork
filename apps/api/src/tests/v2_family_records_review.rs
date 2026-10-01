@@ -1,5 +1,5 @@
-// Review regressions for namespace-scoped reads and a family reset between address membership
-// selection and the later record-count read.
+// Review regressions for namespace-scoped reads and a family reset around an address page's
+// read snapshot.
 
 
 
@@ -142,55 +142,79 @@ async fn reset_records_families(database: &TestDatabase) -> Result<()> {
     Ok(())
 }
 
-async fn assert_address_counts_reset_is_stale(relation: &str) -> Result<()> {
-    let database = TestDatabase::new_migrated().await?;
-    seed_family_records_fixture(&database).await?;
+/// A family reset, which deletes every family row, is the retry 409 when it lands between
+/// admission and the page's read snapshot. Once the snapshot has begun, a reset while the grants
+/// are read cannot change the page.
+async fn assert_address_counts_reset(relation: &str) -> Result<()> {
+    use crate::v2::collection_snapshot::finish_test_hooks::{Stage, install_at};
     let uri = format!("/v1/addresses/{FAMILY_ALICE}/names?namespace=ens&q=alpha\
                       &include=counts,role_summary{relation}");
-    let (status, before) = read_family_response(&database, &uri).await?;
-    assert_eq!(status, StatusCode::OK, "{before:#}");
-    assert_eq!(before["data"].as_array().map(Vec::len), Some(1));
-    let (_guard, control) =
-        crate::v2::address_names_grant_read_test_hooks::install(&database.lookup_pool).await?;
-    let (status, body) = {
-        let request = read_family_response(&database, &uri);
-        tokio::pin!(request);
-        tokio::select! {
-            response = &mut request => anyhow::bail!("request did not pause: {:?}", response?),
-            () = control.wait_until_reached() => {}
+    for during_read in [false, true] {
+        let database = TestDatabase::new_migrated().await?;
+        seed_family_records_fixture(&database).await?;
+        let (status, before) = read_family_response(&database, &uri).await?;
+        assert_eq!(status, StatusCode::OK, "{before:#}");
+        assert_eq!(before["data"].as_array().map(Vec::len), Some(1));
+        let (status, body) = {
+            let request = read_family_response(&database, &uri);
+            tokio::pin!(request);
+            if during_read {
+                let (_guard, control) =
+                    crate::v2::address_names_grant_read_test_hooks::install(&database.lookup_pool)
+                        .await?;
+                tokio::select! {
+                    response = &mut request => anyhow::bail!("request did not pause: {:?}", response?),
+                    () = control.wait_until_reached() => {}
+                }
+                reset_records_families(&database).await?;
+                let ((), response) = tokio::join!(control.resume(), &mut request);
+                response?
+            } else {
+                let (_guard, control) = install_at(&database.lookup_pool, Stage::BeforeRead).await?;
+                tokio::select! {
+                    response = &mut request => anyhow::bail!("request did not pause: {:?}", response?),
+                    () = control.wait_until_reached() => {}
+                }
+                reset_records_families(&database).await?;
+                let ((), response) = tokio::join!(control.resume(), &mut request);
+                response?
+            }
+        };
+        if during_read {
+            assert_eq!(status, StatusCode::OK, "{body:#}");
+            assert_eq!(body["data"], before["data"]);
+        } else {
+            assert_eq!((status, &body["error"]["code"]),
+                (StatusCode::CONFLICT, &json!("stale")), "{body:#}");
         }
-        reset_records_families(&database).await?;
-        let ((), response) = tokio::join!(control.resume(), &mut request);
-        response?
-    };
-    assert_eq!((status, &body["error"]["code"]),
-        (StatusCode::CONFLICT, &json!("stale")), "{body:#}");
-    database.cleanup().await
+        database.cleanup().await?;
+    }
+    Ok(())
 }
 
 #[tokio::test]
-async fn v2_address_name_counts_after_family_reset_are_stale() -> Result<()> {
-    assert_address_counts_reset_is_stale("").await
+async fn v2_address_name_counts_across_a_family_reset() -> Result<()> {
+    assert_address_counts_reset("").await
 }
 
 #[tokio::test]
-async fn v2_resolves_to_counts_after_family_reset_are_stale() -> Result<()> {
-    assert_address_counts_reset_is_stale("&relation=resolves_to&coin_type=60").await
+async fn v2_resolves_to_counts_across_a_family_reset() -> Result<()> {
+    assert_address_counts_reset("&relation=resolves_to&coin_type=60").await
 }
 
 #[tokio::test]
 async fn v2_empty_address_collections_revalidate_the_requested_family_publication() -> Result<()> {
+    use crate::v2::collection_snapshot::finish_test_hooks::{Stage, install_at};
     for relation in ["", "&relation=resolves_to&coin_type=60", "&relation=resolves_to&coin_type=evm"] {
         let database = TestDatabase::new_migrated().await?;
         seed_family_records_fixture(&database).await?;
         let uri = format!("/v1/addresses/0x0000000000000000000000000000000000000fff/names?namespace=ens{relation}");
-        let (_guard, control) =
-            crate::v2::collection_snapshot::finish_test_hooks::install(&database.lookup_pool).await?;
+        let (_guard, control) = install_at(&database.lookup_pool, Stage::BeforeRead).await?;
         let (status, body) = {
             let request = read_family_response(&database, &uri);
             tokio::pin!(request);
             tokio::select! {
-                response = &mut request => anyhow::bail!("empty page did not reach its fence: {:?}", response?),
+                response = &mut request => anyhow::bail!("empty page did not reach its read: {:?}", response?),
                 () = control.wait_until_reached() => {}
             }
             reset_records_families(&database).await?;

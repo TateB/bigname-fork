@@ -236,7 +236,7 @@ pub(crate) async fn get_address_names(
         .as_ref()
         .map(|payload| address_names_storage_cursor(payload, &cursor_binding))
         .transpose()?;
-    let snapshot = super::collection_snapshot::CollectionSnapshot::capture_for_namespace(
+    let mut snapshot = super::collection_snapshot::CollectionSnapshot::capture_for_namespace(
         &state,
         params.cursor.as_deref(),
         params.namespace.as_deref(),
@@ -244,7 +244,7 @@ pub(crate) async fn get_address_names(
     .await?;
 
     let storage_page = bigname_storage::load_address_names_current_page_filtered(
-        &state.pool,
+        snapshot.conn().await?,
         &normalized_address,
         namespace_filter.as_deref(),
         storage_relations,
@@ -277,7 +277,7 @@ pub(crate) async fn get_address_names(
         .into_iter()
         .collect::<Vec<_>>();
     let name_rows = bigname_storage::load_name_current_by_logical_name_ids(
-        &state.pool,
+        snapshot.conn().await?,
         &logical_name_ids,
     )
     .await
@@ -294,9 +294,10 @@ pub(crate) async fn get_address_names(
         .filter(|row| Authority::from_provenance(&row.provenance) == Some(Authority::EnsV2))
         .map(|row| row.logical_name_id.clone())
         .collect::<Vec<_>>();
-    let migrated_at_by_name = load_migrated_at(&state.pool, &migrated_logical_name_ids).await?;
+    let migrated_at_by_name =
+        load_migrated_at(snapshot.conn().await?, &migrated_logical_name_ids).await?;
     let primary_names_by_namespace = load_primary_names_by_namespace(
-        &state.pool,
+        snapshot.conn().await?,
         &normalized_address,
         storage_page
             .entries
@@ -317,7 +318,7 @@ pub(crate) async fn get_address_names(
     let permissions_by_resource = if let Some(resource_ids) = role_resource_ids.as_deref() {
         role_summary::load_rows(
             &state,
-            &snapshot,
+            &mut snapshot,
             resource_ids,
             permission_namespace,
             storage_page.entries.iter().map(|entry| entry.resource_id),
@@ -335,7 +336,7 @@ pub(crate) async fn get_address_names(
         std::collections::BTreeMap::new()
     };
     let permission_summaries = if let Some(resource_ids) = role_resource_ids.as_deref() {
-        bigname_storage::load_serving_permission_summaries(&state.pool, resource_ids)
+        bigname_storage::load_serving_permission_summaries(snapshot.conn().await?, resource_ids)
             .await
             .map_err(crate::v2::name_rows_error(
                 crate::v2::SnapshotReadResource::Resource,
@@ -349,7 +350,7 @@ pub(crate) async fn get_address_names(
         BTreeMap::new()
     };
     let subname_counts_by_name = if include.counts {
-        bigname_storage::load_children_current_summaries(&state.pool, &logical_name_ids)
+        bigname_storage::load_children_current_summaries(snapshot.conn().await?, &logical_name_ids)
             .await
             .map_err(super::name_rows_error(
                 super::SnapshotReadResource::Resource,
@@ -372,7 +373,7 @@ pub(crate) async fn get_address_names(
     };
     let record_counts_by_name = if include_role_summary || include.counts {
         load_address_name_record_counts(
-            &state.pool,
+            snapshot.conn().await?,
             storage_page
                 .entries
                 .iter()
@@ -465,31 +466,36 @@ pub(crate) async fn get_address_names(
 }
 
 async fn load_primary_names_by_namespace<'a>(
-    pool: &sqlx::PgPool,
+    db: impl Into<bigname_storage::ReadDb<'_>>,
     address: &str,
     namespaces: impl Iterator<Item = &'a str>,
 ) -> V2Result<BTreeMap<String, Option<String>>> {
     let namespaces = namespaces.collect::<BTreeSet<_>>();
+    let mut db = db.into();
     let mut primary_names = BTreeMap::new();
     for namespace in namespaces {
-        let primary_name =
-            bigname_storage::load_primary_name_current_snapshot(pool, address, namespace, "60")
-                .await
-                .map_err(crate::v2::name_rows_error(
-                    crate::v2::SnapshotReadResource::Resource,
-                    |_| {
-                        V2Error::internal_error(format!(
-                            "failed to load primary name for address {address}"
-                        ))
-                    },
-                ))?
-                .filter(|snapshot| snapshot.row.claim_status == PrimaryNameClaimStatus::Success)
-                .and_then(|snapshot| {
-                    snapshot
-                        .normalized_claim_name
-                        .map(|name| name.trim().to_owned())
-                        .filter(|name| !name.is_empty())
-                });
+        let primary_name = bigname_storage::load_primary_name_current_snapshot(
+            db.reborrow(),
+            address,
+            namespace,
+            "60",
+        )
+        .await
+        .map_err(crate::v2::name_rows_error(
+            crate::v2::SnapshotReadResource::Resource,
+            |_| {
+                V2Error::internal_error(format!(
+                    "failed to load primary name for address {address}"
+                ))
+            },
+        ))?
+        .filter(|snapshot| snapshot.row.claim_status == PrimaryNameClaimStatus::Success)
+        .and_then(|snapshot| {
+            snapshot
+                .normalized_claim_name
+                .map(|name| name.trim().to_owned())
+                .filter(|name| !name.is_empty())
+        });
         primary_names.insert(namespace.to_owned(), primary_name);
     }
     Ok(primary_names)

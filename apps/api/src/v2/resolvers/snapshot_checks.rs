@@ -69,23 +69,30 @@ pub(super) fn require_phase_target_snapshot(
     Ok(())
 }
 
-/// Recheck a generation that was readable when this request was admitted. A missing generation
-/// here means that readability changed during the request, including a publication at a newer
-/// block/hash. Only unpinned reads can retry against that new publication; an explicit `at`
-/// keeps its selected-position error. SQL failures are never treated as publication movement.
+/// Check, on the request's snapshot before it reads anything, a generation that was readable
+/// when this request was admitted. A missing generation means that readability changed since,
+/// including a publication at a newer block/hash. Only unpinned reads can retry against that new
+/// publication; an explicit `at` keeps its selected-position error. SQL failures are never
+/// treated as publication movement.
 pub(super) async fn revalidate_project_generations(
-    pool: &sqlx::PgPool,
+    state: &crate::AppState,
+    snapshot: &mut crate::v2::collection_snapshot::CollectionSnapshot,
     selected: &SelectedSnapshot,
     expected: &BTreeMap<String, String>,
     explicit_at: bool,
     pinned_generation_changed_message: &str,
 ) -> V2Result<()> {
     #[cfg(test)]
-    super::generation_test_hooks::run(pool).await?;
-    let current =
-        crate::v2::support::load_selected_project_generations_for_read(pool, selected, true)
-            .await
-            .map_err(|_| V2Error::internal_error("failed to validate lookup data"))?;
+    super::generation_test_hooks::run(&state.pool).await?;
+    #[cfg(not(test))]
+    let _ = state;
+    let current = crate::v2::support::load_selected_project_generations_on(
+        snapshot.begin().await?,
+        selected,
+        true,
+    )
+    .await
+    .map_err(|_| V2Error::internal_error("failed to validate lookup data"))?;
     match current.as_ref() {
         Some(current) if current == expected => Ok(()),
         _ if !explicit_at => Err(crate::v2::collection_snapshot::changed_during_read()),

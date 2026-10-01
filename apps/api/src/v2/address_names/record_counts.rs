@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use bigname_storage::NameCurrentRow;
 
 pub(super) async fn load_address_name_record_counts<'a>(
-    pool: &sqlx::PgPool,
+    db: impl Into<bigname_storage::ReadDb<'_>>,
     names: impl Iterator<Item = &'a str>,
     name_rows: &BTreeMap<String, NameCurrentRow>,
 ) -> anyhow::Result<BTreeMap<String, u64>> {
@@ -16,7 +16,7 @@ pub(super) async fn load_address_name_record_counts<'a>(
                 .map(|row| (logical_name_id.to_owned(), row))
         })
         .unzip();
-    let counts = bigname_storage::families::records::load_family_record_counts(pool, &rows).await?;
+    let counts = bigname_storage::families::records::load_family_record_counts(db, &rows).await?;
     Ok(logical_name_ids
         .into_iter()
         .zip(counts)

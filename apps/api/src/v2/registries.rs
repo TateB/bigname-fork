@@ -94,7 +94,7 @@ pub(crate) async fn get_registry(
     let (numeric_chain_id, chain_id_slug) = parse_numeric_chain_id(&chain_id)?;
     let normalized_address = parse_evm_address(&address, "address").map_err(api_error_to_v2)?;
     let include_event_count = registry_include_counts(&params.include)?;
-    let collection = super::collection_snapshot::CollectionSnapshot::capture_for_namespace(
+    let mut collection = super::collection_snapshot::CollectionSnapshot::capture_for_namespace(
         &state,
         params.cursor.as_deref(),
         Some("ens"),
@@ -114,7 +114,7 @@ pub(crate) async fn get_registry(
     let selected_token = super::encode_at_token(&selected_snapshot);
 
     let registry = bigname_storage::load_registry_contract(
-        &state.pool,
+        collection.conn().await?,
         chain_id_slug,
         &normalized_address,
         as_of_block,
@@ -127,7 +127,7 @@ pub(crate) async fn get_registry(
         ))
     })?;
     let serving = bigname_storage::load_registry_serving_pointer(
-        &state.pool,
+        collection.conn().await?,
         chain_id_slug,
         &normalized_address,
         as_of_block,
@@ -153,7 +153,7 @@ pub(crate) async fn get_registry(
         })
         .transpose()?;
     let references = bigname_storage::load_registry_references_page(
-        &state.pool,
+        collection.conn().await?,
         chain_id_slug,
         &normalized_address,
         as_of_block,
@@ -167,7 +167,7 @@ pub(crate) async fn get_registry(
     let roles = if include_event_count {
         Some(
             role_counts::registry_role_count(
-                &state.pool,
+                collection.conn().await?,
                 chain_id_slug,
                 &normalized_address,
                 as_of_block,
@@ -180,7 +180,7 @@ pub(crate) async fn get_registry(
     let events = if include_event_count {
         Some(
             bigname_storage::count_contract_events(
-                &state.pool,
+                collection.conn().await?,
                 chain_id_slug,
                 &normalized_address,
                 &product_history_event_kinds(),
@@ -213,7 +213,7 @@ pub(crate) async fn get_registry(
         },
         data: references.rows.iter().map(registry_name).collect(),
     };
-    let current_meta = collection.finish(&state).await?;
+    let current_meta = collection.meta()?;
     let selected_meta = snapshot_meta(&selected_snapshot)?;
     let is_current = current_meta
         .as_of
@@ -223,15 +223,10 @@ pub(crate) async fn get_registry(
             .as_of
             .as_ref()
             .and_then(|positions| positions.get(&numeric_chain_id.to_string()));
-    // The labels count reads current state, not the selected block, and takes seconds on a
-    // large registry: read it after the publication check so a publication during it does not
-    // refuse the bounded evidence above.
-    #[cfg(test)]
-    super::collection_snapshot::finish_test_hooks::run(&state.pool).await?;
     let labels = if is_current {
         Some(
             bigname_storage::count_registry_labels_current(
-                &state.pool,
+                collection.conn().await?,
                 chain_id_slug,
                 &normalized_address,
             )
@@ -244,6 +239,7 @@ pub(crate) async fn get_registry(
     } else {
         None
     };
+    collection.finish(&state).await?;
     let mut data = build_registry_overview(
         registry,
         numeric_chain_id,
@@ -312,12 +308,12 @@ fn registry_name(pointer: &SubregistryPointer) -> RegistryName {
 /// The current subregistry reference of each requested name, keyed by logical identity.
 /// Names without a current pointer are absent.
 pub(crate) async fn load_subregistry_refs(
-    pool: &sqlx::PgPool,
+    db: impl Into<bigname_storage::ReadDb<'_>>,
     logical_name_ids: &[String],
     as_of_block: Option<i64>,
 ) -> V2Result<BTreeMap<String, RegistryRef>> {
     let pointers =
-        bigname_storage::load_subregistry_pointers_for_names(pool, logical_name_ids, as_of_block)
+        bigname_storage::load_subregistry_pointers_for_names(db, logical_name_ids, as_of_block)
             .await
             .map_err(|error| {
                 tracing::error!(error = ?error, "failed to load subregistry pointers");
