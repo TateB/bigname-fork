@@ -66,9 +66,9 @@ async fn record_orphaning(pool: &PgPool, head: i64) -> TestResult {
     Ok(())
 }
 
-/// A redo that ends where Normal stands leaves its session for Normal's next batch, so after
-/// the redo's own restore Normal continues without restoring history again, unless the
-/// chain's lineage orphaning epoch moved in between. Either way the stored events equal a
+/// A redo that ends where Normal stands leaves its session for Normal's next batch with
+/// blocks, so after the redo's own restore Normal continues without restoring history again,
+/// unless the chain's lineage orphaning epoch moved in between. Either way the stored events equal a
 /// walk with no redo.
 #[tokio::test]
 async fn normal_resumes_from_the_session_a_completed_redo_leaves() -> TestResult {
@@ -125,6 +125,9 @@ async fn normal_resumes_from_the_session_a_completed_redo_leaves() -> TestResult
             record_orphaning(pool, last_block).await?;
         }
 
+        // Normal first catches up to a head that has not moved, an empty batch that must
+        // leave the handed-off session for the first batch with blocks.
+        let normal = run_batch(&engine, Some(normal.clone()), normal.number).await?;
         walk_normal(&engine, Some(normal), last_block).await?;
         let restores = logs.lines_with(RESTORE_STARTED);
         if orphaned_after_redo {
