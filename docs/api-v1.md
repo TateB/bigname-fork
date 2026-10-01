@@ -47,7 +47,7 @@ step-3-gate vocabulary needed by the route schemas:
 | `namehash` | ENS namehash hex string | `namehash` (unchanged) |
 | `token_id` | decimal-string token id for tokenized registrations/names | `token_id` (unchanged; now defined consistently) |
 | `owner` | token/registry owner | `token_holder`, `owner`, `owner_address`, `registry_owner` |
-| `manager` | the address that manages the name, as the ENS app shows it (see [Manager](#manager)) | `effective_controller`, `manager_address` |
+| `manager` | the address that can manage the name (see [Manager](#manager)) | `effective_controller`, `manager_address` |
 | `registrant` | registrant | `registrant` (unchanged) |
 | `relation` | address-to-name relation filter: one or more of the authority relations `owner`, `manager`, `registrant`, and, on address names and address history, `role_holder` (the address holds an ENSv2 registry role on the name's current registration; not the manager) (comma-separated set); `any` = all authority relations supported on that route; or, on its own, the resolver-record relation `resolves_to` (names whose current `addr:<coin_type>` record resolves to the address, coin type from `coin_type`, default `60`, or every EVM coin type with `coin_type=evm`), or, on its own and on `GET /v1/addresses/{address}/names` only, `former_registrant` (released names whose ended registration the address last held; see [lapsed registration](#lapsed-registration)). `resolves_to` and `former_registrant` are not part of `any` and cannot be combined with another relation | four divergent relation/role enums incl. `owned`/`managed`/`both` (partner `BOTH` = `owner,manager`); ensjs `resolvedAddress` |
 | `relations` | address-to-name relations that matched a row, using `owner`, `manager`, `registrant`, `role_holder`, `resolves_to`, and `former_registrant` values | `relation_facets`, role-specific match arrays |
@@ -1060,8 +1060,9 @@ ADR 0006 rollout step 3 includes that read-layer work.
 
 ### Manager
 
-`manager` follows the ENS app: the address that can manage the name, which
-`owner` does not always say. A name with no NameWrapper state (an unwrapped
+`manager` is the address that can manage the name, which `owner` does not
+always say; the rule was chosen to match what the ENS app shows. A name with no
+NameWrapper state (an unwrapped
 ENSv1 name, a Basenames name or an ENSv2 name) serves its `owner`, the registry
 owner of its node; on an unwrapped `.eth` second-level name that is the
 controller, while `registrant` stays the BaseRegistrar token holder. A wrapped

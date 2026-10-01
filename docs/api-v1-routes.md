@@ -646,7 +646,8 @@ collection route carry neither header.
   whole-second formatting does not round an RFC 3339 filter boundary.
 - Response shape: `data` is an array of the same record-shaped rows
   `GET /v1/search` serves: `name`, `display_name`, `namespace`, `namehash`,
-  `owner`, `registrant`, `registration_status`, `registered_at`, `created_at`,
+  `owner`, `manager`, `registrant`, `registration_status`, `registered_at`,
+  `created_at`,
   `expires_at` and `grace_ends_at`. Every row has an `expires_at` inside the
   window. `expires_at` is the served expiry of
   [Expiry and grace](api-v1.md#expiry-and-grace): from the Universal Resolver
@@ -813,8 +814,14 @@ collection route carry neither header.
   (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L221 @ ens_v1@91c966f)
   (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L820 @ ens_v1@91c966f)
   (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L825 @ ens_v1@91c966f)
-  `manager` remains an optional wire field; the current forward-read
-  constructors never emit it. No permanent null placeholder is emitted. `authority` names where the chain
+  `manager` is served on name detail, resolver `bound_names`, `profile=detail`
+  lookup records, `GET /v1/names` and search rows, subname rows and
+  address-name rows by the rule in
+  [Manager](api-v1.md#manager): the `owner` of a name with no NameWrapper
+  state, the `registrant` (the NameWrapper token holder) of a `wrapped` name,
+  and absent on an `emancipated` or `locked` name. It is also absent wherever
+  the address it copies is absent, and on `profile=feed` lookup records, which
+  carry no registration fields. No null placeholder is emitted. `authority` names where the chain
   reads the current registration fields from: `ens_v2` or `ens_v1`, read from
   the projection's selected [authority epoch](glossary.md#authority-epoch), or
   `ens_v0` for an ENSv1 name whose registry record is still read from the 2017
@@ -1656,7 +1663,7 @@ to the product and record-diagnostic routes; a family outside it is rejected as
   `expires_at`. Any other value returns `400 invalid_input`.
 - Response shape: `data` is an array of dedicated subname rows in dictionary
   vocabulary: `name`, `display_name`, `namespace`, `namehash`, `labelhash`,
-  `owner`, `registrant`, `registration_status`, `registered_at`,
+  `owner`, `manager`, `registrant`, `registration_status`, `registered_at`,
   `created_at`, and `expires_at`. An ENSv1 or Basenames registry child with no
   current name row serves its node's current registry owner, `owner(node)`: the
   owner of its latest `NewOwner` or `Transfer`, so a transfer after the
@@ -3062,7 +3069,7 @@ introduces it rebuilds Project from full history before serving the option; see
   `sort`, `order`, `dedupe`,
   and `include=role_summary` apply as for the authority relations.
 - Response shape: `data` is an array of record-shaped rows with `name`,
-  `display_name`, `namespace`, `namehash`, `owner`, `registrant`,
+  `display_name`, `namespace`, `namehash`, `owner`, `manager`, `registrant`,
   `registration_status`, `registered_at`, `created_at`, and `expires_at`.
   Address-name rows also return `permission_resource_id`, the handle
   `GET /v1/permissions?registration_id=` resolves to the permission authority
