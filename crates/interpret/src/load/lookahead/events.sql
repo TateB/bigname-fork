@@ -9,14 +9,24 @@ WITH candidates AS MATERIALIZED (
            event.after_state ? '{clear_marker}' AS clear_marker
     FROM unnest($3::text[]) requested(name)
     JOIN LATERAL (
-        SELECT event.* FROM normalized_events event
+        -- One arm per probe index: the ENSv1 families and the Basenames Base families each
+        -- have a partial index, and a family test the planner cannot prove against one
+        -- predicate would scan instead.
+        (SELECT event.* FROM normalized_events event
         WHERE COALESCE(event.namespace || ':' || lower(COALESCE(event.after_state ->> 'child_node', event.after_state ->> 'namehash', event.after_state ->> 'node', event.after_state #>> '{grant_source,node}', event.after_state #>> '{revocation_source,node}')), event.logical_name_id) = requested.name
           AND event.chain_id = $1 AND event.block_number < $2
           AND event.source_family LIKE 'ens\_v1\_%'
           AND event.canonicality_state IN ('canonical','safe','finalized')
         -- Keep the node index probe parameterized; OFFSET 0 prevents pull-up without
         -- truncating history when stale expression statistics overestimate fanout.
-        OFFSET 0
+        OFFSET 0)
+        UNION ALL
+        (SELECT event.* FROM normalized_events event
+        WHERE COALESCE(event.namespace || ':' || lower(COALESCE(event.after_state ->> 'child_node', event.after_state ->> 'namehash', event.after_state ->> 'node', event.after_state #>> '{grant_source,node}', event.after_state #>> '{revocation_source,node}')), event.logical_name_id) = requested.name
+          AND event.chain_id = $1 AND event.block_number < $2
+          AND event.source_family LIKE 'basenames\_base\_%'
+          AND event.canonicality_state IN ('canonical','safe','finalized')
+        OFFSET 0)
     ) event ON TRUE
     JOIN LATERAL (
         SELECT 1 FROM chain_lineage lineage
@@ -37,7 +47,7 @@ WITH candidates AS MATERIALIZED (
           -- Named facts are already covered by the direct node branch above.
           AND COALESCE(event.namespace || ':' || lower(COALESCE(event.after_state ->> 'child_node', event.after_state ->> 'namehash', event.after_state ->> 'node', event.after_state #>> '{grant_source,node}', event.after_state #>> '{revocation_source,node}')), event.logical_name_id) IS NULL
           AND event.chain_id = $1 AND event.block_number < $2
-          AND event.source_family LIKE 'ens\_v1\_%'
+          AND (event.source_family LIKE 'ens\_v1\_%' OR event.source_family LIKE 'basenames\_base\_%')
           AND event.canonicality_state IN ('canonical','safe','finalized')
         OFFSET 0
     ) event ON TRUE

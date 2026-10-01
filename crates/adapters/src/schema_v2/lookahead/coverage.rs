@@ -5,7 +5,8 @@ use std::{cell::RefCell, collections::BTreeSet};
 // backstop for the explicit collector: it never discovers a successful scope by repeatedly
 // interpreting.
 //
-// A read of per-name ENSv1 state is reported here when its key is built by `v1_key` or
+// A read of per-name ENSv1-model state (the ENSv1 families and the Basenames Base families,
+// which share that state) is reported here when its key is built by `v1_key` or
 // `v1_surface_key` (state_registrar.rs). Reads that build or receive their key another way,
 // and why each cannot reach a name that was not loaded:
 //

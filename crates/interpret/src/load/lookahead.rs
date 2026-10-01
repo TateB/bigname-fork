@@ -1,4 +1,5 @@
-//! Per-batch ENSv1 state loading: restore only the history of names the batch touches.
+//! Per-batch ENSv1 and Basenames Base state loading: restore only the history of names the
+//! batch touches.
 //! Canonical history remains the sole durable state.
 use bigname_adapters::schema_v2::{
     BatchInput, ManifestInput, StateCacheCapacity, V1BatchDependencies, V1NodeRequest,
@@ -179,9 +180,9 @@ fn full_state_reason(
 /// The first uncovered source family, in name order, whose manifest on the chain is in a
 /// rollout state other than `active` or `deprecated` (`draft` or `shadow`) and that retains a
 /// readable event before the batch. The full-state loader restores every retained event with
-/// no source-family filter, while lookahead reads only `ens_v1_*` families, so history of
-/// such a family (written while its manifest was active, before the manifest moved back)
-/// would be restored by one loader and not the other.
+/// no source-family filter, while lookahead reads only `ens_v1_*` and `basenames_base_*`
+/// families, so history of such a family (written while its manifest was active, before the
+/// manifest moved back) would be restored by one loader and not the other.
 ///
 /// Only families with a manifest row on the chain are probed: every event is written under
 /// one of the chain's manifests, and `manifest_versions` rows are never deleted, only moved
@@ -231,7 +232,7 @@ async fn retained_family_reason(
 fn validate_dependencies(dependencies: &V1BatchDependencies) -> Result<()> {
     if !dependencies.unsupported.is_empty() {
         // The loader was chosen because every manifest family is covered, and the prior-event
-        // query reads only ENSv1 families, so this is a broken invariant, not configuration.
+        // query reads only the covered families, so this is a broken invariant, not configuration.
         return Err(InterpretError::data_integrity(format!(
             "lookahead was chosen but does not cover: {:?}",
             dependencies.unsupported,
@@ -251,3 +252,7 @@ mod tests;
 #[cfg(test)]
 #[path = "lookahead_equivalence_tests.rs"]
 mod equivalence_tests;
+
+#[cfg(test)]
+#[path = "lookahead_basenames_equivalence_tests.rs"]
+mod basenames_equivalence_tests;

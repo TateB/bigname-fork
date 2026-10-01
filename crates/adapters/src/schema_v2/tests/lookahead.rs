@@ -80,9 +80,14 @@ pub(super) fn scoped_comparisons() -> usize {
     SCOPED_COMPARISONS.get()
 }
 
+/// The families whose retained events `events.sql` reads.
+fn probed_family(family: &str) -> bool {
+    family.starts_with("ens_v1_") || family.starts_with("basenames_base_")
+}
+
 /// An input the lookahead loader would be chosen for: every manifest family is covered and
-/// the retained history holds only ENSv1 events, which is all the production query reads.
-pub(super) fn is_ensv1_only(input: &BatchInput) -> bool {
+/// the retained history holds only events of the families the production query reads.
+pub(super) fn is_lookahead_covered(input: &BatchInput) -> bool {
     !input.manifests.is_empty()
         && input
             .manifests
@@ -91,7 +96,7 @@ pub(super) fn is_ensv1_only(input: &BatchInput) -> bool {
         && input
             .prior_events
             .iter()
-            .all(|event| event.source_family.starts_with("ens_v1_"))
+            .all(|event| probed_family(&event.source_family))
 }
 
 /// The name an event is filed under by `normalized_events_v1_direct_node_probe_idx` and
@@ -114,11 +119,13 @@ fn due_names(prior: &[PriorEventInput], predecessor: Option<i64>, last: i64) -> 
     prior
         .iter()
         .filter(|event| {
-            event.source_family == "ens_v1_registrar_l1"
-                && matches!(
-                    event.event_kind.as_str(),
-                    "RegistrationGranted" | "RegistrationRenewed" | "TokenControlTransferred"
-                )
+            matches!(
+                event.source_family.as_str(),
+                "ens_v1_registrar_l1" | "basenames_base_registrar"
+            ) && matches!(
+                event.event_kind.as_str(),
+                "RegistrationGranted" | "RegistrationRenewed" | "TokenControlTransferred"
+            )
         })
         .filter_map(|event| {
             let text = match event.after_state.get("expiry")? {
@@ -171,7 +178,7 @@ fn scope(
             .collect();
         let rows = prior
             .iter()
-            .filter(|event| event.source_family.starts_with("ens_v1_"))
+            .filter(|event| probed_family(&event.source_family))
             .filter(|event| match routed_name(event) {
                 Some(name) => names.contains(&name),
                 None => event
@@ -878,7 +885,8 @@ fn resolver_changed_node_precedence_matches_restore() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Lookahead reads retained events of the `ens_v1_*` families only, yet it also covers these
+/// Lookahead reads retained events of the `ens_v1_*` and `basenames_base_*` families only, yet
+/// it also covers these
 /// families. That is sound because they keep no state: a manifest of one of them cannot
 /// declare an event, so no log is ever interpreted under it and no event of it is stored.
 #[test]
@@ -898,7 +906,5 @@ fn covered_families_outside_ens_v1_cannot_interpret_a_log() {
             "{family}: {error:#}"
         );
     }
-    for family in ["basenames_base_registry", "ens_v2_registry_l1"] {
-        assert!(!v1_lookahead_supports_family(family));
-    }
+    assert!(!v1_lookahead_supports_family("ens_v2_registry_l1"));
 }

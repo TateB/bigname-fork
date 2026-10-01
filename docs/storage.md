@@ -1653,13 +1653,17 @@ the adapter advances time-derived protocol state to that timestamp. Exact
 cold-restore reconstruction therefore depends on the predecessor remaining
 readable in the same input snapshot.
 
-On a chain whose manifests all belong to ENSv1 source families (or to the
-families that interpret no logs), Interpret instead restores state for each
-batch with the [lookahead loader](glossary.md#lookahead-loader). Before
+On a chain whose manifests all belong to ENSv1 or Basenames Base source
+families (or to the families that interpret no logs), Interpret instead
+restores state for each batch with the [lookahead loader](glossary.md#lookahead-loader).
+Interpret's adapter handles the Basenames Base families with its ENSv1 protocol
+code, so the loader applies the same name model and dependency rules to them. Before
 interpreting, the adapter decodes the batch's logs without interpreting them
-and lists every ENSv1 name (by namehash) and resource the logs can touch.
+and lists every name (by namehash) and resource the logs can touch.
 Interpret adds the names whose registrar expiry plus the 90-day grace period
-falls inside the batch's time span, because time-derived releases touch names no
+falls inside the batch's time span (the Basenames Base registrar has the same
+grace period (upstream: .refs/basenames/src/util/Constants.sol:L15 @ basenames@1809bbc)
+(upstream: .refs/basenames/src/L2/BaseRegistrar.sol:L296 @ basenames@1809bbc)), because time-derived releases touch names no
 log mentions. A registration is released at the first block whose timestamp is
 strictly greater than its expiry plus the grace period (upstream: .refs/ens_v1/contracts/ethregistrar/BaseRegistrarImplementation.sol:L17 @ ens_v1@91c966f) (upstream: .refs/ens_v1/contracts/ethregistrar/BaseRegistrarImplementation.sol:L100-L103 @ ens_v1@91c966f), so the span runs from
 the timestamp of the block before the batch, inclusive, to the timestamp of the
@@ -1675,14 +1679,17 @@ continuing round adds a name or resource from the chain's finite stored history,
 so the repetition ends. Interpret restores a fresh adapter state from exactly those events under the
 same canonical-lineage and pre-batch boundary rules as a cold restore. The
 session is discarded after the batch. Two partial expression indexes on
-`normalized_events` serve these reads: `normalized_events_v1_direct_node_probe_idx`
-(events of one name) and `normalized_events_v1_due_probe_idx` (registrar expiry
-ranges). The loader is an access path, not a semantic: it must produce the same
+`normalized_events` serve these reads for the ENSv1 families:
+`normalized_events_v1_direct_node_probe_idx` (events of one name) and
+`normalized_events_v1_due_probe_idx` (registrar expiry ranges); two more with the
+same expressions, `normalized_events_basenames_direct_node_probe_idx` and
+`normalized_events_basenames_due_probe_idx`, serve them for the Basenames Base
+families. The loader is an access path, not a semantic: it must produce the same
 normalized events, identity rows and discovery edges as the full-state loader,
 and it is covered by the same interpreter content hash. The loader choice
 therefore looks past the manifests the batch interprets: the full-state loader
-restores every retained row regardless of family and lookahead reads only ENSv1
-families, so `normalized_events` history of a family lookahead does not cover,
+restores every retained row regardless of family and lookahead reads only the
+ENSv1 and Basenames Base families, so `normalized_events` history of a family lookahead does not cover,
 written while that family's manifest was `active` and still retained after the
 manifest moved to `draft` or `shadow`, would be restored by one loader and not
 the other. Before choosing lookahead, Interpret lists the chain's manifests in

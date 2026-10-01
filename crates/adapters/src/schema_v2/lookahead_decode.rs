@@ -70,7 +70,7 @@ pub(super) fn collect(
         _ => {}
     }
     match family {
-        "ens_v1_registry_l1" => match event {
+        "ens_v1_registry_l1" | "basenames_base_registry" => match event {
             "NewOwner" => {
                 let parent = topic(raw, 1)?;
                 out.node(namespace, &format!("{parent:#x}"))?;
@@ -81,7 +81,7 @@ pub(super) fn collect(
             }
             _ => unsupported(out, selected),
         },
-        "ens_v1_registrar_l1" => match event {
+        "ens_v1_registrar_l1" | "basenames_base_registrar" => match event {
             "NameRegistered" | "NameRenewed" => {
                 let label = if selected
                     .event
@@ -92,7 +92,12 @@ pub(super) fn collect(
                     topic(raw, 1)?
                 } else {
                     let (label, hash, _) = decode::name(selected, raw)?;
-                    labels(out, namespace, &[label, b"eth".to_vec()])?;
+                    let mut name = vec![label];
+                    if family == "basenames_base_registrar" {
+                        name.push(b"base".to_vec());
+                    }
+                    name.push(b"eth".to_vec());
+                    labels(out, namespace, &name)?;
                     hash
                 };
                 out.node(namespace, &registrar_namehash(selected, label))?;
@@ -101,6 +106,9 @@ pub(super) fn collect(
             // The admitted V1 dispatcher only uses these for V2 migration correlation;
             // active migration manifests are rejected by the caller before interpretation.
             "ControllerAdded" | "ControllerRemoved" => {}
+            // A registrar proxy upgrade (the Basenames upgradeable controller declares one)
+            // reads no name state.
+            "Upgraded" => {}
             _ => unsupported(out, selected),
         },
         "ens_v1_wrapper_l1" => match event {
@@ -143,7 +151,7 @@ pub(super) fn collect(
             }
             _ => unsupported(out, selected),
         },
-        "ens_v1_resolver_l1" => match event {
+        "ens_v1_resolver_l1" | "basenames_base_resolver" => match event {
             "AddrChanged" | "AddressChanged" | "NameChanged" | "TextChanged" | "ContentChanged"
             | "ContenthashChanged" | "ABIChanged" | "DNSRecordChanged" | "DNSRecordDeleted"
             | "DNSZonehashChanged" | "InterfaceChanged" | "VersionChanged" | "DataChanged" => {
@@ -168,7 +176,7 @@ pub(super) fn collect(
             }
             _ => unsupported(out, selected),
         },
-        "ens_v1_reverse_l1" => match event {
+        "ens_v1_reverse_l1" | "basenames_base_primary" => match event {
             "ReverseClaimed" => out.node(namespace, &format!("{:#x}", topic(raw, 2)?))?,
             "NameForAddrChanged" => {
                 let event = decode_event_log_data_as::<RawNameForAddrChanged>(
