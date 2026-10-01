@@ -234,6 +234,22 @@ under [ENSv1 mirror ancestor gate](deployment.md#ensv1-mirror-ancestor-gate).
 > two disagree inside that window until the composed row carries it.
 > **Since**: `2026-10-01`
 
+> **A wrapped child keeps its wrapper state after its parent reassigns the registry record** —
+> the parent owner's registry `setSubnodeOwner` moves a wrapped child's registry
+> record away from NameWrapper without `NameUnwrapped`, after which NameWrapper
+> no longer treats it as wrapped, but bigname keeps serving it as wrapped:
+> `ens_v1.wrapper_state`, `registrant` and `manager` still name the old token
+> holder.
+> **Upstream**: (upstream: .refs/ens_v1/contracts/registry/ENSRegistry.sol:L75-L84 @ ens_v1@91c966f)
+> (upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L1076-L1079 @ ens_v1@91c966f)
+> **Our rule**: `docs/api-v1.md` § Manager.
+> **Why**: the ENSv1 registry adapter keeps the previous NameWrapper authority
+> when an authentic registry owner replaces it, so the composed row has no fact
+> that NameWrapper lost custody. The `manager` address relation follows the
+> registry owner, so the field and the relation disagree until the adapter
+> ends the wrapper authority (TYR-147).
+> **Since**: `2026-10-01`
+
 
 
 

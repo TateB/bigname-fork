@@ -41,7 +41,7 @@ pub(crate) fn build_address_name(
         .clone()
         .or_else(|| entry.served_owner.clone());
     let manager = name_row.map_or_else(
-        || owner.clone(),
+        || owner.clone().filter(|_| !entry.served_lifecycle_shadow),
         |row| {
             served_manager(
                 &row.declared_summary,

@@ -329,7 +329,7 @@ pub(crate) fn build_subname(
         namehash: row.namehash.clone(),
         labelhash: row.labelhash.clone(),
         manager: name_row.map_or_else(
-            || owner.clone(),
+            || owner.clone().filter(|_| !row.lifecycle_shadow),
             |name| served_manager(&name.declared_summary, owner.as_ref(), registrant.as_ref()),
         ),
         owner,
