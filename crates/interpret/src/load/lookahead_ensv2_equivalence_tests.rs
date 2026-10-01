@@ -33,6 +33,8 @@ const ROOT_REGISTRY: &str = "0x9703dbd26dab89504490994138cf2c575251a9ce";
 const MIGRATION_REGISTRY: &str = "0x0000000000000000000000000000000000000771";
 /// The role bitmap the unlocked controller grants a migrated name's owner.
 const MIGRATED_ROLES: &str = "97409655027181761882228017414928043062435250176";
+/// `MIGRATED_ROLES` with its lowest role revoked.
+const REVOKED_ROLES: &str = "97409655027181761882228017414928043062434201600";
 
 mod v1 {
     alloy_sol_types::sol! {
@@ -58,6 +60,9 @@ mod v1 {
 mod v2 {
     alloy_sol_types::sol! {
         event LabelRegistered(uint256 indexed tokenId, bytes32 indexed labelHash, string label, address owner, uint64 expiry, address indexed sender);
+        event LabelUnregistered(uint256 indexed tokenId, address indexed sender);
+        event SubregistryUpdated(uint256 indexed tokenId, address indexed subregistry, address indexed sender);
+        event TokenRegenerated(uint256 indexed oldTokenId, uint256 indexed newTokenId);
         event ExpiryUpdated(uint256 indexed tokenId, uint64 indexed newExpiry, address indexed sender);
         event ResolverUpdated(uint256 indexed tokenId, address indexed resolver, address indexed sender);
         event TokenResource(uint256 indexed tokenId, uint256 indexed resource);
@@ -73,13 +78,13 @@ mod v2 {
 
 /// Seconds after `START` at which each block is mined.
 const OFFSETS: [i64; 9] = [
-    0,                   // 0: alice and carol registered in ENSv1; bob and dave registered in ENSv2
+    0,                   // 0: alice and carol registered in ENSv1; bob, dave and erin in ENSv2
     10,                  // 1: alice renewed, disclosing her label; bob's expiry and address set
     500,                 // 2: alice moves from ENSv1 to ENSv2; a migration registry is deployed
-    1_000 + GRACE - 5,   // 3: quiet; nothing has lapsed
+    1_000 + GRACE - 5,   // 3: erin unregistered; nothing has lapsed
     1_000 + GRACE + 1,   // 4: quiet; carol's ENSv1 registration lapses
     1_000 + GRACE + 100, // 5: quiet; dave's ENSv2 registration has lapsed
-    1_000 + GRACE + 200, // 6: alice gets an ENSv2 resolver and a text record
+    1_000 + GRACE + 200, // 6: alice gets a resolver, a text record, a new token id and a subregistry
     1_000 + GRACE + 300, // 7: bob transferred; a text record
     1_000 + GRACE + 400, // 8: quiet
 ];
@@ -93,6 +98,10 @@ fn v2_token(label: &str) -> U256 {
     let mut versioned = keccak256(label.as_bytes()).0;
     versioned[28..].fill(0);
     U256::from_be_bytes(versioned)
+}
+
+fn v2_token_version(label: &str, version: u32) -> U256 {
+    v2_token(label) | U256::from(version)
 }
 
 fn seeder(pool: &PgPool) -> Seeder<'_> {
@@ -164,6 +173,17 @@ impl Seeder<'_> {
         self.log(ETH_REGISTRY, roles.encode_log_data()).await
     }
 
+    async fn transfer_v2(&mut self, id: U256, from: Address, to: Address) -> TestResult {
+        let transferred = v2::TransferSingle {
+            operator: OWNER.parse()?,
+            from,
+            to,
+            id,
+            value: U256::from(1_u64),
+        };
+        self.log(ETH_REGISTRY, transferred.encode_log_data()).await
+    }
+
     async fn set_v2_resolver(&mut self, label: &str) -> TestResult {
         let updated = v2::ResolverUpdated {
             tokenId: v2_token(label),
@@ -222,6 +242,7 @@ async fn seed_history(pool: &PgPool, lineage: &[i64]) -> TestResult {
     seed.set_v2_resolver("bob").await?;
     seed.register_v2("dave", START + 1_000 + GRACE + 50, OWNER)
         .await?;
+    seed.register_v2("erin", START + 2_000, OWNER).await?;
 
     seed.block(FIRST_BLOCK + 1).await?;
     let renewed = v1::registrar::NameRenewed {
@@ -299,9 +320,48 @@ async fn seed_history(pool: &PgPool, lineage: &[i64]) -> TestResult {
     seed.log(VERIFIABLE_FACTORY, deployed.encode_log_data())
         .await?;
 
+    // Unregistering burns the token
+    // (upstream: .refs/ens_v2_sepolia_20260916/contracts/src/registry/PermissionedRegistry.sol:L224-L234 @ ens_v2_sepolia_20260916@366de741).
+    seed.block(FIRST_BLOCK + 3).await?;
+    let unregistered = v2::LabelUnregistered {
+        tokenId: v2_token("erin"),
+        sender: owner,
+    };
+    seed.log(ETH_REGISTRY, unregistered.encode_log_data())
+        .await?;
+    seed.transfer_v2(v2_token("erin"), owner, Address::ZERO)
+        .await?;
+
     seed.block(FIRST_BLOCK + 6).await?;
     seed.set_v2_resolver("alice").await?;
     seed.text("alice", "0x06").await?;
+    // Revoking a role regenerates the token: burn, TokenRegenerated, mint under the next version
+    // (upstream: .refs/ens_v2_sepolia_20260916/contracts/src/access-control/EnhancedAccessControl.sol:L318-L320 @ ens_v2_sepolia_20260916@366de741)
+    // (upstream: .refs/ens_v2_sepolia_20260916/contracts/src/registry/PermissionedRegistry.sol:L568-L580 @ ens_v2_sepolia_20260916@366de741).
+    let revoked = v2::EACRolesChanged {
+        resource: v2_token("alice"),
+        account: owner,
+        oldRoleBitmap: MIGRATED_ROLES.parse()?,
+        newRoleBitmap: REVOKED_ROLES.parse()?,
+    };
+    seed.log(ETH_REGISTRY, revoked.encode_log_data()).await?;
+    seed.transfer_v2(v2_token("alice"), owner, Address::ZERO)
+        .await?;
+    let regenerated = v2::TokenRegenerated {
+        oldTokenId: v2_token("alice"),
+        newTokenId: v2_token_version("alice", 1),
+    };
+    seed.log(ETH_REGISTRY, regenerated.encode_log_data())
+        .await?;
+    seed.transfer_v2(v2_token_version("alice", 1), Address::ZERO, owner)
+        .await?;
+    let subregistry = v2::SubregistryUpdated {
+        tokenId: v2_token_version("alice", 1),
+        subregistry: MIGRATION_REGISTRY.parse()?,
+        sender: owner,
+    };
+    seed.log(ETH_REGISTRY, subregistry.encode_log_data())
+        .await?;
 
     seed_last_block(&mut seed, &block_hash(FIRST_BLOCK + 7), "0x07").await
 }
@@ -358,10 +418,16 @@ async fn ensv2_lookahead_matches_full_state_for_every_batch() -> TestResult {
         database.cleanup().await?;
         // The walk runs the lookahead loader beside the engine's choice. This history reads
         // names no log or stored event mentions, so it must exercise the retry.
-        // Only the batch that sets the ETH registry's parent renames every token in it.
+        // Only the batches that give a registry a parent rename every token in it: the
+        // ETH registry's ParentUpdated and alice's SubregistryUpdated.
+        let span = i64::from(blocks_per_batch);
+        let batch_of = |block: i64| FIRST_BLOCK + (block - FIRST_BLOCK) / span * span;
         assert_eq!(
             super::WHOLE_REGISTRY_BATCHES.take(),
-            BTreeSet::from([FIRST_BLOCK]),
+            BTreeSet::from([
+                (batch_of(FIRST_BLOCK), format!("{ETH_REGISTRY}:*")),
+                (batch_of(FIRST_BLOCK + 6), format!("{MIGRATION_REGISTRY}:*")),
+            ]),
             "batches that loaded a whole ENSv2 registry at {blocks_per_batch} blocks per batch"
         );
         assert!(
@@ -390,6 +456,9 @@ async fn ensv2_lookahead_matches_full_state_for_every_batch() -> TestResult {
         ("ens_v2_registry_l1", "RegistrationGranted"),
         ("ens_v2_registry_l1", "ExpiryChanged"),
         ("ens_v2_registry_l1", "ResolverChanged"),
+        ("ens_v2_registry_l1", "SubregistryChanged"),
+        ("ens_v2_registry_l1", "TokenRegenerated"),
+        ("ens_v2_registry_l1", "RegistrationReleased"),
         (
             "ens_v2_registry_l1",
             bigname_adapters::schema_v2::seam::TOKEN_CONTROL_TRANSFERRED_EVENT_KIND,

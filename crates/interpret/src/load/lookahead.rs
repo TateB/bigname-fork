@@ -149,7 +149,8 @@ pub(crate) async fn batch_input(
         // the collector cannot name them all in advance. Every attempt that continues adds a
         // key not loaded before, one the batch's logs and the snapshot's finite history
         // derive, so the attempts end. A key read under another spelling than the loaded one
-        // fails instead.
+        // fails only when that spelling is loaded too; otherwise it loads no history, so the
+        // state maps' keys must match the `state_scope` events are filed under.
         let attempt = restore_schema_v2_lookahead_session(
             restore,
             prior,
@@ -179,10 +180,15 @@ pub(crate) async fn batch_input(
                     #[cfg(test)]
                     {
                         RETRIES.set(RETRIES.get() + 1);
-                        if unloaded.v2_keys.iter().any(|key| key.ends_with(":*")) {
-                            WHOLE_REGISTRY_BATCHES
-                                .with_borrow_mut(|batches| batches.insert(from_block));
-                        }
+                        WHOLE_REGISTRY_BATCHES.with_borrow_mut(|batches| {
+                            batches.extend(
+                                unloaded
+                                    .v2_keys
+                                    .iter()
+                                    .filter(|key| key.ends_with(":*"))
+                                    .map(|key| (from_block, key.clone())),
+                            )
+                        });
                     }
                     dependencies.nodes.extend(unloaded.names.iter().cloned());
                     dependencies
@@ -349,7 +355,8 @@ fn invalid_dependencies(operation: &str, error: anyhow::Error) -> InterpretError
 thread_local! {
     /// Lookahead attempts discarded because they read an unloaded key, on this thread.
     pub(super) static RETRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(super) static WHOLE_REGISTRY_BATCHES: std::cell::RefCell<std::collections::BTreeSet<i64>> =
+    /// The batches, by first block, that loaded a whole ENSv2 registry, and its key.
+    pub(super) static WHOLE_REGISTRY_BATCHES: std::cell::RefCell<std::collections::BTreeSet<(i64, String)>> =
         const { std::cell::RefCell::new(std::collections::BTreeSet::new()) };
 }
 
