@@ -857,8 +857,8 @@ The ledger transaction holds shared locks on both phase rows and the family
 marker through its commit, so an overlapping redo cannot start between the
 check and the write. An unrelated phase-row update alone does not change the
 publication generation. Routes combining indexed and verified answers also
-require both answers to fit the reported `meta.as_of` position. Verified calls
-on the publication's chain execute at the publication's block, which is the
+require both answers to fit the reported `meta.as_of` position. Verified record
+calls on the publication's chain execute at the publication's block, which is the
 position `meta.as_of` reports, so a publication trailing the stored head within
 the publication lag tolerance serves both answers. A selection that is not the
 publication, such as an older `safe` or `finalized` position or an `at` before
