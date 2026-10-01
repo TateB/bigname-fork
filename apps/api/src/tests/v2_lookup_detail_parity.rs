@@ -10,6 +10,7 @@ const SHARED_DETAIL_FIELDS: &[&str] = &[
     "registration_id",
     "token_id",
     "owner",
+    "manager",
     "registrant",
     "registered_at",
     "created_at",

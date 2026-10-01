@@ -53,7 +53,7 @@ pub(super) use values::{
 use values::{
     has_name_binding, json_chain_id, json_value_present, network, object_field, response_chain_id,
 };
-pub(crate) use wrapper::{wrapper_lifecycle_matches_fuses, wrapper_metadata};
+pub(crate) use wrapper::{served_manager, wrapper_lifecycle_matches_fuses, wrapper_metadata};
 pub(crate) struct NameRecordQueryParams;
 impl QueryParamAllowlist for NameRecordQueryParams {
     const ALLOWED: &'static [&'static str] = &["namespace", "at", "finality", "source", "include"];
@@ -333,8 +333,12 @@ pub(crate) fn build_name_record(
         } else {
             None
         },
+        manager: served_manager(
+            &row.declared_summary,
+            registration.owner.as_ref(),
+            registration.registrant.as_ref(),
+        ),
         owner: registration.owner.clone(),
-        manager: None,
         registrant: registration.registrant,
         registered_at: registration.registered_at,
         created_at: registration.created_at,

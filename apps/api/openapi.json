@@ -6560,7 +6560,7 @@
           },
           "manager": {
             "type": "string",
-            "description": "Optional manager address. Current forward-read constructors do not emit this field; no null placeholder is served."
+            "description": "Address that manages the name (see Manager): the owner of a name with no NameWrapper state, the token holder of a wrapped name whose parent can still control it; omitted when the parent cannot control it and wherever the address it copies is omitted."
           },
           "registrant": {
             "type": "string",
@@ -6711,7 +6711,7 @@
           "namehash",
           "status"
         ],
-        "description": "Flat name-detail object, also used by resolver bound names. An identity-only unsupported record omits registration fields. A verified unsupported record may retain registration fields, but all unsupported name-level records omit counts and subregistry. Current constructors omit manager."
+        "description": "Flat name-detail object, also used by resolver bound names. An identity-only unsupported record omits registration fields. A verified unsupported record may retain registration fields, but all unsupported name-level records omit counts and subregistry."
       },
       "LapsedRegistration": {
         "type": "object",
@@ -6964,7 +6964,7 @@
           },
           "manager": {
             "type": "string",
-            "description": "Optional manager address. Current forward-read constructors do not emit this field; no null placeholder is served."
+            "description": "Address that manages the name (see Manager): the owner of a name with no NameWrapper state, the token holder of a wrapped name whose parent can still control it; omitted when the parent cannot control it and wherever the address it copies is omitted."
           },
           "registrant": {
             "type": "string",
@@ -7091,7 +7091,7 @@
           "namehash",
           "status"
         ],
-        "description": "Shared lookup feed/detail record. Detail adds supported registration and grouped resolver fields; reverse records additionally carry matching relations and primary-name information. Current constructors omit manager."
+        "description": "Shared lookup feed/detail record. Detail adds supported registration and grouped resolver fields; reverse records additionally carry matching relations and primary-name information. Feed records omit manager with the other registration fields."
       },
       "StatusData": {
         "type": "object",
@@ -7258,6 +7258,10 @@
             "type": "string",
             "description": "Current token or registry owner address, when known."
           },
+          "manager": {
+            "type": "string",
+            "description": "Address that manages the name (see Manager): the owner of a name with no NameWrapper state, the token holder of a wrapped name whose parent can still control it; omitted when the parent cannot control it and wherever the address it copies is omitted."
+          },
           "registrant": {
             "type": "string",
             "description": "Current registrant address; omitted on released names."
@@ -7334,6 +7338,10 @@
           "owner": {
             "type": "string",
             "description": "Current token or registry owner address, when known."
+          },
+          "manager": {
+            "type": "string",
+            "description": "Address that manages the name (see Manager): the owner of a name with no NameWrapper state, the token holder of a wrapped name whose parent can still control it; omitted when the parent cannot control it and wherever the address it copies is omitted."
           },
           "registrant": {
             "type": "string",
@@ -7414,6 +7422,10 @@
           "owner": {
             "type": "string",
             "description": "Current token or registry owner address, when known."
+          },
+          "manager": {
+            "type": "string",
+            "description": "Address that manages the name (see Manager): the owner of a name with no NameWrapper state, the token holder of a wrapped name whose parent can still control it; omitted when the parent cannot control it and wherever the address it copies is omitted."
           },
           "registrant": {
             "type": "string",
@@ -8420,6 +8432,10 @@
           "owner": {
             "type": "string",
             "description": "Current token or registry owner address, when known."
+          },
+          "manager": {
+            "type": "string",
+            "description": "Address that manages the name (see Manager): the owner of a name with no NameWrapper state, the token holder of a wrapped name whose parent can still control it; omitted when the parent cannot control it and wherever the address it copies is omitted."
           },
           "registrant": {
             "type": "string",

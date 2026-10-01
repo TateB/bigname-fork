@@ -59,6 +59,8 @@ pub(crate) struct SearchName {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) owner: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) manager: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) registrant: Option<String>,
     pub(crate) registration_status: RegistrationStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -273,6 +275,11 @@ pub(crate) fn build_search_name(row: &NameCurrentListRow) -> SearchName {
         display_name: row.row.canonical_display_name.clone(),
         namespace: row.row.namespace.clone(),
         namehash: row.row.namehash.clone(),
+        manager: crate::v2::name_record::served_manager(
+            &row.row.declared_summary,
+            registration.owner.as_ref(),
+            registration.registrant.as_ref(),
+        ),
         owner: registration.owner,
         registrant: registration.registrant,
         registration_status: registration.registration_status,

@@ -19,7 +19,8 @@ use super::support::normalize_inferred_route_name;
 use super::{
     AddressNamesSort, CursorPayload, Envelope, Page, QueryParamAllowlist, RegistrationStatus,
     RegistryRef, SortOrder, StrictQueryParams, V2Error, V2Result, decode, encode,
-    load_subregistry_refs, name_record::name_registration_fields,
+    load_subregistry_refs,
+    name_record::{name_registration_fields, served_manager},
     validate_latest_collection_selectors,
 };
 
@@ -73,6 +74,8 @@ pub(crate) struct Subname {
     pub(crate) labelhash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) owner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) manager: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) registrant: Option<String>,
     pub(crate) registration_status: RegistrationStatus,
@@ -307,6 +310,10 @@ pub(crate) fn build_subname(
         namespace: row.namespace.clone(),
         namehash: row.namehash.clone(),
         labelhash: row.labelhash.clone(),
+        manager: name_row.map_or_else(
+            || owner.clone(),
+            |name| served_manager(&name.declared_summary, owner.as_ref(), registrant.as_ref()),
+        ),
         owner,
         registrant,
         registration_status: registration.registration_status,

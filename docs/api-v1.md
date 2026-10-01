@@ -47,7 +47,7 @@ step-3-gate vocabulary needed by the route schemas:
 | `namehash` | ENS namehash hex string | `namehash` (unchanged) |
 | `token_id` | decimal-string token id for tokenized registrations/names | `token_id` (unchanged; now defined consistently) |
 | `owner` | token/registry owner | `token_holder`, `owner`, `owner_address`, `registry_owner` |
-| `manager` | controller/manager | `effective_controller`, `manager_address` |
+| `manager` | the address that manages the name, as the ENS app shows it (see [Manager](#manager)) | `effective_controller`, `manager_address` |
 | `registrant` | registrant | `registrant` (unchanged) |
 | `relation` | address-to-name relation filter: one or more of the authority relations `owner`, `manager`, `registrant`, and, on address names and address history, `role_holder` (the address holds an ENSv2 registry role on the name's current registration; not the manager) (comma-separated set); `any` = all authority relations supported on that route; or, on its own, the resolver-record relation `resolves_to` (names whose current `addr:<coin_type>` record resolves to the address, coin type from `coin_type`, default `60`, or every EVM coin type with `coin_type=evm`), or, on its own and on `GET /v1/addresses/{address}/names` only, `former_registrant` (released names whose ended registration the address last held; see [lapsed registration](#lapsed-registration)). `resolves_to` and `former_registrant` are not part of `any` and cannot be combined with another relation | four divergent relation/role enums incl. `owned`/`managed`/`both` (partner `BOTH` = `owner,manager`); ensjs `resolvedAddress` |
 | `relations` | address-to-name relations that matched a row, using `owner`, `manager`, `registrant`, `role_holder`, `resolves_to`, and `former_registrant` values | `relation_facets`, role-specific match arrays |
@@ -1057,6 +1057,28 @@ they can return the limitation errors defined below instead of implying
 snapshot support.
 Snapshot-pinned reads require the ADR 0003 slice-3 snapshot-service enabler;
 ADR 0006 rollout step 3 includes that read-layer work.
+
+### Manager
+
+`manager` follows the ENS app: the address that can manage the name, which
+`owner` does not always say. A name with no NameWrapper state (an unwrapped
+ENSv1 name, a Basenames name or an ENSv2 name) serves its `owner`, the registry
+owner of its node; on an unwrapped `.eth` second-level name that is the
+controller, while `registrant` stays the BaseRegistrar token holder. A wrapped
+name's registry owner is the NameWrapper contract
+(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L372 @ ens_v1@91c966f),
+so while `wrapper_state` is `wrapped`, with `PARENT_CANNOT_CONTROL`
+(upstream: .refs/ens_v1/contracts/wrapper/INameWrapper.sol:L18 @ ens_v1@91c966f)
+not burned and the parent still able to replace the name
+(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L725-L729 @ ens_v1@91c966f),
+`manager` is the NameWrapper token holder, the row's `registrant`. An
+`emancipated` or `locked` name has `PARENT_CANNOT_CONTROL` burned, which every
+wrapped `.eth` second-level name has
+(upstream: .refs/ens_v1/contracts/wrapper/NameWrapper.sol:L1013 @ ens_v1@91c966f);
+it omits `manager`, and its holder is the `registrant`. `manager` is also
+omitted wherever `owner` (unwrapped) or `registrant` (wrapped) is, such as on a
+released name. The field does not change the `manager` address relation, which
+keeps its own rule.
 
 ## Status Vocabulary
 
@@ -2262,7 +2284,7 @@ Typed [expiry-effective NameWrapper fuse word](glossary.md#expiry-effective-name
 
 ### NameRecord
 
-Flat name-detail object, also used by resolver bound names. An identity-only unsupported record omits registration fields. A verified unsupported record may retain registration fields, but all unsupported name-level records omit counts and subregistry. Current constructors omit manager.
+Flat name-detail object, also used by resolver bound names. An identity-only unsupported record omits registration fields. A verified unsupported record may retain registration fields, but all unsupported name-level records omit counts and subregistry.
 
 <!-- openapi:object NameRecord -->
 | Field | Type | Presence | Description |
@@ -2270,7 +2292,7 @@ Flat name-detail object, also used by resolver bound names. An identity-only uns
 | `registration_id` | string | only when registration_held | Opaque registration lifecycle handle; permission rows use the published permission-handle mapping. |
 | `token_id` | string | optional | Decimal-string token identifier. |
 | `owner` | string | optional | Current token or registry owner address, when known. |
-| `manager` | string | optional | Optional manager address. Current forward-read constructors do not emit this field; no null placeholder is served. |
+| `manager` | string | optional | Address that manages the name (see Manager): the owner of a name with no NameWrapper state, the token holder of a wrapped name whose parent can still control it; omitted when the parent cannot control it and wherever the address it copies is omitted. |
 | `registrant` | string | optional | Current registrant address; omitted on released names. |
 | `registered_at` | string | optional | Decimal string of Unix seconds; see [timestamp format and absent expiry](#timestamp-format-and-absent-expiry). |
 | `created_at` | string | optional | Decimal string of Unix seconds; see [timestamp format and absent expiry](#timestamp-format-and-absent-expiry). |
@@ -2380,7 +2402,7 @@ Flat name-detail object, also used by resolver bound names. An identity-only uns
 
 ### LookupRecord
 
-Shared lookup feed/detail record. Detail adds supported registration and grouped resolver fields; reverse records additionally carry matching relations and primary-name information. Current constructors omit manager.
+Shared lookup feed/detail record. Detail adds supported registration and grouped resolver fields; reverse records additionally carry matching relations and primary-name information. Feed records omit manager with the other registration fields.
 
 <!-- openapi:object LookupRecord -->
 | Field | Type | Presence | Description |
@@ -2392,7 +2414,7 @@ Shared lookup feed/detail record. Detail adds supported registration and grouped
 | `registration_id` | string | optional | Opaque registration lifecycle handle; permission rows use the published permission-handle mapping. |
 | `token_id` | string | optional | Decimal-string token identifier. |
 | `owner` | string | optional | Current token or registry owner address, when known. |
-| `manager` | string | optional | Optional manager address. Current forward-read constructors do not emit this field; no null placeholder is served. |
+| `manager` | string | optional | Address that manages the name (see Manager): the owner of a name with no NameWrapper state, the token holder of a wrapped name whose parent can still control it; omitted when the parent cannot control it and wherever the address it copies is omitted. |
 | `registrant` | string | optional | Current registrant address; omitted on released names. |
 | `registered_at` | string | optional | Decimal string of Unix seconds; see [timestamp format and absent expiry](#timestamp-format-and-absent-expiry). |
 | `created_at` | string | optional | Decimal string of Unix seconds; see [timestamp format and absent expiry](#timestamp-format-and-absent-expiry). |
@@ -2461,6 +2483,7 @@ Current name summary used by search and the namespace expiry list. The expiry li
 | `namespace` | string | always | Resolved public namespace slug. |
 | `namehash` | string | always | Hexadecimal ENS namehash. |
 | `owner` | string | optional | Current token or registry owner address, when known. |
+| `manager` | string | optional | Address that manages the name (see Manager): the owner of a name with no NameWrapper state, the token holder of a wrapped name whose parent can still control it; omitted when the parent cannot control it and wherever the address it copies is omitted. |
 | `registrant` | string | optional | Current registrant address; omitted on released names. |
 | `registration_status` | enum RegistrationStatus | always | Current registration and control lifecycle label. |
 | `registered_at` | string | optional | Decimal string of Unix seconds; see [timestamp format and absent expiry](#timestamp-format-and-absent-expiry). |
@@ -2481,6 +2504,7 @@ Current name summary used by search and the namespace expiry list. The expiry li
 | `namehash` | string | always | Hexadecimal ENS namehash. |
 | `labelhash` | string | optional | Hexadecimal labelhash when the readable label is not known. |
 | `owner` | string | optional | Current token or registry owner address, when known. |
+| `manager` | string | optional | Address that manages the name (see Manager): the owner of a name with no NameWrapper state, the token holder of a wrapped name whose parent can still control it; omitted when the parent cannot control it and wherever the address it copies is omitted. |
 | `registrant` | string | optional | Current registrant address; omitted on released names. |
 | `registration_status` | enum RegistrationStatus | always | Current registration and control lifecycle label. |
 | `registered_at` | string | optional | Decimal string of Unix seconds; see [timestamp format and absent expiry](#timestamp-format-and-absent-expiry). |
@@ -2502,6 +2526,7 @@ Current name summary used by search and the namespace expiry list. The expiry li
 | `namehash` | string | always | Hexadecimal ENS namehash. |
 | `permission_resource_id` | string | optional | Opaque handle for requesting the selected registration's permissions. |
 | `owner` | string | optional | Current token or registry owner address, when known. |
+| `manager` | string | optional | Address that manages the name (see Manager): the owner of a name with no NameWrapper state, the token holder of a wrapped name whose parent can still control it; omitted when the parent cannot control it and wherever the address it copies is omitted. |
 | `registrant` | string | optional | Current registrant address; omitted on released names. |
 | `registration_status` | enum RegistrationStatus | always | Current registration and control lifecycle label. |
 | `registered_at` | string | optional | Decimal string of Unix seconds; see [timestamp format and absent expiry](#timestamp-format-and-absent-expiry). |

@@ -4,7 +4,7 @@ use bigname_storage::{AddressNameCurrentEntry, NameCurrentRow};
 use super::{AddressName, AddressNameRoleSummary, relation_from_storage};
 use crate::v2::{
     Authority,
-    name_record::{name_registration_fields, registration_id},
+    name_record::{name_registration_fields, registration_id, served_manager},
 };
 
 pub(crate) fn build_address_name(
@@ -21,13 +21,28 @@ pub(crate) fn build_address_name(
     // A surface-less ENSv1 registry child has no name row: it serves what its parent's subnames
     // route serves for it (`subnames::build_subname` with no name row), its registry owner and
     // the registration fields of no name row, on its registry-only resource.
+    let owner = registration
+        .owner
+        .clone()
+        .or_else(|| entry.served_owner.clone());
+    let manager = name_row.map_or_else(
+        || owner.clone(),
+        |row| {
+            served_manager(
+                &row.declared_summary,
+                owner.as_ref(),
+                registration.registrant.as_ref(),
+            )
+        },
+    );
     AddressName {
         name: entry.normalized_name.clone(),
         display_name: entry.canonical_display_name.clone(),
         namespace: entry.namespace.clone(),
         namehash: entry.namehash.clone(),
         permission_resource_id: Some(permission_resource_handle(name_row, entry.resource_id)),
-        owner: registration.owner.or_else(|| entry.served_owner.clone()),
+        owner,
+        manager,
         registrant: registration.registrant,
         registration_status: registration.registration_status,
         registered_at: registration.registered_at,
