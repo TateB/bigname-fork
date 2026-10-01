@@ -40,6 +40,7 @@ const ETHEREUM_FAR_HASH: &str =
 const ETHEREUM_FARTHER_HASH: &str =
     "0x6666666666666666666666666666666666666666666666666666666666666666";
 const BASE_HASH: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
+const BASE_LATER_HASH: &str = "0x7777777777777777777777777777777777777777777777777777777777777777";
 const UNIVERSAL_RESOLVER: &str = "0xeeeeeeee14d718c2b47d9923deab1335e144eeee";
 const ENS_REGISTRY: &str = "0x00000000000c2e074ec69a0dfb2997ba6c7d2e1e";
 const BASE_L1_RESOLVER: &str = "0xde9049636f4a1dfe0a64d1bfe3155c0a14c54f31";
@@ -474,9 +475,9 @@ async fn rust_and_sql_indexed_answer_derivations_are_equivalent() -> AnyResult<(
         .bind(resource_id)
         .bind(boundary_key)
         .bind(row_xmin)
-        .bind(&snapshot.authoritative_position.chain_id)
-        .bind(snapshot.authoritative_position.block_number)
-        .bind(&snapshot.authoritative_position.block_hash)
+        .bind(&snapshot.head.chain_id)
+        .bind(snapshot.head.block_number)
+        .bind(&snapshot.head.block_hash)
         .bind(&snapshot.execution_authority)
         .bind(&snapshot.logical_name_id)
         .bind(&snapshot.resolver_chain_id)
@@ -935,7 +936,7 @@ async fn least_privileged_non_api_writer_keeps_its_existing_function_grants() ->
 }
 
 #[tokio::test]
-async fn stable_projection_row_executes_at_caught_up_head() -> AnyResult<()> {
+async fn stable_projection_row_executes_at_the_publication_behind_the_head() -> AnyResult<()> {
     let (rpc_url, rpc_handle) = spawn_mock_rpc(vec![RpcResponse::Result(encoded_text_result(
         INDEXED_VALUE,
     ))])
@@ -947,16 +948,18 @@ async fn stable_projection_row_executes_at_caught_up_head() -> AnyResult<()> {
     assert_eq!(response.records[0].ledger_action, LedgerAction::None);
     assert_eq!(response.records[0].value, Some(json!(INDEXED_VALUE)));
     assert_eq!(response.observed_positions["ethereum"]["block_number"], 10);
+    assert_eq!(response.authoritative_position.block_number, 10);
+    assert_eq!(response.execution_position.block_hash, ETHEREUM_HASH);
     assert_eq!(ledger_count(fixture.pool()).await?, 0);
 
     fixture.cleanup().await?;
     let requests = join_rpc(rpc_handle).await?;
-    assert_hash_pinned(&requests, ETHEREUM_LATER_HASH);
+    assert_hash_pinned(&requests, ETHEREUM_HASH);
     Ok(())
 }
 
 #[tokio::test]
-async fn stable_projection_divergence_tracks_live_reorg_dependency() -> AnyResult<()> {
+async fn stable_projection_divergence_tracks_the_publication_reorg_dependency() -> AnyResult<()> {
     let (rpc_url, rpc_handle) =
         spawn_mock_rpc(vec![RpcResponse::Result(encoded_text_result(LIVE_VALUE))]).await?;
     let fixture = setup_fixture(FixtureKind::Ens, INDEXED_VALUE).await?;
@@ -970,10 +973,13 @@ async fn stable_projection_divergence_tracks_live_reorg_dependency() -> AnyResul
     )
     .fetch_one(fixture.pool())
     .await?;
-    assert_eq!(positions["indexed"]["block_number"], 10);
-    assert_eq!(positions["indexed"]["block_hash"], ETHEREUM_HASH);
-    assert_eq!(positions["live"]["block_number"], 11);
-    assert_eq!(positions["live"]["block_hash"], ETHEREUM_LATER_HASH);
+    // Indexed and live answers share the publication's block, so one position is recorded.
+    assert_eq!(
+        positions.as_object().map(|positions| positions.len()),
+        Some(1)
+    );
+    assert_eq!(positions["ethereum"]["block_number"], 10);
+    assert_eq!(positions["ethereum"]["block_hash"], ETHEREUM_HASH);
 
     let mut transaction = fixture.pool().begin().await?;
     sqlx::query("DELETE FROM chain_heads WHERE chain_id = $1")
@@ -985,7 +991,7 @@ async fn stable_projection_divergence_tracks_live_reorg_dependency() -> AnyResul
          WHERE chain_id = $1 AND block_hash = $2",
     )
     .bind(ETHEREUM)
-    .bind(ETHEREUM_LATER_HASH)
+    .bind(ETHEREUM_HASH)
     .execute(&mut *transaction)
     .await?;
     transaction.commit().await?;
@@ -1000,7 +1006,7 @@ async fn stable_projection_divergence_tracks_live_reorg_dependency() -> AnyResul
 
     fixture.cleanup().await?;
     let requests = join_rpc(rpc_handle).await?;
-    assert_hash_pinned(&requests, ETHEREUM_LATER_HASH);
+    assert_hash_pinned(&requests, ETHEREUM_HASH);
     Ok(())
 }
 
@@ -1023,28 +1029,55 @@ async fn lookup_is_stale_while_project_cursor_lags_the_head_beyond_tolerance() -
     Ok(())
 }
 
-/// The engine's configured tolerance admits a publication further behind, and the database guard
-/// accepts it at write time because the head and publication are unchanged since capture.
+/// The engine's configured tolerance admits a publication further behind and executes at its
+/// block, so a caller whose admitted snapshot is that publication gets the verified answer. The
+/// database guard accepts the write because the head and publication are unchanged since capture.
 #[tokio::test]
 async fn lookup_admits_and_writes_within_a_configured_lag_tolerance() -> AnyResult<()> {
     let (rpc_url, rpc_handle) =
         spawn_mock_rpc(vec![RpcResponse::Result(encoded_text_result(LIVE_VALUE))]).await?;
     let fixture = setup_fixture(FixtureKind::Ens, INDEXED_VALUE).await?;
     advance_head_to(fixture.pool(), 12, ETHEREUM_FAR_HASH).await?;
+    let publication = LookupPosition {
+        chain_id: ETHEREUM.to_owned(),
+        block_number: 10,
+        block_hash: ETHEREUM_HASH.to_owned(),
+        timestamp: "2026-08-03T00:00:00Z".to_owned(),
+    };
     let response = lookup_engine(fixture.pool(), &rpc_url)?
-        .with_publication_lag_tolerance_blocks(2)
-        .lookup(lookup_request(&fixture.logical_name_id)?)
+        .with_publication_lag_tolerance_blocks(3)
+        .lookup_at_positions(
+            lookup_request(&fixture.logical_name_id)?,
+            std::slice::from_ref(&publication),
+        )
         .await?;
     assert_eq!(response.records[0].ledger_action, LedgerAction::Written);
+    assert_eq!(response.records[0].value, Some(json!(LIVE_VALUE)));
+    assert_eq!(response.authoritative_position.block_number, 10);
+    assert_eq!(response.authoritative_position.block_hash, ETHEREUM_HASH);
     assert_eq!(ledger_count(fixture.pool()).await?, 1);
-    assert_hash_pinned(&join_rpc(rpc_handle).await?, ETHEREUM_FAR_HASH);
+    assert_hash_pinned(&join_rpc(rpc_handle).await?, ETHEREUM_HASH);
 
-    advance_head_to(fixture.pool(), 13, ETHEREUM_FARTHER_HASH).await?;
     let error = lookup_engine(fixture.pool(), "http://127.0.0.1:1")?
-        .with_publication_lag_tolerance_blocks(2)
+        .with_publication_lag_tolerance_blocks(3)
+        .lookup_at_positions(
+            lookup_request(&fixture.logical_name_id)?,
+            &[LookupPosition {
+                block_number: 12,
+                block_hash: ETHEREUM_FAR_HASH.to_owned(),
+                ..publication
+            }],
+        )
+        .await
+        .expect_err("a caller admitting only the head cannot pair it with the publication");
+    assert_eq!(error.kind(), ErrorKind::Stale);
+
+    advance_head_to(fixture.pool(), 14, ETHEREUM_FARTHER_HASH).await?;
+    let error = lookup_engine(fixture.pool(), "http://127.0.0.1:1")?
+        .with_publication_lag_tolerance_blocks(3)
         .lookup(lookup_request(&fixture.logical_name_id)?)
         .await
-        .expect_err("three blocks behind is beyond a two-block tolerance");
+        .expect_err("four blocks behind is beyond a three-block tolerance");
     assert_eq!(error.kind(), ErrorKind::Stale);
     fixture.cleanup().await?;
     Ok(())
@@ -1065,7 +1098,7 @@ async fn lookup_completes_with_a_lagging_publication() -> AnyResult<()> {
         assert_eq!(response.records[0].value, Some(json!(LIVE_VALUE)));
         assert_eq!(ledger_count(fixture.pool()).await?, 1);
         fixture.cleanup().await?;
-        assert_hash_pinned(&join_rpc(rpc_handle).await?, ETHEREUM_LATER_HASH);
+        assert_hash_pinned(&join_rpc(rpc_handle).await?, ETHEREUM_HASH);
     }
     Ok(())
 }
@@ -2749,58 +2782,70 @@ async fn ccip_result_rejects_a_concurrent_inventory_change() -> AnyResult<()> {
 
 #[tokio::test]
 async fn basenames_uses_projected_auxiliary_execution_position() -> AnyResult<()> {
-    let (rpc_url, rpc_handle) = spawn_mock_rpc(vec![RpcResponse::Result(
-        encoded_basenames_text_result(INDEXED_VALUE),
-    )])
-    .await?;
-    let fixture = setup_fixture(FixtureKind::Basenames, INDEXED_VALUE).await?;
-    sqlx::query(
-        "INSERT INTO chain_lineage
-            (chain_id, block_hash, block_number, block_timestamp, canonicality_state)
-         VALUES ($1, $2, 11, '2026-08-03T00:00:01Z', 'canonical')",
-    )
-    .bind(ETHEREUM)
-    .bind(ETHEREUM_LATER_HASH)
-    .execute(fixture.pool())
-    .await?;
-    sqlx::query(
-        "UPDATE chain_heads
-         SET latest_block_hash = $2, latest_block_number = 11
-         WHERE chain_id = $1",
-    )
-    .bind(ETHEREUM)
-    .bind(ETHEREUM_LATER_HASH)
-    .execute(fixture.pool())
-    .await?;
-
-    let response = lookup_engine(fixture.pool(), &rpc_url)?
-        .lookup_at_positions(
-            lookup_request(&fixture.logical_name_id)?,
-            &[
-                LookupPosition {
-                    chain_id: BASE.to_owned(),
-                    block_number: 10,
-                    block_hash: BASE_HASH.to_owned(),
-                    timestamp: "2026-08-03T00:00:00Z".to_owned(),
-                },
-                LookupPosition {
-                    chain_id: ETHEREUM.to_owned(),
-                    block_number: 11,
-                    block_hash: ETHEREUM_LATER_HASH.to_owned(),
-                    timestamp: "2026-08-03T00:00:01Z".to_owned(),
-                },
-            ],
-        )
+    // With the Base head one block past the Base publication, the authoritative position is still
+    // the publication the caller admits, and Ethereum execution keeps the projected position.
+    for base_head_advanced in [false, true] {
+        let (rpc_url, rpc_handle) = spawn_mock_rpc(vec![RpcResponse::Result(
+            encoded_basenames_text_result(INDEXED_VALUE),
+        )])
         .await?;
-    assert_eq!(
-        response.observed_positions["ethereum"]["block_hash"],
-        ETHEREUM_HASH
-    );
-    assert_eq!(response.execution_position.block_hash, ETHEREUM_HASH);
-    assert_eq!(response.execution_position.block_number, 10);
-    fixture.cleanup().await?;
-    let requests = join_rpc(rpc_handle).await?;
-    assert_hash_pinned(&requests, ETHEREUM_HASH);
+        let fixture = setup_fixture(FixtureKind::Basenames, INDEXED_VALUE).await?;
+        let mut heads = vec![(ETHEREUM, ETHEREUM_LATER_HASH)];
+        if base_head_advanced {
+            heads.push((BASE, BASE_LATER_HASH));
+        }
+        for (chain_id, block_hash) in heads {
+            sqlx::query(
+                "INSERT INTO chain_lineage
+                    (chain_id, block_hash, block_number, block_timestamp, canonicality_state)
+                 VALUES ($1, $2, 11, '2026-08-03T00:00:01Z', 'canonical')",
+            )
+            .bind(chain_id)
+            .bind(block_hash)
+            .execute(fixture.pool())
+            .await?;
+            sqlx::query(
+                "UPDATE chain_heads
+                 SET latest_block_hash = $2, latest_block_number = 11
+                 WHERE chain_id = $1",
+            )
+            .bind(chain_id)
+            .bind(block_hash)
+            .execute(fixture.pool())
+            .await?;
+        }
+
+        let response = lookup_engine(fixture.pool(), &rpc_url)?
+            .lookup_at_positions(
+                lookup_request(&fixture.logical_name_id)?,
+                &[
+                    LookupPosition {
+                        chain_id: BASE.to_owned(),
+                        block_number: 10,
+                        block_hash: BASE_HASH.to_owned(),
+                        timestamp: "2026-08-03T00:00:00Z".to_owned(),
+                    },
+                    LookupPosition {
+                        chain_id: ETHEREUM.to_owned(),
+                        block_number: 11,
+                        block_hash: ETHEREUM_LATER_HASH.to_owned(),
+                        timestamp: "2026-08-03T00:00:01Z".to_owned(),
+                    },
+                ],
+            )
+            .await?;
+        assert_eq!(response.authoritative_position.chain_id, BASE);
+        assert_eq!(response.authoritative_position.block_hash, BASE_HASH);
+        assert_eq!(
+            response.observed_positions["ethereum"]["block_hash"],
+            ETHEREUM_HASH
+        );
+        assert_eq!(response.execution_position.block_hash, ETHEREUM_HASH);
+        assert_eq!(response.execution_position.block_number, 10);
+        fixture.cleanup().await?;
+        let requests = join_rpc(rpc_handle).await?;
+        assert_hash_pinned(&requests, ETHEREUM_HASH);
+    }
     Ok(())
 }
 

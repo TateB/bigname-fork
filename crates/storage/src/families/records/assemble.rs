@@ -48,7 +48,8 @@ pub(crate) struct Assembly<'a> {
     pub(crate) links: Option<&'a LinkSelection>,
     /// Every retained write of the selected record id, eligible or not.
     pub(crate) linked: &'a [RecordCandidate],
-    pub(crate) attributed: BTreeSet<i64>,
+    /// `None` leaves `provenance.attributed_event_ids` out.
+    pub(crate) attributed: Option<BTreeSet<i64>>,
 }
 
 fn change(
@@ -394,7 +395,6 @@ pub(crate) fn assemble(
         "resolver_pointer_event_id": pointer.pointer_event_id,
         "record_event_ids": record_ids.iter().chain(&link_ids).collect::<Vec<_>>(),
         "record_link_event_ids": link_ids,
-        "attributed_event_ids": attributed,
         "read_rules": read_rules,
         // ABI admission must use the classification read in this inventory's snapshot.
         "abi_observation_classification": classification.map(|row| json!({
@@ -402,6 +402,9 @@ pub(crate) fn assemble(
         })),
         "coverage": {"status": "projected", "exhaustiveness": "not_asserted"},
     });
+    if let Some(attributed) = attributed {
+        provenance["attributed_event_ids"] = json!(attributed);
+    }
     if !zero_keys.is_empty() {
         provenance["exact_nonempty_not_found_record_keys"] = Value::Array(zero_keys);
     }
@@ -452,8 +455,10 @@ pub(crate) fn unsupported_mirror_row(
     chain_id: &str,
     serving: &ServingPointer,
     mirror: &MirrorSelection,
-    stamps: &BTreeMap<i64, BlockStamp>,
+    reads: &AssemblyReads,
+    attributed: bool,
 ) -> Result<(RecordInventoryCurrentRow, String)> {
+    let stamps = &reads.stamps;
     let reason = mirror.unsupported_reason();
     let position = chain_position(stamps, chain_id, serving.block_number);
     let boundary = json!({
@@ -463,7 +468,7 @@ pub(crate) fn unsupported_mirror_row(
         "event_kind": null,
         "chain_position": position,
     });
-    let provenance = json!({
+    let mut provenance = json!({
         "chain_id": chain_id,
         "logical_name_id": serving.logical_name_id,
         "resolver_address": serving.resolver_address,
@@ -475,6 +480,9 @@ pub(crate) fn unsupported_mirror_row(
         "coverage": {"status": "projected", "exhaustiveness": "not_asserted"},
         "mirror": mirror.provenance(serving),
     });
+    if !attributed && let Some(object) = provenance.as_object_mut() {
+        object.remove("attributed_event_ids");
+    }
     let chain_positions = payload::strip_nulls(json!({
         "block_number": serving.block_number,
         "block_hash": stamps.get(&serving.block_number).map(|stamp| stamp.block_hash.clone()),

@@ -46,6 +46,8 @@ pub(super) fn position_for_chain(positions: &Value, chain_id: &str) -> Result<Pr
 pub(super) struct CapturedPublication {
     /// The marker's position, interpreter hash and sequence, captured with the input rows.
     pub family: Value,
+    /// The marker's block, where same-chain verified calls execute.
+    pub position: LookupPosition,
 }
 
 pub(super) async fn ensure_project_at_head(
