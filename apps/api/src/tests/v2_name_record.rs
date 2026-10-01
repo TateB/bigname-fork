@@ -48,7 +48,8 @@ async fn v2_get_name_returns_flat_name_record_envelope() -> Result<()> {
         data.get("owner"),
         Some(&json!("0x00000000000000000000000000000000000000bb"))
     );
-    assert!(data.get("manager").is_none());
+    // Unwrapped: the manager is the registry owner, not the registrar token holder.
+    assert_eq!(data.get("manager"), data.get("owner"));
     assert_eq!(
         data.get("registrant"),
         Some(&json!("0x00000000000000000000000000000000000000aa"))
@@ -1315,7 +1316,7 @@ async fn v2_get_name_serves_a_transferred_lease_under_the_registry_only_binding(
         Some(&json!("1900000000")),
         "{payload}"
     );
-    assert!(data.get("manager").is_none(), "{payload}");
+    assert_eq!(data.get("manager"), Some(&json!(REGISTRY_OWNER)), "{payload}");
     database.cleanup().await
 }
 
