@@ -60,8 +60,10 @@ can be queued. The merge group then reruns only the fast gates on the merged
 result: static, smoke, schema, core and site. The API, phase-runner and e2e
 jobs and their aggregates are skipped there, and a skipped check satisfies the
 ruleset. Two queued pull requests that pass separately but break each other in
-those suites are caught by the next pull request's CI, not by the queue. Native event conditions keep the subsequent push from running the
-same tests and static checks again.
+those suites are not caught by the queue, and nothing reruns those suites on
+`main`. A later pull request's full run against the updated `main` may surface
+the break, in that unrelated pull request. Native event conditions keep the
+subsequent push from running the same tests and static checks again.
 
 The main-branch follow-up still uploads the site and refreshes the shared Cargo
 and shutdown-image caches. A cache miss can compile dependencies or build an

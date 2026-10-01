@@ -13,15 +13,19 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: |
-          .refs
+          .refs/*
           !.refs/MANIFEST.toml
           !.refs/README.md
-        key: refs-v1-${{ hashFiles('.refs/MANIFEST.toml') }}
-        restore-keys: refs-v1-
+        key: refs-v2-${{ hashFiles('.refs/MANIFEST.toml') }}
+        restore-keys: refs-v2-
 
+    # The exclusions above only filter what `.refs/*` expands to, and an older
+    # entry restored by prefix predates this commit's pins, so the tracked
+    # metadata is put back from the commit before checking against it.
     - name: Sync pinned upstream checkouts
       shell: bash
       run: |
+        git checkout HEAD -- .refs/MANIFEST.toml .refs/README.md
         scripts/sync-refs --check || scripts/sync-refs
         scripts/sync-refs --check
 
@@ -30,7 +34,7 @@ runs:
       uses: actions/cache/save@v4
       with:
         path: |
-          .refs
+          .refs/*
           !.refs/MANIFEST.toml
           !.refs/README.md
-        key: refs-v1-${{ hashFiles('.refs/MANIFEST.toml') }}
+        key: refs-v2-${{ hashFiles('.refs/MANIFEST.toml') }}
