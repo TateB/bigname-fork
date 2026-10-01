@@ -1893,7 +1893,10 @@ exact publication the lookup captured, and the lookup applied the configured
 tolerance when it captured them. The schema-migration changes no rows. Apply it
 on the primary and wait for it to replay on any serving standby before raising
 the tolerance; with the old guard, a verified lookup against a publication more
-than one block behind is refused at revalidation.
+than one block behind is refused at revalidation. Applying it also applies any
+earlier pending schema-migration, including those that build the lookahead
+indexes, so on a large initialized database finish the lookahead index steps
+below first.
 
 ### Lookahead loader on Base
 
