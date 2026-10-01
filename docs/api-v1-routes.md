@@ -3305,7 +3305,9 @@ introduces it rebuilds Project from full history before serving the option; see
   except for a child a NameWrapper or registrar event named under a label that
   fails ENSIP-15 normalization: its lease and NameWrapper state are projected
   without a name row, so, as the subnames route serves it, its `ens_v1` object
-  carries no lifecycle fields, no `expires_at` and no wrapper fields.
+  carries no lifecycle fields, no `expires_at` and no wrapper fields, and the
+  row omits `manager` while still listing it with `relations: ["manager"]`
+  (see [Manager](api-v1.md#manager)).
   `relation=owner` and `relation=registrant` never list it; `authority` matches
   it by that value, `is_migrated=true` omits it and `is_migrated=false` keeps it; `q` matches its
   served text; the timestamp sorts place it among the rows without that

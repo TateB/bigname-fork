@@ -557,9 +557,10 @@ async fn insert_shadow_child_surface(
 /// (crates/adapters/src/schema_v2/protocol/v1/wrapper.rs, `name_wrapped`), so no name row
 /// composes and both routes serve it from its registry. Its wrapper state and any lease are
 /// projected without a composed name, so its `ens_v1` object claims no lifecycle: no `expires_at`
-/// and no wrapper fields, and it omits `manager` rather than serve its registry owner. A child
-/// whose only shadow a resolver `NameChanged` wrote has no such state and, like a sibling no
-/// label-bearing event named, keeps `expires_at: null` and serves its registry owner as manager.
+/// and no wrapper fields. It omits `manager` rather than serve its registry owner, which the
+/// `manager` relation still lists it for. A child whose only shadow a resolver `NameChanged` wrote
+/// has no such state and, like a sibling no label-bearing event named, keeps `expires_at: null`
+/// and serves its registry owner as manager.
 #[tokio::test]
 async fn v2_shadowed_registry_child_serves_ens_v1_without_lifecycle() -> Result<()> {
     let database = TestDatabase::new_migrated().await?;
@@ -662,9 +663,9 @@ async fn v2_shadowed_registry_child_serves_ens_v1_without_lifecycle() -> Result<
     let subnames =
         rows_of(&read_family_pages(&database, "/v1/names/alpha.eth/subnames?page_size=10").await?);
     for (node, ens_v1, manager) in [
-        (wrapped, json!({}), Value::Null),
-        (named, json!({"expires_at": null}), json!(RC_OWNER)),
-        (plain, json!({"expires_at": null}), json!(RC_OWNER)),
+        (wrapped, json!({}), None),
+        (named, json!({"expires_at": null}), Some(json!(RC_OWNER))),
+        (plain, json!({"expires_at": null}), Some(json!(RC_OWNER))),
     ] {
         let row = rows
             .iter()
@@ -677,8 +678,10 @@ async fn v2_shadowed_registry_child_serves_ens_v1_without_lifecycle() -> Result<
         for served in [row, subname] {
             assert_eq!(served["authority"], json!("ens_v1"), "{served:#}");
             assert_eq!(served["ens_v1"], ens_v1, "{served:#}");
-            assert_eq!(served["manager"], manager, "{served:#}");
+            assert_eq!(served["owner"], json!(RC_OWNER), "{served:#}");
+            assert_eq!(served.get("manager"), manager.as_ref(), "{served:#}");
         }
+        assert_eq!(row["relations"], json!(["manager"]), "{row:#}");
     }
 
     database.cleanup().await

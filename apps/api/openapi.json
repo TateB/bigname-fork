@@ -6325,7 +6325,7 @@
           },
           "manager": {
             "type": "string",
-            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted."
+            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted, and on a registry child whose NameWrapper state is unknown."
           },
           "registrant": {
             "type": "string",
@@ -6724,7 +6724,7 @@
           },
           "manager": {
             "type": "string",
-            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted."
+            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted, and on a registry child whose NameWrapper state is unknown."
           },
           "registrant": {
             "type": "string",
@@ -7025,7 +7025,7 @@
           },
           "manager": {
             "type": "string",
-            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted."
+            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted, and on a registry child whose NameWrapper state is unknown."
           },
           "registrant": {
             "type": "string",
@@ -7111,7 +7111,7 @@
           },
           "manager": {
             "type": "string",
-            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted."
+            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted, and on a registry child whose NameWrapper state is unknown."
           },
           "registrant": {
             "type": "string",
@@ -7204,7 +7204,7 @@
           },
           "manager": {
             "type": "string",
-            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted."
+            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted, and on a registry child whose NameWrapper state is unknown."
           },
           "registrant": {
             "type": "string",
@@ -8219,7 +8219,7 @@
           },
           "manager": {
             "type": "string",
-            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted."
+            "description": "Account that can change the name's registry record (see Manager): the owner of a name with no NameWrapper state and the token holder of a wrapped name; omitted wherever the address it copies is omitted, and on a registry child whose NameWrapper state is unknown."
           },
           "registrant": {
             "type": "string",
