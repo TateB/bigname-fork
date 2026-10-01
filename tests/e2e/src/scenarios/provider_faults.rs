@@ -495,7 +495,7 @@ async fn pruned_get_code_fails_closed_then_uses_configured_fallback() -> Result<
 }
 
 #[tokio::test]
-async fn an_endpoint_serving_another_chain_is_refused_before_ingest_writes() -> Result<()> {
+async fn an_endpoint_serving_another_chain_is_refused_before_ingest() -> Result<()> {
     let anvil = Anvil::spawn().await?;
     let fixture = deploy_text_fixture(&anvil, "fault-wrong-chain", "wrong").await?;
     let base = Anvil::spawn_base_mainnet().await?;
@@ -517,12 +517,15 @@ async fn an_endpoint_serving_another_chain_is_refused_before_ingest_writes() -> 
         !error.contains(&base.url),
         "the refusal must not log the endpoint"
     );
-    let cursors: i64 = sqlx::query_scalar("SELECT count(*) FROM ingest_cursors")
-        .fetch_one(&corpus.db.pool)
-        .await?;
+    // The harness seeds the redo extent's cursor; the refused start must not have verified it.
+    let verified: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM ingest_cursors WHERE verified_chain_id IS NOT NULL",
+    )
+    .fetch_one(&corpus.db.pool)
+    .await?;
     ensure!(
-        cursors == 0,
-        "a refused start created {cursors} ingest cursors"
+        verified == 0,
+        "a refused start recorded {verified} cursor identities"
     );
     Ok(())
 }

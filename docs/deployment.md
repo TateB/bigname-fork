@@ -553,9 +553,9 @@ of persisted source identity and will not trigger the runtime reset guard.
 
 ### RPC chain check
 
-Before `run` or `redo` opens its database, and before `source-transport`
-connects, every RPC endpoint the runner is given must show that it serves the
-chain it is configured for. That covers each `BIGNAME_PHASE_RUNNER_SOURCES`
+Before `run` opens its database, before `redo` writes anything, and before
+`source-transport` connects, every RPC endpoint the runner is given must show
+that it serves the chain it is configured for. That covers each `BIGNAME_PHASE_RUNNER_SOURCES`
 entry with an RPC kind, whatever its role, and each
 `BIGNAME_PHASE_RUNNER_HYDRATION_RPC_URLS` entry. An Interpret or Project redo
 reads no source provider, so it checks only the hydration URLs. The endpoint must answer
@@ -575,10 +575,11 @@ the end-to-end suite's Anvil chains. There is no mode that skips the check.
 Ingest, Live, Verify and `source-transport` readers repeat the check before
 their first request, again once five minutes have passed, and whenever the
 HTTP client is rebuilt after a timeout. A mismatch then stops that chain with a
-configuration error, which is not retried, and sets
-`phase_runner_rpc_chain_mismatch` (see the
-[monitoring runbook](runbooks/pipeline-monitoring.md#alerts)). Hydration URLs
-are checked at startup only.
+configuration error, which is not retried. On an Ingest or Live source it also
+sets `phase_runner_rpc_chain_mismatch` (see the
+[monitoring runbook](runbooks/pipeline-monitoring.md#alerts)); a Verify
+reference that fails pages through `BignamePhaseFailed`. Hydration URLs are
+checked at startup only.
 
 Each intake cursor records the chain id its endpoint reported and, once checked
 in `full` mode, its genesis hash (`ingest_cursors.verified_chain_id` and
