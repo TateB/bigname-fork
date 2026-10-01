@@ -24,7 +24,8 @@ pub use manifest::{WatchFilter, WatchQuery, load_persisted_watch_filter, load_wa
 pub use plan::{BASE_COINBASE_SEAM_BLOCK, enforce_source_floor};
 pub use provider::{
     ExpectedRpcChain, ObservedRpcChain, ProviderKind, RETH_DB_OPENED_STORAGE_CHILDREN,
-    RPC_CHAIN_RECHECK_INTERVAL, RpcChainCheck, RpcChainMismatch, normalized_kind, verify_rpc_chain,
+    RPC_CHAIN_RECHECK_INTERVAL, RpcChainCheck, RpcChainMismatch, is_rpc_endpoint, normalized_kind,
+    verify_rpc_chain,
 };
 pub use verification::{
     VerificationBatch, VerificationLog, VerificationMarker, VerificationProvider,

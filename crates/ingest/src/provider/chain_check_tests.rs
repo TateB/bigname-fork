@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::sync::Mutex;
 
 use serde_json::{Value, json};
@@ -245,11 +246,12 @@ async fn the_check_repeats_after_the_interval_and_after_a_client_rebuild() -> Re
     provider.resolve(&[9]).await?;
     provider.resolve(&[9]).await?;
     assert_eq!(node.count("eth_chainId"), 1);
-    assert!(provider.chain_verified_for(provider.client.client_id()));
+    let check = provider.ensure_chain().await?.expect("guarded");
+    assert!(check.covers(provider.client.client_id()));
 
     tokio::time::sleep(Duration::from_millis(350)).await;
     assert!(
-        !provider.chain_verified_for(provider.client.client_id()),
+        !check.covers(provider.client.client_id()),
         "an expired check does not admit a request that waited for its permit"
     );
     provider.resolve(&[9]).await?;
@@ -366,9 +368,20 @@ async fn a_client_rebuilt_while_the_check_runs_is_checked_again() -> Result<()> 
         provider.client.rebuild();
     };
     let (checked, ()) = tokio::join!(provider.ensure_chain(), rebuild);
-    checked?;
+    let check = checked?.expect("guarded");
 
     assert_eq!(node.count("eth_chainId"), 2);
-    assert!(provider.chain_verified_for(provider.client.client_id()));
+    assert!(check.covers(provider.client.client_id()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn concurrent_requests_on_a_cold_guard_all_complete() -> Result<()> {
+    let node = Node::start("0x1", Some(MAINNET_GENESIS)).await?;
+    let provider = node.guarded("ethereum-mainnet", RpcChainCheck::Full)?;
+    tokio::time::timeout(Duration::from_secs(10), provider.resolve(&[9; 64]))
+        .await
+        .context("requests waiting on the first chain check stalled")??;
+    assert_eq!(node.count("eth_chainId"), 1);
     Ok(())
 }

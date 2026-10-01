@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 
 use bigname_ingest::{
-    ExpectedRpcChain, ObservedRpcChain, ProviderKind, RpcChainCheck, normalized_kind,
-    verify_rpc_chain,
+    ExpectedRpcChain, ObservedRpcChain, ProviderKind, RpcChainCheck, is_rpc_endpoint,
+    normalized_kind, verify_rpc_chain,
 };
 use bigname_lookup::ChainRpcUrls;
 use sqlx::PgPool;
@@ -35,8 +35,8 @@ pub struct VerifiedRpcEndpoint {
 
 /// Checks every RPC source of every chain, whatever its role, and every hydration URL. Direct
 /// Reth DB sources compare their stored genesis when they open, and Coinbase SQL is not an RPC
-/// endpoint; nor is a source whose endpoint is not an http(s) URL, such as a fixture
-/// placeholder, which no RPC provider accepts. Any failure refuses the start; the error and log name the chain, source and both
+/// endpoint; nor is a source whose endpoint the RPC provider would not accept, such as a fixture
+/// placeholder. Any failure refuses the start; the error and log name the chain, source and both
 /// identities, never the URL.
 pub async fn verify_all<'a>(
     sources: impl IntoIterator<Item = &'a SourceConfig>,
@@ -48,13 +48,7 @@ pub async fn verify_all<'a>(
         .into_iter()
         .filter(|source| {
             normalized_kind(&source.source_kind) == ProviderKind::Rpc
-                && source
-                    .endpoint()
-                    .trim()
-                    .split_once("://")
-                    .is_some_and(|(scheme, _)| {
-                        scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
-                    })
+                && is_rpc_endpoint(source.endpoint())
         })
         .map(|source| {
             (
@@ -201,6 +195,42 @@ mod tests {
             .await
             .unwrap();
         assert!(verified.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_endpoint_the_provider_accepts_is_checked_however_it_is_spelled() {
+        let app = axum::Router::new().fallback(axum::routing::post(
+            |axum::Json(request): axum::Json<serde_json::Value>| async move {
+                axum::Json(
+                    serde_json::json!({"jsonrpc": "2.0", "id": request["id"], "result": "0x2"}),
+                )
+            },
+        ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+
+        let source = |endpoint: String| {
+            SourceConfig::new(
+                "ethereum-mainnet",
+                "primary",
+                "rpc",
+                SeedBasis::EthereumHead,
+                0,
+                &endpoint,
+            )
+            .unwrap()
+        };
+        let placeholder = source("fixture://upfront".to_owned());
+        let noncanonical = source(format!(" HTTP:/127.0.0.1:{port}/"));
+
+        let none = ChainRpcUrls::default();
+        let skipped = verify_all([&placeholder], &none, RpcChainCheck::Full).await;
+        assert!(skipped.unwrap().is_empty());
+        let error = verify_all([&noncanonical], &none, RpcChainCheck::Full)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("chain id"), "{error}");
     }
 
     #[test]

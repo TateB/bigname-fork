@@ -165,12 +165,13 @@ impl JsonRpcProvider {
         // Bound actual HTTP work, including retries and standalone fallback calls.
         // Release the permit after the body is read, before any retry backoff.
         let (permit, client, client_id) = loop {
-            if dispatch == Dispatch::Data {
-                self.ensure_chain().await?;
-            }
+            let check = match dispatch {
+                Dispatch::Data => self.ensure_chain().await?,
+                Dispatch::Probe => None,
+            };
             let permit = self.in_flight.acquire().await?;
             let (client, client_id) = self.client.snapshot();
-            if dispatch == Dispatch::Probe || self.chain_verified_for(client_id) {
+            if check.is_none_or(|check| check.covers(client_id)) {
                 break (permit, client, client_id);
             }
         };

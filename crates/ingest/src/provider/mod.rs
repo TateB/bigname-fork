@@ -322,6 +322,11 @@ pub enum ProviderKind {
     Coinbase,
 }
 
+/// Whether `endpoint` is a URL the JSON-RPC provider accepts.
+pub fn is_rpc_endpoint(endpoint: &str) -> bool {
+    validate_endpoint(endpoint).is_ok()
+}
+
 pub fn normalized_kind(kind: &str) -> ProviderKind {
     match kind.trim().to_ascii_lowercase().replace('-', "_").as_str() {
         "reth" | "reth_db" => ProviderKind::Reth,

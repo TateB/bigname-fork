@@ -231,17 +231,22 @@ impl JsonRpcProvider {
         Ok(observed)
     }
 
-    pub(super) async fn ensure_chain(&self) -> Result<()> {
+    /// Verifies the current client unless a fresh check already covers it. The returned
+    /// [`ChainCheck`] is `None` only without a guard.
+    pub(super) async fn ensure_chain(&self) -> Result<Option<ChainCheck>> {
         let Some(guard) = &self.chain_guard else {
-            return Ok(());
+            return Ok(None);
         };
         let mut verified = guard.verified.lock().await;
         loop {
             let client_id = self.client.client_id();
-            if verified
-                .is_some_and(|(at, id)| id == client_id && at.elapsed() < guard.recheck_after)
-            {
-                return Ok(());
+            let check = verified.map(|(at, id)| ChainCheck {
+                client_id: id,
+                at,
+                valid_for: guard.recheck_after,
+            });
+            if let Some(check) = check.filter(|check| check.covers(client_id)) {
+                return Ok(Some(check));
             }
             *verified = None;
             // Boxed: the probes go through `send`, which calls back into this check.
@@ -254,16 +259,21 @@ impl JsonRpcProvider {
             }
         }
     }
+}
 
-    /// Whether the last completed check verified `client_id` and has not expired. A check in
-    /// progress counts as unverified, so the caller waits for it in [`Self::ensure_chain`].
-    pub(super) fn chain_verified_for(&self, client_id: u64) -> bool {
-        self.chain_guard.as_ref().is_none_or(|guard| {
-            guard.verified.try_lock().is_ok_and(|verified| {
-                verified
-                    .is_some_and(|(at, id)| id == client_id && at.elapsed() < guard.recheck_after)
-            })
-        })
+/// A completed chain check: the client it verified and when.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ChainCheck {
+    client_id: u64,
+    at: Instant,
+    valid_for: Duration,
+}
+
+impl ChainCheck {
+    /// Whether this check admits a request on `client_id` now. A request that waited for its
+    /// permit past the interval, or found the client rebuilt, goes back for a fresh check.
+    pub(super) fn covers(&self, client_id: u64) -> bool {
+        self.client_id == client_id && self.at.elapsed() < self.valid_for
     }
 }
 
