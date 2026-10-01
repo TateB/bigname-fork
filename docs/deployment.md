@@ -1726,3 +1726,35 @@ contract: `0x4f06fd857f8d4c6172aaa3f6a96a645b6940aacc` must answer
 `artitest.eth` on both sources, and
 `GET /v1/events?contract_address=0x4F382928805ba0e23B30cFB75fC9E848e82DFD47`
 must list `primary_name` rows with `coin_type` `2147483648`.
+
+### Missing sort keys sort as the smallest value
+
+The build that makes a missing `expires_at`, `registered_at` or `created_at`
+the smallest value in list sorts (first ascending, last descending) on
+[`GET /v1/addresses/{address}/names`](api-v1-routes.md#get-v1addressesaddressnames),
+[`GET /v1/names/{name}/subnames`](api-v1-routes.md#get-v1namesnamesubnames) and
+[`GET /v1/names`](api-v1-routes.md#get-v1names) changes only API read paths,
+but it rotates the
+[interpreter content hash](glossary.md#interpreter-content-hash) for every
+chain: `crates/storage/src/address_names/query.rs` is on the content hash's
+file list because the stored name summary takes its timestamps from it, and the
+subname and former-registrant readers it edits sit under the hashed
+`crates/storage/src/families` root. It needs no schema-migration, no manifest change and no historical
+ingest fetch. An existing deployment runs the new binary for both the phase
+runner and the API, and finishes the full-history Interpret redo and the
+Project redo it installs before the matching API serves, as for any rotation;
+an API upgraded alone refuses the old build's family publication with
+`409 stale`. A cursor issued before the change on one of these sorts still
+decodes and resumes after its saved row, but in the new order, which moved the
+rows without the key to the other end of the list:
+
+- Ascending (undated rows were last and are now first): a cursor saved on a
+  dated row skips every undated row, and a cursor saved on an undated row
+  returns every dated row a second time.
+- Descending (undated rows were first and are now last): a cursor saved on an
+  undated row skips every dated row, so rows with a real timestamp are lost,
+  and a cursor saved on a dated row returns the undated rows already seen a
+  second time at the end.
+
+A client walking one of these sorts across the change restarts from the first
+page.
