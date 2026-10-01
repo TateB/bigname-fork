@@ -304,6 +304,37 @@ then its snapshot-selected reads answer `409 stale`. When this build ships toget
 [resolver set while registering a wrapped name](#resolver-set-while-registering-a-wrapped-name)
 change, which rotates the hash too, that change's single redo pair discharges both rotations.
 
+`20261001120000_name_surfaces_name_order_index.sql` adds `name_surfaces_name_order_idx` on
+`name_surfaces (raw_name, namespace, namehash, logical_name_id)`, partial on active surfaces in
+the three readable canonicality states whose name is at most 2000 bytes. The search candidates
+and a resolver's bound names can read it in page order instead of sorting every match ([storage](storage.md#table-ownership)). It is a plain `CREATE INDEX`
+with the same SHARE lock on `name_surfaces` until the schema-migration commits, which blocks
+Interpret's writes to it. Apply it with the phase runner, redo processes and API stopped, with
+the same `lock_timeout`, `statement_timeout` and retry procedure and `--target-version
+20261001120000`. On a large initialized database, prebuild it concurrently first, outside a
+transaction, so the schema-migration finds it and skips the build:
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS name_surfaces_name_order_idx
+    ON bigname_phase.name_surfaces (raw_name, namespace, namehash, logical_name_id)
+    WHERE visibility_state = 'active'
+      AND canonicality_state IN ('canonical', 'safe', 'finalized')
+      AND octet_length(raw_name) <= 2000;
+```
+
+Either way, confirm the index is `indisvalid` and `indisready` in `pg_index` and that
+`pg_get_indexdef` shows those four columns and the three predicate terms before serving. `IF NOT EXISTS` matches the name
+only: an interrupted concurrent build leaves an invalid index that must be dropped with `DROP
+INDEX CONCURRENTLY` before the build is run again. The same build adds the matching length bound
+to those two readers in `crates/storage/src/families`, so it rotates the
+[interpreter content hash](glossary.md#interpreter-content-hash) for every chain although no
+stored row changes. An existing deployment finishes the full-range Interpret redo and then the
+stamped Project redo it installs before the matching API serves, as the
+[handoff](#phase-runner-configuration) describes; a release batch that rotates the hash for
+another change discharges both with one redo pair. Names longer than 2000 bytes are no longer
+listed by search or a resolver's `bound_names` ([routes](api-v1-routes.md#get-v1search));
+reverse lookup still lists them. Cursors issued before the change continue.
+
 The API binds to the configured `BIGNAME_API_HOST` and
 `BIGNAME_API_PORT`; `/healthz` remains its local readiness endpoint. Current
 runtime configuration is documented in
@@ -1811,7 +1842,7 @@ default of one block. It changes only API, lookup and status read paths and the
 verified lookup's database guard, none of them hashed sources, so the
 [interpreter content hash](glossary.md#interpreter-content-hash) does not
 rotate and no redo is needed. It needs
-`20261001120000_lookup_guard_configured_publication_lag.sql`, which replaces
+`20261001150000_lookup_guard_configured_publication_lag.sql`, which replaces
 `bigname_phase.revalidate_resolution_lookup_state` so the guard no longer fixes
 its own one-block bound: it still requires the head the lookup pinned and the
 exact publication the lookup captured, and the lookup applied the configured
