@@ -12,7 +12,13 @@ pub(crate) async fn require_published_head(
     let selected_head_is_published = match head {
         Some((number, hash)) if number == head_block => {
             bigname_storage::load_served_project_generation(
-                pool, chain_id, number, &hash, true, true,
+                pool,
+                chain_id,
+                number,
+                &hash,
+                true,
+                true,
+                bigname_storage::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS,
             )
             .await?
             .is_some()

@@ -1947,6 +1947,17 @@ one atomic family publication and its marker sequence: a normal block, a bounded
 rebuild range or an undo. Always qualify it: the bare word *generation* is also
 used by the unrelated [raw-log retention generation](#generation-raw-log-retention-generation).
 
+<a id="publication-lag-tolerance"></a>
+## Publication lag tolerance
+
+how many blocks a chain's [family marker](#family-marker) may trail the stored
+chain head and still be served, set on the API by
+`BIGNAME_API_PUBLICATION_LAG_TOLERANCE_BLOCKS` (one block by default, never
+negative, one count for every chain). Snapshot selection, the generation
+recheck, the `/v1/status` generation-current flag and the verified lookup's
+capture all apply it; a publication further behind, or ahead of the stored
+head, returns `409 stale`.
+
 <a id="publication-visible-event"></a>
 ## Publication-visible event
 
@@ -2550,7 +2561,8 @@ The marker is what the API serves from: snapshot selection and the verified look
 admission accept a chain's publication only while its marker is `live` (never
 `bootstrap_pending`, the state of a rebuild still populating the families),
 belongs to this build's interpreter, sits on readable lineage and trails the
-stored head by at most one block, and the marker's `sequence` is the served
+stored head by at most the API's [publication lag
+tolerance](#publication-lag-tolerance) (one block by default), and the marker's `sequence` is the served
 generation a same-request recheck compares, and the verified lookup's guard
 compares too. `/v1/status` and the served-lag gauges take
 the projected block from the marker, while the Project phase state still comes

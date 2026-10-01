@@ -47,7 +47,12 @@ pub(crate) async fn get_status(
     _no_query: NoQueryParams,
     State(state): State<AppState>,
 ) -> V2Result<Json<Envelope<StatusData>>> {
-    let read = match bigname_storage::load_phase_indexing_status(&state.pool).await {
+    let read = match bigname_storage::load_phase_indexing_status(
+        &state.pool,
+        crate::state::publication_lag_tolerance_blocks(),
+    )
+    .await
+    {
         Ok(read) => read,
         Err(load_error) => {
             if crate::state::is_absent_phase_schema(&state.pool, &load_error).await {

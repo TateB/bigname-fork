@@ -192,7 +192,7 @@ pub(super) fn served_lag(observed_head: Option<i64>, publication: Option<i64>) -
 ///
 /// The publication is the one `load_served_project_generation` in `bigname-storage`
 /// would accept, with one relaxation and two gates set aside:
-/// - it drops only the upper one-block lag fence, so large lags show; the stored
+/// - it drops only the API's configured upper lag fence, so large lags show; the stored
 ///   head must still exist and must not be below the publication;
 /// - it ignores the requested-position gate, which for a per-chain gauge would only
 ///   compare the publication with itself;

@@ -176,7 +176,7 @@ ops dashboards tracked in Linear TYR-34.
   canonical lineage and is at or below the stored head. The chain must also
   have its Project phase row for the metrics query. Missing or rebuilding
   (`bootstrap_pending`) publication reads `-1`. This gauge does not apply the
-  API's one-block lag tolerance, request-specific selected positions or redo
+  API's [publication lag tolerance](../glossary.md#publication-lag-tolerance), request-specific selected positions or redo
   admission, so a reported publication can still be stale for a request.
   `phase_runner_redo_in_progress` reports active repairs separately. The
   publication gauge is not expected to return to zero.
@@ -185,8 +185,9 @@ ops dashboards tracked in Linear TYR-34.
   the two expected to return to zero. A non-zero value means the newest
   publication is that many blocks behind the newest block the runner has seen.
   Because the API stops serving a chain once its publication trails the stored
-  head by more than one block, a value above one usually means readers are
-  getting stale-data errors, not old answers. The Project latency target
+  head by more than `BIGNAME_API_PUBLICATION_LAG_TOLERANCE_BLOCKS` (one block by
+  default), a value above that tolerance usually means readers are getting
+  stale-data errors, not old answers. The Project latency target
   (Linear TYR-36) requires this gauge to return to zero every normal block.
 
 `-1` on either gauge means unavailable, never healthy or caught up. The lag

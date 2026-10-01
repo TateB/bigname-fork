@@ -197,6 +197,7 @@ async fn undo_of_a_range_transaction_records_its_actual_predecessor() -> Result<
             &block_hash(1, HEAD),
             true,
             false,
+            bigname_storage::PROJECT_PUBLICATION_LAG_TOLERANCE_BLOCKS,
         )
         .await?
         .is_none(),
