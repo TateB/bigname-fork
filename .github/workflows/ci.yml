@@ -147,9 +147,6 @@ jobs:
         if: github.event_name != 'push'
         run: ./scripts/check-migration-versions
 
-      - name: Install native build dependencies
-        run: scripts/ci-apt-install clang libclang-dev
-
       # Exercise the test helpers without enabling the optional direct Reth reader.
       - name: cargo check
         if: github.event_name != 'push'
@@ -308,9 +305,6 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
-      - name: Install native build dependencies
-        run: scripts/ci-apt-install clang libclang-dev
-
       # Only main saves this cache (see the cache note at the top). Pull requests
       # and merge queue runs restore main's entry, falling back to main's entry
       # for an older Cargo.lock, and save nothing: their copies were invisible
@@ -368,9 +362,6 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Install native build dependencies
-        run: scripts/ci-apt-install clang libclang-dev
 
       # Only main saves this cache (see the cache note at the top). Pull requests
       # and merge queue runs restore main's entry, falling back to main's entry
@@ -452,9 +443,6 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Install native build dependencies
-        run: scripts/ci-apt-install clang libclang-dev
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -568,7 +556,7 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
 
       - name: Install native build dependencies
-        run: scripts/ci-apt-install clang libclang-dev binutils
+        run: scripts/ci-apt-install binutils
 
       - name: Compute phase-runner dependency-cache key
         id: phase_runner_cache_key
@@ -744,9 +732,6 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
-      - name: Install native build dependencies
-        run: scripts/ci-apt-install clang libclang-dev
-
       - name: Compute phase-runner dependency-cache key
         id: phase_runner_cache_key
         run: |
@@ -871,9 +856,6 @@ jobs:
         if: github.event_name != 'push'
         with:
           version: ${{ env.FOUNDRY_VERSION }}
-      - name: Install native build dependencies
-        if: github.event_name != 'push'
-        run: scripts/ci-apt-install clang libclang-dev
       - name: Sync pinned references
         if: github.event_name != 'push'
         uses: ./.github/actions/sync-refs
