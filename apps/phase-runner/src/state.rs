@@ -504,6 +504,16 @@ impl PhaseStore {
         crate::ingest_cursor_config::validate_existing(&self.pool, chain_id, sources).await
     }
 
+    pub async fn reconcile_verified_rpc_chains(
+        &self,
+        sources: &[SourceConfig],
+    ) -> RunnerResult<()> {
+        for source in sources {
+            crate::ingest_cursor_config::record_verified_rpc_chain(&self.pool, source).await?;
+        }
+        Ok(())
+    }
+
     pub async fn validate_completed_ingest_sources(
         &self,
         chain_id: &str,

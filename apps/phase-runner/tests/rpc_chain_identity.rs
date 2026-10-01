@@ -161,3 +161,39 @@ async fn ingest_refuses_a_cursor_another_start_created_with_another_genesis() ->
 
     scratch.cleanup().await
 }
+
+#[tokio::test]
+async fn a_phase_start_fills_a_cursor_recorded_without_a_genesis() -> Result<()> {
+    let scratch = ScratchDatabase::create("bigname_rpc_identity_unread_genesis").await?;
+    let mut sources = chain("ethereum-sepolia", "http://127.0.0.1:1/")?
+        .sources
+        .to_vec();
+    let store = PhaseStore::new(scratch.pool().clone());
+    store
+        .ensure_ingest_sources("ethereum-sepolia", &sources)
+        .await?;
+    sqlx::query(
+        "UPDATE ingest_cursors SET verified_chain_id = 11155111
+         WHERE chain_id = 'ethereum-sepolia' AND source_key = 'primary'",
+    )
+    .execute(scratch.pool())
+    .await?;
+    sources[0].verified_rpc_chain = Some(bigname_ingest::ObservedRpcChain {
+        chain_id: Some(11_155_111),
+        genesis_hash: Some(SEPOLIA_GENESIS.to_owned()),
+    });
+
+    store.reconcile_verified_rpc_chains(&sources).await?;
+    let recorded = sqlx::query_as::<_, (Option<i64>, Option<String>)>(
+        "SELECT verified_chain_id, verified_genesis_hash FROM ingest_cursors
+         WHERE chain_id = 'ethereum-sepolia' AND source_key = 'primary'",
+    )
+    .fetch_one(scratch.pool())
+    .await?;
+    assert_eq!(
+        recorded,
+        (Some(11_155_111), Some(SEPOLIA_GENESIS.to_owned()))
+    );
+
+    scratch.cleanup().await
+}
