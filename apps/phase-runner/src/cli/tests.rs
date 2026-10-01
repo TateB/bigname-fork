@@ -912,9 +912,11 @@ fn ingest_options_reach_both_run_and_redo_configuration() {
             Some(bigname_ingest::RpcChainCheck::ChainIdOnly)
         );
         let error = Cli::try_parse_from(["phase-runner", command, "--rpc-chain-check", "off"])
-            .err()
-            .expect("the RPC chain check has no off mode");
-        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
+            .expect_err("the RPC chain check has no off mode");
+        assert!(
+            error.to_string().contains("expected full or chain-id-only"),
+            "{error}"
+        );
         let config = ingest_options(
             command,
             &[

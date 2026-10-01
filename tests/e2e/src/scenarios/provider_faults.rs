@@ -493,3 +493,36 @@ async fn transient_get_code_retries_primary_without_using_configured_fallback() 
 async fn pruned_get_code_fails_closed_then_uses_configured_fallback() -> Result<()> {
     Ok(())
 }
+
+#[tokio::test]
+async fn an_endpoint_serving_another_chain_is_refused_before_ingest_writes() -> Result<()> {
+    let anvil = Anvil::spawn().await?;
+    let fixture = deploy_text_fixture(&anvil, "fault-wrong-chain", "wrong").await?;
+    let base = Anvil::spawn_base_mainnet().await?;
+    let corpus = prepare_corpus(&fixture.deployment).await?;
+
+    let error = format!(
+        "{:#}",
+        rpc_ingest(&corpus, &base.url, 0)
+            .await
+            .err()
+            .context("a chain 8453 endpoint must not ingest as chain 1")?
+    );
+    ensure!(
+        error.contains("chain ethereum-e2e-rpc source e2e-rpc")
+            && error.contains("expected chain id 1, observed 8453"),
+        "the refusal must name the chain, source and both chain ids: {error}"
+    );
+    ensure!(
+        !error.contains(&base.url),
+        "the refusal must not log the endpoint"
+    );
+    let cursors: i64 = sqlx::query_scalar("SELECT count(*) FROM ingest_cursors")
+        .fetch_one(&corpus.db.pool)
+        .await?;
+    ensure!(
+        cursors == 0,
+        "a refused start created {cursors} ingest cursors"
+    );
+    Ok(())
+}

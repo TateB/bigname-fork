@@ -313,6 +313,10 @@ COMMENT ON COLUMN ingest_cursors.last_processed_block_hash IS
     'This value identifies the latest stored source block.';
 COMMENT ON COLUMN ingest_cursors.updated_at IS
     'This time records the latest progress change.';
+COMMENT ON COLUMN ingest_cursors.verified_chain_id IS
+    'This value is the chain id the source endpoint reported to the RPC chain check.';
+COMMENT ON COLUMN ingest_cursors.verified_genesis_hash IS
+    'This value is the block 0 hash the source endpoint reported to a full RPC chain check.';
 
 COMMENT ON TABLE chain_phase_state IS
     'This table stores the current state of each chain phase.';

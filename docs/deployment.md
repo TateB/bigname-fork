@@ -557,7 +557,8 @@ Before `run` or `redo` opens its database, and before `source-transport`
 connects, every RPC endpoint the runner is given must show that it serves the
 chain it is configured for. That covers each `BIGNAME_PHASE_RUNNER_SOURCES`
 entry with an RPC kind, whatever its role, and each
-`BIGNAME_PHASE_RUNNER_HYDRATION_RPC_URLS` entry. The endpoint must answer
+`BIGNAME_PHASE_RUNNER_HYDRATION_RPC_URLS` entry. An Interpret or Project redo
+reads no source provider, so it checks only the hydration URLs. The endpoint must answer
 `eth_chainId` with the chain's EIP-155 id and, in the default `full` mode,
 return block 0. On `ethereum-mainnet` and `ethereum-sepolia` block 0's hash
 must be that chain's genesis hash (`crates/domain/src/chain_identity.rs`);

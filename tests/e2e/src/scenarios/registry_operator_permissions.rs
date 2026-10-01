@@ -44,6 +44,7 @@ impl RealApi {
         drop(listener);
         let mut command = tokio::process::Command::new(executable);
         command
+            .env("BIGNAME_API_RPC_CHAIN_CHECK", "chain-id-only")
             .args([
                 "serve",
                 "--bind-addr",

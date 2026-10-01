@@ -198,7 +198,10 @@ async fn main() -> Result<()> {
                 let (manifest_repository, manifest_profile) =
                     hash_manifests_off_runtime(manifests_root.clone()).await??;
                 bind_runtime_manifests(&manifest_repository, manifest_profile, &mut chains)?;
-                let sources = chains.iter().flat_map(|chain| chain.sources.iter());
+                let sources = chains
+                    .iter()
+                    .filter(|_| phase.reads_sources())
+                    .flat_map(|chain| chain.sources.iter());
                 let rpc_mode = rpc_chain_check::mode(&capacity);
                 let verified_rpc =
                     rpc_chain_check::verify_all(sources, &hydration_rpc_urls, rpc_mode).await?;

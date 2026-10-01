@@ -8,9 +8,11 @@ use anyhow::Result;
 use bigname_metrics::{IntGaugeVec, MetricsRegistry};
 
 /// `(chain, source)` → (reported numeric chain id or -1, mismatch).
+type RpcChainStateMap = BTreeMap<(String, String), (i64, bool)>;
+
 #[derive(Clone, Default)]
 pub(super) struct RpcChainStates {
-    inner: Arc<Mutex<BTreeMap<(String, String), (i64, bool)>>>,
+    inner: Arc<Mutex<RpcChainStateMap>>,
 }
 
 impl RpcChainStates {
@@ -22,7 +24,7 @@ impl RpcChainStates {
             .insert((chain.to_owned(), source.to_owned()), (chain_id, mismatch));
     }
 
-    fn snapshot(&self) -> BTreeMap<(String, String), (i64, bool)> {
+    fn snapshot(&self) -> RpcChainStateMap {
         self.inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())

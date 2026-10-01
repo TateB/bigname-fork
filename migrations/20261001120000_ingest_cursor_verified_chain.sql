@@ -12,5 +12,9 @@ END IF;
 ALTER TABLE bigname_phase.ingest_cursors
     ADD COLUMN IF NOT EXISTS verified_chain_id bigint,
     ADD COLUMN IF NOT EXISTS verified_genesis_hash text;
+COMMENT ON COLUMN bigname_phase.ingest_cursors.verified_chain_id IS
+    'This value is the chain id the source endpoint reported to the RPC chain check.';
+COMMENT ON COLUMN bigname_phase.ingest_cursors.verified_genesis_hash IS
+    'This value is the block 0 hash the source endpoint reported to a full RPC chain check.';
 END
 $migration$;
