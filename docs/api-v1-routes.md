@@ -865,7 +865,8 @@ collection route carry neither header.
   The same field appears on batch-lookup name results and on subname rows,
   where it reads the latest pointer. With `source=verified`, `records` and
   `primary_address` are built
-  by a fresh schema-v2 lookup at the selected family publication's block, using the same
+  by a fresh schema-v2 lookup at the selected family publication's block (a
+  Basenames lookup calls Ethereum at the position the projected name carries), using the same
   verified path as `/v1/names/{name}/records`; indexed resolver-record values
   are not substituted into them. The verified lookup reads every record
   key the name's record inventory lists (the same chain-neutral inventory

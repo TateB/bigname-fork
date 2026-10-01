@@ -917,9 +917,10 @@ may trail the stored head and still be served, beside the status thresholds
 `BIGNAME_API_STATUS_MAX_BLOCK_LAG` and `BIGNAME_API_STATUS_MAX_LAG_SECS`. It is
 one count for every chain, so the same value covers six times as much time on a
 12-second chain as on a 2-second one. Set above the status thresholds, it lets
-`/v1/status` report `stale` while the API still serves. Verified record calls
-run at the publication's block, so they keep serving through the same lag;
-primary-name verification still runs at the stored head. Every API path is read-only, including verified records, automatic
+`/v1/status` report `stale` while the API still serves. Same-chain verified
+record calls run at the publication's block, and Basenames calls at the
+Ethereum position the projected name carries, so verified records keep serving
+through the same lag; primary-name verification still runs at the stored head. Every API path is read-only, including verified records, automatic
 live fallback, primary names with an omitted `source`, and diagnostics.
 `BIGNAME_API_DATABASE_URL` may point at a primary or a physical streaming hot
 standby with the reviewed schema installed. Logical replicas are not supported:
