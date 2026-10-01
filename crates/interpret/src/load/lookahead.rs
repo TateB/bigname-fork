@@ -184,8 +184,9 @@ pub(crate) async fn batch_input(
 /// Load the events of the requested names and resources, add the names and resources those
 /// events link to, and repeat until a round adds nothing. There is no round limit: every round
 /// that continues adds at least one name or resource that occurs in the chain's stored history
-/// before this batch, that history is finite and fixed inside this snapshot, and nothing is
-/// ever removed, so the set stops growing after finitely many rounds. A subname many labels
+/// before this batch or is the registry-only resource of such a name, that history is finite
+/// and fixed inside this snapshot, and nothing is ever removed, so the set stops growing after
+/// finitely many rounds. A subname many labels
 /// deep costs one round per label, because each stored `NewOwner` links a name to its parent.
 /// Returns the loaded events in restore order, the ENSv2 events included when `whole_v2`.
 async fn load_closure(

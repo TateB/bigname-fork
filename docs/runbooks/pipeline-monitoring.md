@@ -338,20 +338,22 @@ minutes into every startup.
 A restart no longer costs Interpret a restore of a chain's whole retained
 history: Ethereum mainnet, Ethereum Sepolia and Base all use the
 [lookahead loader](../glossary.md#lookahead-loader), which reads only the
-history each batch touches, plus, on Sepolia, every retained ENSv2 event. On
-Ethereum mainnet and Base, a runner that is OOM-killed or slow right after every
-start points at a large batch rather than at restart cost; lower
-`BIGNAME_INTERPRET_BLOCKS_PER_BATCH`. On Sepolia every batch, even a one-block
-batch with no ENSv2 logs, also reads all retained ENSv2 events and the ENSv1
-history of the names they mention, and a smaller batch does not reduce that.
-If memory or time stays high there at one block per batch, that whole-ENSv2
-read is the cost. `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true` pays it once
-per start instead of once per batch, for every chain that runner serves. A
-chain that logs `interpret chose its prior-state loader` with a full-state
-reason, or a runner
-started with `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true`, still restores
-all retained history on start and after each reorg, with the memory that
-implies.
+history each batch touches, plus, on Sepolia, every retained ENSv2 event. A
+runner that is OOM-killed or slow right after every start on such a chain is
+paying for batch work, not restart cost. That work has three parts: the
+batch's own block range, which `BIGNAME_INTERPRET_BLOCKS_PER_BATCH` bounds; the
+whole retained history of each name and resource that range touches, which a
+smaller batch reduces only by touching fewer names; and, on Sepolia only,
+every retained ENSv2 event and the ENSv1 history of the names they mention,
+which every batch reads whatever its size. Lower the batch size first. If the
+cost stays high at one block per batch, it is the history of the names that
+block touches or Sepolia's ENSv2 read; tell them apart before choosing an
+override. `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true` pays the restore
+once per start instead of once per batch, for every chain that runner serves.
+A chain that logs `interpret chose its prior-state loader` with a full-state
+reason, or a runner started with `BIGNAME_INTERPRET_FORCE_FULL_STATE_LOADER=true`,
+still restores all retained history on start and after each reorg, with the
+memory that implies.
 
 ## Phase cursor non-progress response
 
