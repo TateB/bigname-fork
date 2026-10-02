@@ -632,6 +632,8 @@ collection route carry neither header.
   history and permission rows. The listing mixes registrar leases, ENSv2
   registrations and subnames; `parent=eth` keeps only the `.eth` second-level
   names, and `authority` tells ENSv1 leases from ENSv2 registrations.
+  [Running an expiry sweep](guides/expiry-sweep.md) shows how a notification
+  service applies the rules below.
 - Request parameters: query `namespace` (required), `expires_after`,
   `expires_before`, `authority`, `parent`, `sort=expires_at`,
   `order=asc|desc`, `cursor`, `page_size`, and optional `finality=latest`. `at` and historical `finality`
