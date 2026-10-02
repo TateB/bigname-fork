@@ -5,9 +5,9 @@ use futures_util::{StreamExt, TryStreamExt, stream};
 use serde_json::{Value, json};
 
 use super::{
-    JsonRpcProvider,
+    JsonRpcProvider, RpcCountKind,
     decode::normalize_hash,
-    request::BatchCall,
+    request::{BatchCall, backoff},
     types::{
         Block, BlockBundle, BlockTag, HeadSnapshot, Log, Receipt, ResolvedBlock, Transaction,
         TransactionPayload, block_number_parameter, hash_log_filter, range_log_filter,
@@ -15,6 +15,9 @@ use super::{
 };
 
 const MAX_RECEIPT_FALLBACK: usize = 256;
+const NULL_REREQUESTS: usize = 3;
+/// Methods whose `null` answers count as provider null results.
+const NULL_COUNTED_METHODS: [&str; 2] = ["eth_getTransactionReceipt", "eth_getTransactionByHash"];
 
 impl JsonRpcProvider {
     pub async fn heads(&self) -> Result<HeadSnapshot> {
@@ -50,15 +53,32 @@ impl JsonRpcProvider {
     }
 
     /// Runs calls at the configured batch width and parallelism, preserving call order.
+    ///
+    /// Each chunk counts its receipt and transaction `null` answers as it completes, so a
+    /// sibling chunk's failure cannot discard them.
     async fn parallel_batches(&self, calls: Vec<BatchCall>) -> Result<Vec<Option<Value>>> {
         let chunks = calls
             .chunks(self.config.rpc_batch_size())
             .map(<[BatchCall]>::to_vec)
             .collect::<Vec<_>>();
-        let results = stream::iter(chunks.into_iter().map(|chunk| self.batch(chunk)))
-            .buffered(self.config.rpc_max_in_flight())
-            .try_collect::<Vec<_>>()
-            .await?;
+        let results = stream::iter(chunks.into_iter().map(|chunk| async move {
+            let methods = chunk.iter().map(|call| call.method).collect::<Vec<_>>();
+            let values = self.batch(chunk).await?;
+            self.counters.add(
+                RpcCountKind::NullResults,
+                methods
+                    .into_iter()
+                    .zip(&values)
+                    .filter(|(method, value)| {
+                        value.is_none() && NULL_COUNTED_METHODS.contains(method)
+                    })
+                    .map(|(method, _)| method),
+            );
+            Ok::<_, anyhow::Error>(values)
+        }))
+        .buffered(self.config.rpc_max_in_flight())
+        .try_collect::<Vec<_>>()
+        .await?;
         Ok(results.into_iter().flatten().collect())
     }
 
@@ -144,7 +164,9 @@ impl JsonRpcProvider {
     /// Fetches the receipt and the transaction of every hash in `hashes`.
     ///
     /// Both methods go out as JSON-RPC batches with the provider's bounded parallelism;
-    /// results keep the order of `hashes`. A null result means the transaction left the
+    /// results keep the order of `hashes`. Hosted providers answer null for some receipts they
+    /// hold when batches run concurrently, so null results are asked again on their own, up to
+    /// [`NULL_REREQUESTS`] times. A result still null after that means the transaction left the
     /// chain between the range query and this fetch, which is transient.
     pub async fn transaction_payloads(&self, hashes: &[String]) -> Result<Vec<TransactionPayload>> {
         if hashes.is_empty() {
@@ -160,8 +182,9 @@ impl JsonRpcProvider {
                 method: "eth_getTransactionByHash",
                 params: vec![json!(hash)],
             }))
-            .collect();
-        let values = self.parallel_batches(calls).await?;
+            .collect::<Vec<_>>();
+        let mut values = self.parallel_batches(calls.clone()).await?;
+        self.rerequest_nulls(&calls, &mut values).await?;
         let (receipts, transactions) = values.split_at(hashes.len());
         hashes
             .iter()
@@ -188,6 +211,29 @@ impl JsonRpcProvider {
                 })
             })
             .collect()
+    }
+
+    async fn rerequest_nulls(
+        &self,
+        calls: &[BatchCall],
+        values: &mut [Option<Value>],
+    ) -> Result<()> {
+        for attempt in 0..=NULL_REREQUESTS {
+            let nulls = (0..values.len())
+                .filter(|index| values[*index].is_none())
+                .collect::<Vec<_>>();
+            if nulls.is_empty() || attempt == NULL_REREQUESTS {
+                break;
+            }
+            backoff(attempt).await;
+            let retried = self
+                .parallel_batches(nulls.iter().map(|index| calls[*index].clone()).collect())
+                .await?;
+            for (index, value) in nulls.into_iter().zip(retried) {
+                values[index] = value;
+            }
+        }
+        Ok(())
     }
 
     pub(super) async fn verification_logs(

@@ -165,6 +165,35 @@ is `bigname-phase-runner`, so a later import updates the same dashboard.
 | Exporter health | Whether Prometheus can scrape the runner and whether the latest read of PostgreSQL state succeeded. |
 | RPC chain check | `phase_runner_rpc_chain_id{chain,source}` is the chain id each RPC endpoint reported to its latest [RPC chain check](../deployment.md#rpc-chain-check), or `-1` when none could be read; hydration URLs use `source="hydration"`, which they share with a configured source of that key. `phase_runner_rpc_chain_mismatch{chain,source}` is `1` once an Ingest or Live source failed the check during the run; a failed Verify reference shows as a failed Verify phase instead. |
 
+## Ingest RPC traffic
+
+Three counters cover only the JSON-RPC traffic the shared Ingest and Live
+engine's providers send to each configured RPC source, including their
+periodic RPC chain rechecks and Coinbase's companion RPC. The startup RPC
+chain check, Verify's reference provider, source-transport transitions,
+Project hydration and API lookups are not counted.
+
+| Counter | What it counts |
+| --- | --- |
+| `phase_runner_ingest_rpc_requests_total{chain,source,outcome}` | HTTP requests, one per standalone call or batch, including retries. `outcome` is `ok`, or `failed` for a transport error, a non-2xx status or a body that is not JSON. A JSON-RPC error inside a 200 response counts as `ok`. |
+| `phase_runner_ingest_rpc_calls_total{chain,source,method}` | JSON-RPC calls, each call of a batch counted once and each retry counted again. This is roughly what a per-call provider bills. |
+| `phase_runner_ingest_provider_null_results_total{chain,source,method}` | `null` answers for the receipt (`eth_getTransactionReceipt`) or transaction (`eth_getTransactionByHash`) of a selected log: every `null` answer Ingest accepted, including re-requests. |
+
+A request still in flight when its window fails on another error is abandoned
+and not counted.
+
+A rising null count with a flat `phase failed with a retryable error` log means
+the re-requests are absorbing the provider's `null` answers. Failed phases
+alongside it can mean answers stayed `null` after three re-requests; read the
+failure reason. `provider omitted receipt for selected transaction …` or
+`provider omitted transaction for selected log …` is that case: lower
+`BIGNAME_INGEST_RPC_MAX_IN_FLIGHT` or `BIGNAME_INGEST_RPC_BATCH_SIZE`
+([RPC settings](../deployment.md#phase-runner-configuration)). Transport,
+routing and reorg-position errors do not show the re-requests ran out;
+diagnose them on their own. Lowering the in-flight limit or batch size can
+help rate limits and load-related timeouts; it does nothing for a genuine
+reorg.
+
 ## Served lag
 
 Two gauges measure how far the newest data the API could serve trails the
