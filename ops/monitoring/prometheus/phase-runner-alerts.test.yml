@@ -23,6 +23,29 @@ tests:
               threshold: "A phase reports status=failed on one evaluation."
               meaning: "The named chain phase stored an error; it may be retrying or may have stopped."
 
+  - name: an RPC chain mismatch pages and outlives the stopped runner
+    interval: 15s
+    input_series:
+      - series: 'phase_runner_rpc_chain_mismatch{job="bigname-phase-runner",chain="ethereum-mainnet",source="primary"}'
+        values: '0 1 _x20'
+      - series: 'phase_runner_rpc_chain_mismatch{job="bigname-phase-runner",chain="ethereum-mainnet",source="hydration"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: BignamePhaseRunnerRpcChainMismatch
+        exp_alerts:
+          - exp_labels:
+              chain: ethereum-mainnet
+              job: bigname-phase-runner
+              severity: page
+              source: primary
+            exp_annotations:
+              threshold: "An RPC endpoint reports a mismatched chain on any scrape within 10 minutes."
+              meaning: "The named source's RPC endpoint now serves a different chain than configured; that chain stopped, and a restart refuses to start until the endpoint is fixed. A single-chain runner usually exits before a scrape sees this; BignamePhaseRunnerDown and the refusal log catch it."
+      - eval_time: 11m
+        alertname: BignamePhaseRunnerRpcChainMismatch
+        exp_alerts: []
+
   - name: inactive one-hot phase states do not page
     interval: 1m
     input_series:

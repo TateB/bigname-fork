@@ -299,6 +299,7 @@ async fn run_lane(lane: RestartLane) -> Result<LaneSnapshot> {
         kind: "rpc".to_owned(),
         start_block: ANNOUNCEMENT_BLOCK,
         endpoint: rpc.endpoint.clone(),
+        recorded_genesis: None,
     };
 
     let first_ingest = IngestEngine::new(scratch.pool().clone())

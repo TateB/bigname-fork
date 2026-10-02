@@ -283,6 +283,7 @@ pub enum ResolvedCommand {
         database_url: String,
         old: SourceConfig,
         new: SourceConfig,
+        rpc_chain_check: bigname_ingest::RpcChainCheck,
     },
     InitSchema {
         database_url: String,
@@ -341,6 +342,7 @@ impl Cli {
                 database_url: args.database_url,
                 old: parse_source(&args.from_source)?,
                 new: parse_source(&args.to_source)?,
+                rpc_chain_check: args.rpc_chain_check,
             }),
             Command::InitSchema(args) => Ok(ResolvedCommand::InitSchema {
                 database_url: args.database_url,

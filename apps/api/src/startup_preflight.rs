@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use bigname_lookup::{ChainRpcUrls, RpcChainCheckError, verify_chain_rpc_url};
 use sqlx::PgPool;
 
 pub(crate) async fn ensure_verified_lookup_ddl_available(pool: &PgPool) -> Result<()> {
@@ -25,3 +26,34 @@ pub(crate) async fn ensure_verified_lookup_ddl_available(pool: &PgPool) -> Resul
 
     Ok(())
 }
+
+/// Refuses to serve when a configured RPC endpoint answers for another chain. An endpoint that
+/// cannot be reached only warns, as lookups on that chain already fail on their own until it
+/// answers.
+pub(crate) async fn ensure_rpc_chains(urls: &ChainRpcUrls, check_genesis: bool) -> Result<()> {
+    for (chain, _) in urls.iter() {
+        let Some(expected_chain_id) = crate::v2::slug_to_numeric(chain) else {
+            bail!(
+                "API RPC chain check refused to start: chain {chain} has no known EIP-155 chain \
+                 id, so its RPC endpoint cannot be checked"
+            );
+        };
+        match verify_chain_rpc_url(urls, chain, expected_chain_id, check_genesis).await {
+            Ok(()) => {}
+            Err(RpcChainCheckError::Refused(message)) => {
+                bail!("API RPC chain check refused to start: {message}")
+            }
+            Err(RpcChainCheckError::Unreachable(message)) => tracing::warn!(
+                service = "api",
+                chain,
+                error = %message,
+                "API RPC chain check could not reach the endpoint; lookups on this chain fail until it answers"
+            ),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "startup_preflight_tests.rs"]
+mod tests;

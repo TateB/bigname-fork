@@ -12,6 +12,7 @@ mod primary_name;
 mod record_selector;
 mod reverse_names;
 mod rpc;
+mod rpc_chain_check;
 mod store;
 mod text_records;
 mod types;
@@ -25,6 +26,7 @@ pub use reverse_names::{
     execute_ens_reverse_name_multicall,
 };
 pub use rpc::{ChainRpcUrls, fetch_network_head_block_number};
+pub use rpc_chain_check::{RpcChainCheckError, verify_chain_rpc_url};
 pub use store::{
     VerifiedExecutionEntrypoint, admitted_verified_authority_arms, verified_execution_entrypoint,
 };

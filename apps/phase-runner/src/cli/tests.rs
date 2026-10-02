@@ -903,6 +903,19 @@ fn ingest_options_reach_both_run_and_redo_configuration() {
         assert_eq!(
             ingest_options(command, &[]).unwrap(),
             bigname_ingest::IngestConfig::default()
+                .with_rpc_chain_check(bigname_ingest::RpcChainCheck::Full)
+        );
+        assert_eq!(
+            ingest_options(command, &["--rpc-chain-check", "chain-id-only"])
+                .unwrap()
+                .rpc_chain_check(),
+            Some(bigname_ingest::RpcChainCheck::ChainIdOnly)
+        );
+        let error = Cli::try_parse_from(["phase-runner", command, "--rpc-chain-check", "off"])
+            .expect_err("the RPC chain check has no off mode");
+        assert!(
+            error.to_string().contains("expected full or chain-id-only"),
+            "{error}"
         );
         let config = ingest_options(
             command,

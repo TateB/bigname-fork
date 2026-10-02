@@ -10,6 +10,17 @@ groups:
           threshold: "A phase reports status=failed on one evaluation."
           meaning: "The named chain phase stored an error; it may be retrying or may have stopped."
 
+      - alert: BignamePhaseRunnerRpcChainMismatch
+        expr: |
+          max_over_time(
+            phase_runner_rpc_chain_mismatch{job="bigname-phase-runner"}[10m]
+          ) == 1
+        labels:
+          severity: page
+        annotations:
+          threshold: "An RPC endpoint reports a mismatched chain on any scrape within 10 minutes."
+          meaning: "The named source's RPC endpoint now serves a different chain than configured; that chain stopped, and a restart refuses to start until the endpoint is fixed. A single-chain runner usually exits before a scrape sees this; BignamePhaseRunnerDown and the refusal log catch it."
+
       - alert: BignamePhaseRunnerDown
         expr: |
           up{job="bigname-phase-runner"} == 0

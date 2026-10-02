@@ -55,6 +55,11 @@ async fn serve(args: ServeArgs) -> Result<()> {
     args.bounds.validate()?;
     state::configure_publication_lag_tolerance_blocks(args.publication_lag_tolerance_blocks)?;
     let chain_rpc_urls = args.effective_lookup_chain_rpc_urls()?;
+    startup_preflight::ensure_rpc_chains(
+        &chain_rpc_urls,
+        args.rpc_chain_check == cli::RpcChainCheck::Full,
+    )
+    .await?;
     let pool = bigname_storage::connect_phase_with_application_name_and_statement_timeout(
         &args.database,
         "bigname-api",

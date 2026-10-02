@@ -186,10 +186,11 @@ impl JsonRpcHttpClient {
     ) -> Result<Self> {
         let endpoint = endpoint
             .parse::<Url>()
-            .with_context(|| format!("failed to parse RPC endpoint {endpoint}"))?;
+            .context("failed to parse RPC endpoint URL")?;
         if !matches!(endpoint.scheme(), "http" | "https") {
             bail!(
-                "unsupported RPC endpoint scheme for {endpoint}; lookup supports http:// and https:// URLs"
+                "unsupported RPC endpoint scheme {}; lookup supports http:// and https:// URLs",
+                endpoint.scheme()
             );
         }
         Ok(Self {

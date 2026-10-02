@@ -5,7 +5,7 @@ use reqwest::Url;
 use serde_json::{Value, json};
 use tracing::warn;
 
-use super::{JsonRpcProvider, provider_error_text};
+use super::{JsonRpcProvider, redacted_text};
 
 const MAX_ATTEMPTS: usize = 5;
 
@@ -15,17 +15,38 @@ pub(super) struct BatchCall {
     pub params: Vec<Value>,
 }
 
+/// Data attempts are sent only on a client the RPC chain check verified; the check's own probes
+/// are not.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Dispatch {
+    Data,
+    Probe,
+}
+
 impl JsonRpcProvider {
     pub(super) async fn request(&self, method: &str, params: Vec<Value>) -> Result<Option<Value>> {
+        self.request_with(method, params, Dispatch::Data).await
+    }
+
+    pub(super) async fn probe(&self, method: &str, params: Vec<Value>) -> Result<Option<Value>> {
+        self.request_with(method, params, Dispatch::Probe).await
+    }
+
+    async fn request_with(
+        &self,
+        method: &str,
+        params: Vec<Value>,
+        dispatch: Dispatch,
+    ) -> Result<Option<Value>> {
         for attempt in 0..MAX_ATTEMPTS {
-            match self.request_once(method, params.clone()).await {
+            match self.request_once(method, params.clone(), dispatch).await {
                 Ok(value) => return Ok(value),
                 Err(error) if retryable(&error) && attempt + 1 < MAX_ATTEMPTS => {
                     warn!(
                         component = "ingest_provider",
                         method,
                         attempt = attempt + 1,
-                        error = %provider_error_text(&error),
+                        error = %redacted_text(&error, self.endpoint.as_str()),
                         "retrying transient JSON-RPC request"
                     );
                     backoff(attempt).await;
@@ -40,6 +61,7 @@ impl JsonRpcProvider {
         if calls.is_empty() {
             return Ok(Vec::new());
         }
+        self.ensure_chain().await?;
         if self.config.rpc_batch_size() == 1 {
             let mut values = Vec::with_capacity(calls.len());
             for call in calls {
@@ -55,10 +77,13 @@ impl JsonRpcProvider {
                         component = "ingest_provider",
                         request_context = "batch",
                         attempt = attempt + 1,
-                        error = %provider_error_text(&error),
+                        error = %redacted_text(&error, self.endpoint.as_str()),
                         "retrying transient JSON-RPC batch"
                     );
                     backoff(attempt).await;
+                }
+                Err(error) if super::chain_check::chain_mismatch_in(&error).is_some() => {
+                    return Err(error);
                 }
                 Err(error) if !retryable(&error) => {
                     let mut values = Vec::with_capacity(calls.len());
@@ -75,14 +100,22 @@ impl JsonRpcProvider {
         bail!("JSON-RPC batch retry loop exited unexpectedly")
     }
 
-    async fn request_once(&self, method: &str, params: Vec<Value>) -> Result<Option<Value>> {
+    async fn request_once(
+        &self,
+        method: &str,
+        params: Vec<Value>,
+        dispatch: Dispatch,
+    ) -> Result<Option<Value>> {
         let body = self
-            .send(json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": method,
-                "params": params,
-            }))
+            .send(
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": method,
+                    "params": params,
+                }),
+                dispatch,
+            )
             .await?;
         response_result(&body, method)
     }
@@ -102,7 +135,7 @@ impl JsonRpcProvider {
                 })
                 .collect(),
         );
-        let body = self.send(request).await?;
+        let body = self.send(request, Dispatch::Data).await?;
         let responses = body
             .as_array()
             .context("expected JSON-RPC batch response array")?;
@@ -128,13 +161,22 @@ impl JsonRpcProvider {
             .collect()
     }
 
-    async fn send(&self, request: Value) -> Result<Value> {
+    async fn send(&self, request: Value, dispatch: Dispatch) -> Result<Value> {
         // Bound actual HTTP work, including retries and standalone fallback calls.
         // Release the permit after the body is read, before any retry backoff.
-        let permit = self.in_flight.acquire().await?;
+        let (permit, client, client_id) = loop {
+            let check = match dispatch {
+                Dispatch::Data => self.ensure_chain().await?,
+                Dispatch::Probe => None,
+            };
+            let permit = self.in_flight.acquire().await?;
+            let (client, client_id) = self.client.snapshot();
+            if check.is_none_or(|check| check.covers(client_id)) {
+                break (permit, client, client_id);
+            }
+        };
         self.request_attempts
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let (client, client_id) = self.client.snapshot();
         let response = match client
             .post(self.endpoint.clone())
             .json(&request)
@@ -155,10 +197,11 @@ impl JsonRpcProvider {
             .context("failed to read JSON-RPC response")?;
         drop(permit);
         if !status.is_success() {
-            bail!(
-                "provider request failed with HTTP {status}: {}",
-                truncate(&body)
-            );
+            return Err(HttpStatusError {
+                status,
+                body: truncate(&body).to_owned(),
+            }
+            .into());
         }
         serde_json::from_str(&body).context("failed to decode JSON-RPC response")
     }
@@ -174,13 +217,21 @@ fn response_result(response: &Value, method: &str) -> Result<Option<Value>> {
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or("unknown JSON-RPC error");
-        bail!("provider returned JSON-RPC error for {method}: {code}: {message}");
+        return Err(JsonRpcError {
+            method: method.to_owned(),
+            code,
+            message: message.to_owned(),
+        }
+        .into());
     }
     let result = response.get("result").cloned().unwrap_or(Value::Null);
     Ok((!result.is_null()).then_some(result))
 }
 
 pub(super) fn retryable(error: &anyhow::Error) -> bool {
+    if super::chain_check::chain_mismatch_in(error).is_some() {
+        return false;
+    }
     if error.chain().any(|cause| {
         cause
             .downcast_ref::<reqwest::Error>()
@@ -232,6 +283,75 @@ fn redact_url(error: &mut reqwest::Error) {
     url.set_fragment(None);
 }
 
+/// A non-success HTTP answer. Its body can echo the request URI or a key taken from it, so
+/// redacted renderings leave the body out.
+#[derive(Debug)]
+pub(super) struct HttpStatusError {
+    status: reqwest::StatusCode,
+    body: String,
+}
+
+impl HttpStatusError {
+    pub(super) fn without_body(&self) -> String {
+        format!("provider request failed with HTTP {}", self.status)
+    }
+}
+
+impl std::fmt::Display for HttpStatusError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}: {}", self.without_body(), self.body)
+    }
+}
+
+impl std::error::Error for HttpStatusError {}
+
+/// A JSON-RPC error's message is provider text that can echo the endpoint's key; redacted
+/// renderings keep only its code and the code's standard meaning.
+#[derive(Debug)]
+pub(super) struct JsonRpcError {
+    method: String,
+    code: i64,
+    message: String,
+}
+
+impl JsonRpcError {
+    /// Names the standard meaning of the code (JSON-RPC 2.0 and EIP-1474) in place of the
+    /// provider's own message.
+    pub(super) fn without_message(&self) -> String {
+        let meaning = match self.code {
+            -32700 => "parse error",
+            -32600 => "invalid request",
+            -32601 => "method not found",
+            -32602 => "invalid params",
+            -32603 => "internal error",
+            -32000 => "invalid input or server error",
+            -32001 => "resource not found",
+            -32002 => "resource unavailable",
+            -32003 => "transaction rejected",
+            -32004 => "method not supported",
+            -32005 => "limit exceeded",
+            -32006 => "JSON-RPC version not supported",
+            _ => "provider-specific error",
+        };
+        format!(
+            "provider returned JSON-RPC error for {}: {} ({meaning}; provider message omitted)",
+            self.method, self.code
+        )
+    }
+}
+
+impl std::fmt::Display for JsonRpcError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "provider returned JSON-RPC error for {}: {}: {}",
+            self.method, self.code, self.message
+        )
+    }
+}
+
+impl std::error::Error for JsonRpcError {}
+
 fn truncate(body: &str) -> &str {
     let end = body
         .char_indices()
@@ -247,8 +367,7 @@ async fn backoff(attempt: usize) {
 }
 
 pub(super) fn validate_endpoint(endpoint: &str) -> Result<Url> {
-    let endpoint =
-        Url::parse(endpoint).with_context(|| format!("failed to parse RPC endpoint {endpoint}"))?;
+    let endpoint = Url::parse(endpoint).context("failed to parse RPC endpoint URL")?;
     if !matches!(endpoint.scheme(), "http" | "https") {
         bail!("RPC endpoint must use http:// or https://");
     }
@@ -258,6 +377,26 @@ pub(super) fn validate_endpoint(endpoint: &str) -> Result<Url> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_json_rpc_error_renders_like_its_provider_text_until_redacted() {
+        let error = |code| JsonRpcError {
+            method: "eth_getLogs".to_owned(),
+            code,
+            message: "query returned more than 10000 results".to_owned(),
+        };
+        assert_eq!(
+            error(-32005).to_string(),
+            "provider returned JSON-RPC error for eth_getLogs: -32005: query returned more than \
+             10000 results"
+        );
+        assert!(retryable(&error(-32005).into()));
+        assert_eq!(
+            error(-39999).without_message(),
+            "provider returned JSON-RPC error for eth_getLogs: -39999 (provider-specific error; \
+             provider message omitted)"
+        );
+    }
 
     #[test]
     fn mid_fetch_reorg_races_are_retryable() {

@@ -1,0 +1,40 @@
+name: Sync pinned upstream checkouts
+description: >-
+  Restores .refs from the entry main saves, runs scripts/sync-refs only when a
+  checkout is missing or off its pin, and saves a new entry from main.
+runs:
+  using: composite
+  steps:
+    # A full sync fetches every pinned repository and took 1.5 to 2 minutes per
+    # job. Only main saves, for the same reason as the Cargo caches (see the
+    # cache note in ci.yml).
+    - name: Restore pinned upstream checkouts
+      id: refs_cache
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          .refs/*
+          !.refs/MANIFEST.toml
+          !.refs/README.md
+        key: refs-v2-${{ hashFiles('.refs/MANIFEST.toml') }}
+        restore-keys: refs-v2-
+
+    # The exclusions above only filter what `.refs/*` expands to, and an older
+    # entry restored by prefix predates this commit's pins, so the tracked
+    # metadata is put back from the commit before checking against it.
+    - name: Sync pinned upstream checkouts
+      shell: bash
+      run: |
+        git checkout HEAD -- .refs/MANIFEST.toml .refs/README.md
+        scripts/sync-refs --check || scripts/sync-refs
+        scripts/sync-refs --check
+
+    - name: Save pinned upstream checkouts
+      if: github.ref == 'refs/heads/main' && steps.refs_cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          .refs/*
+          !.refs/MANIFEST.toml
+          !.refs/README.md
+        key: refs-v2-${{ hashFiles('.refs/MANIFEST.toml') }}

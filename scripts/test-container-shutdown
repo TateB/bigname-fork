@@ -137,7 +137,10 @@ if [[ -n "${BIGNAME_E2E_SHUTDOWN_BUILD_CACHE:-}" ]]; then
   if [[ -d "$BIGNAME_E2E_SHUTDOWN_BUILD_CACHE" ]]; then
     cache_args+=(--cache-from "type=local,src=$BIGNAME_E2E_SHUTDOWN_BUILD_CACHE")
   fi
-  cache_args+=(--cache-to "type=local,dest=$cache_out,mode=max")
+  # Exporting takes about 40 seconds; CI skips it where nothing saves the result.
+  if [[ "${BIGNAME_E2E_SHUTDOWN_CACHE_EXPORT:-1}" != 0 ]]; then
+    cache_args+=(--cache-to "type=local,dest=$cache_out,mode=max")
+  fi
 fi
 docker buildx build --builder "$builder" --load "${cache_args[@]}" --build-arg "BIGNAME_BUILD_SHA=$sha" -t "$BIGNAME_E2E_SHUTDOWN_IMAGE" "$source_root"
 if [[ -n "${BIGNAME_E2E_SHUTDOWN_BUILD_CACHE:-}" && -d "$cache_out" ]]; then

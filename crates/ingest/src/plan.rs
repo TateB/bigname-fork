@@ -195,6 +195,7 @@ mod tests {
             kind: kind.to_owned(),
             start_block,
             endpoint: "test".to_owned(),
+            recorded_genesis: None,
         }
     }
 

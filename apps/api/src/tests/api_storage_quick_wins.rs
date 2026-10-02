@@ -12,6 +12,7 @@ async fn api_serve_tolerates_an_absent_phase_schema() -> Result<()> {
         chain_rpc_urls: Vec::new(),
         rpc_connect_timeout_ms: 2_000,
         rpc_timeout_ms: 8_000,
+        rpc_chain_check: crate::cli::RpcChainCheck::Full,
         bounds: ApiBoundsConfig::default(),
         phase_heartbeat_max_age_secs: state::DEFAULT_PHASE_HEARTBEAT_MAX_AGE_SECS,
         status_provider_timeout_ms:
@@ -50,6 +51,7 @@ async fn api_serve_refuses_a_schema_missing_normalized_events() -> Result<()> {
         chain_rpc_urls: Vec::new(),
         rpc_connect_timeout_ms: 2_000,
         rpc_timeout_ms: 8_000,
+        rpc_chain_check: crate::cli::RpcChainCheck::Full,
         bounds: ApiBoundsConfig::default(),
         phase_heartbeat_max_age_secs: state::DEFAULT_PHASE_HEARTBEAT_MAX_AGE_SECS,
         status_provider_timeout_ms:

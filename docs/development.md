@@ -50,14 +50,20 @@ automation applies reviewed versioned schema-migrations at the planned boundary.
 
 ## CI after a merge
 
-Pull requests and merge groups run the complete CI suite. The repository's
-active `main` ruleset requires the merge queue and has no bypass actors. It also
-requires `static`, `artifacts-and-smoke`, `test`, and the named test-suite
-aggregates to pass. The `test` aggregate covers core, API, schema, phase-runner,
-e2e (including shutdown), and site checks; static and smoke checks are required
-separately. These requirements ensure the full validation gate passes before a
-commit lands. Native event conditions keep the subsequent push from running the
-same tests and static checks again.
+Pull requests run the complete CI suite. The repository's active `main`
+ruleset requires the merge queue and has no bypass actors. It also requires
+`static`, `artifacts-and-smoke`, `test`, and the named test-suite aggregates to
+pass. The `test` aggregate covers core, API, schema, phase-runner, e2e
+(including shutdown), and site checks; static and smoke checks are required
+separately. A pull request therefore passes the full validation gate before it
+can be queued. The merge group then reruns only the fast gates on the merged
+result: static, smoke, schema, core and site. The API, phase-runner and e2e
+jobs and their aggregates are skipped there, and a skipped check satisfies the
+ruleset. Two queued pull requests that pass separately but break each other in
+those suites are not caught by the queue, and nothing reruns those suites on
+`main`. A later pull request's full run against the updated `main` may surface
+the break, in that unrelated pull request. Native event conditions keep the
+subsequent push from running the same tests and static checks again.
 
 The main-branch follow-up still uploads the site and refreshes the shared Cargo
 and shutdown-image caches. A cache miss can compile dependencies or build an

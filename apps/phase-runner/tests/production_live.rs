@@ -2991,6 +2991,144 @@ async fn verification_only_source_never_reaches_live_follow_or_cursors() -> Resu
 }
 
 #[tokio::test]
+async fn a_completed_cursor_recorded_with_another_genesis_stops_before_live_reads() -> Result<()> {
+    let scratch = ScratchDatabase::create("production_live_recorded_genesis").await?;
+    let chain = "live-recorded-genesis";
+    seed_branch(scratch.pool(), chain, 1, 0, None).await?;
+    publish(scratch.pool(), chain, 1, 0, 0, 0).await?;
+    seed_completed_spine(scratch.pool(), chain, 0, &block_hash(1, 0)).await?;
+    seed_empty_watch_manifest(scratch.pool(), chain).await?;
+    sqlx::query(
+        "UPDATE ingest_cursors SET verified_chain_id = 8453, verified_genesis_hash = $2
+         WHERE chain_id = $1",
+    )
+    .bind(chain)
+    .bind(format!("0x{}", "a".repeat(64)))
+    .execute(scratch.pool())
+    .await?;
+    let fixture = RpcFixture::spawn(1, 4).await?;
+    let ingest_engine = Arc::new(Engine::new(scratch.pool().clone()));
+    let phases = PhaseSet::with_ingest_interpret_project_and_live(
+        Arc::new(IngestPhase::with_engine(Arc::clone(&ingest_engine))),
+        Arc::new(LoopbackPhase::new(PhaseName::Interpret)),
+        Arc::new(LoopbackPhase::new(PhaseName::Project)),
+        Arc::new(LoopbackPhase::new(PhaseName::Verify)),
+        Arc::new(LivePhase::with_engine(ingest_engine)),
+    )?;
+    let runner = Arc::new(PhaseRunner::new(
+        scratch.runner(),
+        phases,
+        CapacityGuard::system(CapacityConfig::default()),
+        "production-live-recorded-genesis",
+        fast_timing(),
+    )?);
+    let mut sources = live_chain(chain, &fixture.endpoint)?.sources.to_vec();
+    sources[0].verified_rpc_chain = Some(bigname_ingest::ObservedRpcChain {
+        chain_id: Some(8453),
+        genesis_hash: Some(format!("0x{}", "b".repeat(64))),
+    });
+    let configured_chain = ChainConfig::new(chain, sources, false)?;
+    let cancellation = CancellationToken::new();
+    let run_cancellation = cancellation.clone();
+    let task =
+        tokio::spawn(async move { runner.run_chain(&configured_chain, run_cancellation).await });
+    let refused = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let refused: bool = sqlx::query_scalar(
+                "SELECT EXISTS (
+                     SELECT 1 FROM chain_phase_state
+                     WHERE chain_id = $1 AND last_error LIKE '%cannot continue on another chain%'
+                 )",
+            )
+            .bind(chain)
+            .fetch_one(scratch.pool())
+            .await?;
+            if refused || task.is_finished() {
+                return Result::<bool>::Ok(refused);
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    cancellation.cancel();
+    let _ = task.await;
+    let latest: i64 =
+        sqlx::query_scalar("SELECT latest_block_number FROM chain_heads WHERE chain_id = $1")
+            .bind(chain)
+            .fetch_one(scratch.pool())
+            .await?;
+    assert!(matches!(refused, Ok(Ok(true))), "{refused:?}");
+    assert_eq!(fixture.requests().await, 0);
+    assert_eq!(latest, 0);
+    fixture.server.abort();
+    scratch.cleanup().await
+}
+
+#[tokio::test]
+async fn a_cursor_recorded_with_another_genesis_mid_follow_stops_the_next_live_start() -> Result<()>
+{
+    let scratch = ScratchDatabase::create("production_live_recorded_genesis_mid_follow").await?;
+    let chain = "live-recorded-genesis-mid-follow";
+    seed_branch(scratch.pool(), chain, 1, 0, None).await?;
+    publish(scratch.pool(), chain, 1, 0, 0, 0).await?;
+    seed_completed_spine(scratch.pool(), chain, 0, &block_hash(1, 0)).await?;
+    seed_empty_watch_manifest(scratch.pool(), chain).await?;
+    sqlx::query(
+        "UPDATE ingest_cursors SET verified_chain_id = 8453, verified_genesis_hash = $2
+         WHERE chain_id = $1",
+    )
+    .bind(chain)
+    .bind(block_hash(1, 0))
+    .execute(scratch.pool())
+    .await?;
+    let fixture = RpcFixture::spawn(1, 2).await?;
+    let ingest_engine = Arc::new(Engine::new(scratch.pool().clone()));
+    let phases = PhaseSet::with_ingest_interpret_project_and_live(
+        Arc::new(IngestPhase::with_engine(Arc::clone(&ingest_engine))),
+        Arc::new(LoopbackPhase::new(PhaseName::Interpret)),
+        Arc::new(LoopbackPhase::new(PhaseName::Project)),
+        Arc::new(LoopbackPhase::new(PhaseName::Verify)),
+        Arc::new(LivePhase::with_engine(ingest_engine)),
+    )?;
+    let runner = Arc::new(PhaseRunner::new(
+        scratch.runner(),
+        phases,
+        CapacityGuard::system(CapacityConfig::default()),
+        "production-live-recorded-genesis-mid-follow",
+        fast_timing(),
+    )?);
+    let mut sources = live_chain(chain, &fixture.endpoint)?.sources.to_vec();
+    sources[0].verified_rpc_chain = Some(bigname_ingest::ObservedRpcChain {
+        chain_id: Some(8453),
+        genesis_hash: Some(block_hash(1, 0)),
+    });
+    let configured_chain = ChainConfig::new(chain, sources, false)?;
+    let cancellation = CancellationToken::new();
+    let run_cancellation = cancellation.clone();
+    let task =
+        tokio::spawn(async move { runner.run_chain(&configured_chain, run_cancellation).await });
+    wait_for_head(scratch.pool(), chain, 2, &block_hash(1, 2)).await?;
+    sqlx::query("UPDATE ingest_cursors SET verified_genesis_hash = $2 WHERE chain_id = $1")
+        .bind(chain)
+        .bind(format!("0x{}", "a".repeat(64)))
+        .execute(scratch.pool())
+        .await?;
+    let outcome = tokio::time::timeout(Duration::from_secs(30), task).await;
+    cancellation.cancel();
+    let error = match outcome {
+        Ok(Ok(Err(error))) => error.to_string(),
+        other => anyhow::bail!("the runner kept following: {other:?}"),
+    };
+    assert!(
+        error.contains("cannot continue on another chain"),
+        "{error}"
+    );
+    assert!(!error.contains("completed-validation"), "{error}");
+    fixture.server.abort();
+    scratch.cleanup().await
+}
+
+#[tokio::test]
 async fn restart_recovers_live_running_after_head_publication() -> Result<()> {
     let scratch = ScratchDatabase::create("production_live_restart_after_publication").await?;
     let chain = "live-restart-after-publication";
@@ -3538,6 +3676,7 @@ fn live_request(
             kind: "rpc".to_owned(),
             start_block: 0,
             endpoint: endpoint.to_owned(),
+            recorded_genesis: None,
         }],
         live_handoff: Marker {
             number: handoff,
@@ -4333,6 +4472,7 @@ fn chain_rpc_response(state: &RpcChain, request: &Value) -> Value {
             .and_then(|hash| state.blocks.get(hash))
             .cloned(),
         "eth_getLogs" => Some(Value::Array(rpc_logs(&state.logs, params.first()))),
+        "eth_chainId" => Some(json!("0x2105")),
         _ => None,
     };
     json!({"jsonrpc": "2.0", "id": id, "result": result})

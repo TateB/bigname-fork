@@ -26,10 +26,12 @@ tracing.workspace = true
 uuid.workspace = true
 reth-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v2.5.0", default-features = false, features = ["std", "node"], optional = true }
 
+bigname-domain.workspace = true
 bigname-manifests.workspace = true
 
 [dev-dependencies]
 bigname-test-support.workspace = true
+tracing-subscriber.workspace = true
 
 [[example]]
 name = "reth-db-smoke"

@@ -603,6 +603,7 @@ fn start_writer(
             cfg.url(db, "r640_reader", &cfg.reader_password)?,
         )
         .env("BIGNAME_RESTORE_RPC", url)
+        .env("BIGNAME_PHASE_RUNNER_RPC_CHAIN_CHECK", "chain-id-only")
         .args([
             "run",
             "--chain",

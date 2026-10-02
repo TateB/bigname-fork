@@ -18,6 +18,7 @@ pub struct RunnerMetricsFeed {
     committed: Arc<Notify>,
     configured_chains: Arc<Mutex<BTreeSet<String>>>,
     project_writes: super::project_writes::PendingProjectWrites,
+    rpc_chains: super::rpc_chain::RpcChainStates,
 }
 
 impl RunnerMetricsFeed {
@@ -38,6 +39,33 @@ impl RunnerMetricsFeed {
     ) {
         self.project_writes.record_families(chain, outcome);
         self.committed.notify_one();
+    }
+
+    /// Reports the chain id an endpoint gave a passing RPC chain check.
+    pub fn rpc_chain_verified(&self, chain: &str, source: &str, chain_id: Option<u64>) {
+        self.rpc_chains.record(chain, source, chain_id, false);
+    }
+
+    /// Reports the RPC chain check failure behind a phase error, if there is one.
+    pub fn observe_ingest_error(&self, error: &bigname_ingest::IngestError) {
+        if let Some(mismatch) = error.rpc_chain_mismatch() {
+            self.rpc_chain_mismatch(mismatch);
+        }
+    }
+
+    /// Reports an endpoint that failed its RPC chain check, and wakes the metrics task.
+    pub fn rpc_chain_mismatch(&self, mismatch: &bigname_ingest::RpcChainMismatch) {
+        self.rpc_chains.record(
+            &mismatch.chain,
+            &mismatch.source_key,
+            mismatch.observed_chain_id,
+            true,
+        );
+        self.committed.notify_one();
+    }
+
+    pub(super) fn rpc_chains(&self) -> &super::rpc_chain::RpcChainStates {
+        &self.rpc_chains
     }
 
     pub(super) fn take_project_writes(&self) -> super::project_writes::Pending {

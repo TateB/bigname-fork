@@ -1,7 +1,7 @@
 //! Explicit same-node transport changes preserve the retained ingest extent.
 use anyhow::{Context as _, Result, ensure};
 use bigname_ingest::{
-    LiveContinuation, Marker, SourceDescriptor, VerificationProvider, WatchFilter,
+    LiveContinuation, Marker, RpcChainCheck, SourceDescriptor, VerificationProvider, WatchFilter,
     admit_ingest_checkpoint_heads, admit_source_floor, enforce_source_floor, load_watch_filter,
     plan_live_continuation,
 };
@@ -23,14 +23,19 @@ pub async fn transition(
     database: &RunnerDatabase,
     old: &SourceConfig,
     new: &SourceConfig,
+    rpc_chain_check: RpcChainCheck,
 ) -> Result<Value> {
     transition_with_readers(database, old, new, |source| {
         let kind = normalized_source_kind(&source.source_kind);
-        Ok(VerificationProvider::new(
-            &source.chain_id,
-            &kind,
-            source.endpoint(),
-        )?)
+        Ok(
+            VerificationProvider::new(&source.chain_id, &kind, source.endpoint())?
+                .with_rpc_chain_check(
+                    &source.chain_id,
+                    &source.source_key,
+                    rpc_chain_check,
+                    source.recorded_genesis().as_deref(),
+                )?,
+        )
     })
     .await
 }
@@ -397,6 +402,7 @@ async fn admit_retention_floor(
         kind: to_kind.to_owned(),
         start_block: new.start_block_number,
         endpoint: new.endpoint().to_owned(),
+        recorded_genesis: new.recorded_genesis(),
     };
     let admitted = match resume {
         ResumePoint::Redo(_) => {
