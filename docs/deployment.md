@@ -2333,3 +2333,33 @@ response: the address-names and subnames readers still serve a surface-less
 ENSv1 registry child for its registry owner under both `owner` and `manager`,
 and the address-names reader lists no surface-less Basenames child, so the new
 Basenames index rows list nothing.
+
+### ENSv2 registries read whole only when their suffix moves
+
+The build that stops the lookahead loader from reading a whole ENSv2 registry
+for a batch that leaves the registry's
+[name suffix](glossary.md#ensv2-name-suffix-walk) unchanged (TYR-202, see
+[Interpret process memory](storage.md#interpret-process-memory)) changes the
+ENSv2 name refresh in `crates/adapters/src`, so it rotates the
+[interpreter content hash](glossary.md#interpreter-content-hash) for every
+chain. Names do not change: a token whose registry's suffix walk is unchanged
+keeps its name unless the batch touches it for its own reasons, such as its
+expiry, release or replacement, which still refresh it, and both loaders apply
+the same rule. The build also
+fixes which resource is current for a name that both an ENSv1 registration and
+an ENSv2 token hold, such as a name moved to ENSv2 whose ENSv1 registration is
+renewed afterwards. Before, an ENSv1 event could make the ENSv1 resource current
+and the ENSv2 token's resource came back only if a name refresh happened to
+reach that token, which depended on batch boundaries and on unrelated registry
+changes. Now the ENSv2 token's resource stays current immediately, as a full
+refresh of every name elects, so the result no longer depends on how the history
+was batched. No stored event reads this choice today; it keeps the state
+consistent for any that will. It adds no schema-migration, table, index,
+manifest or setting, so stamp no Ingest redo. In v0.4.0 it shares the release's
+one Interpret and Project redo pair with the other hash-rotating changes in the
+bundle. A batch that touches an ENSv2 registry without moving its name suffix
+now reads only the history of the names and tokens it touches instead of the
+whole registry's, so a lookahead redo no longer reads a busy registry whole on
+nearly every batch. A batch whose registry suffix does move, or the
+first batch with ENSv2 events on a chain, still reads the registry whole and
+logs a warning; see [Verify health](runbooks/production-docker.md#verify-health).
