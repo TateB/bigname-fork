@@ -313,3 +313,64 @@ fn the_mainnet_deployment_profile_declares_no_ens_v2_approval_and_no_event_start
     }
     Ok(())
 }
+
+#[test]
+fn user_registry_origin_metadata_widens_only_its_declared_address() -> Result<()> {
+    let desired = sepolia_manifest("ens_v2_migration_l1")?;
+    let mut previous = desired.clone();
+    previous
+        .contracts
+        .retain(|contract| contract.role != "user_registry_implementation");
+    assert_eq!(desired.contracts.len(), previous.contracts.len() + 1);
+    let before = compile_watch_scope(&previous)?;
+    let after = compile_watch_scope(&desired)?;
+    assert!(before.iter().all(|entry| after.contains(entry)));
+    let added: Vec<_> = after
+        .iter()
+        .filter(|entry| !before.contains(entry))
+        .collect();
+    assert_eq!(before.len(), 16);
+    assert_eq!(after.len(), 18);
+    assert_eq!(added.len(), 2);
+    for entry in &added {
+        assert_eq!(entry.start, 11_820_439);
+        assert_eq!(
+            entry.emitter,
+            WatchEmitter::Address {
+                family: "ens_v2_migration_l1".to_owned(),
+                address: "0x9bd8a88719068d09ecee662f36c0e3856708366a".to_owned(),
+            }
+        );
+    }
+    assert_eq!(
+        added
+            .iter()
+            .map(|entry| entry.topic0.as_str())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            "0x0a2c575ff341b41da136c9ccae74ec230a927a024d18f0dccf46d123f28f5f54",
+            "0xbd0c01e5bf66003280556423db4a8bf79043c146ac57f657c30049dd43316649",
+        ])
+    );
+    let mut old_snapshot = Snapshot::default();
+    let mut new_snapshot = Snapshot::default();
+    record(&mut old_snapshot, &previous, &manifest_payload(&previous)?)?;
+    record(&mut new_snapshot, &desired, &manifest_payload(&desired)?)?;
+    assert_eq!(
+        widening_start(
+            &old_snapshot,
+            &new_snapshot,
+            "ethereum-sepolia",
+            &PersistedWatchCoverage::new(),
+            false
+        )?,
+        Some(11_820_439)
+    );
+    println!(
+        "registry_origin_watch_plan={}",
+        serde_json::json!({
+            "before": before, "after": after, "added": added, "widening_start": 11_820_439
+        })
+    );
+    Ok(())
+}
