@@ -408,6 +408,39 @@ candidates under a parent whose current subregistry is that registry, and evalua
 ENSv1 and Basenames edges only for those children, since another arm can only refuse a child
 that also has an ENSv2 candidate.
 
+The permission reader adds four read-only indexes on Interpret-owned
+`normalized_events`, installed by schema-migration
+`20261005200000_registry_permission_history_indexes.sql` and the phase baseline.
+`registry_support_origins` uses `normalized_events_registry_origin_idx` to
+seek at most two canonical factory origins by chain/proxy and semantic event
+order. `registry_support_announcements` uses
+`normalized_events_registry_announcement_idx` to seek at most two ordinary
+`RegistryCreated` facts by chain/emitter and block/log/identity order. Its literal
+family, event-kind, activated-visibility and readable-canonicality predicate
+avoids scanning unrelated registry history, including when no announcement exists.
+`registry_support_departure` uses
+`normalized_events_wrapper_departure_idx` or
+`normalized_events_user_registry_departure_idx` for a `NOT EXISTS`-equivalent
+probe of canonical upgrades away from the exact supported implementation.
+Their literal partial predicates match the production queries under generic
+plans, include malformed/null targets, and deliberately do not filter consumer
+visibility. They change no Interpret row. A same-code upgrade contributes to
+the other model's sparse index only; other upgrades contribute to both.
+The F16 reverse parent-entry index finds only registries associated with an
+ownership/approval candidate. The same schema-migration adds
+`project_grant_registry_parent_idx` on Project-owned `project_grant`: chain,
+subject and the root grant’s registry address, restricted to root grants.
+Each candidate probes its virtual parent’s grant on that one registry, avoiding
+a join against every child registry for which the parent holds root roles.
+The new candidate arms expose ordinary owner/subject equality alongside the
+public bytewise key order so existing ownership/approval indexes remain usable.
+No new projected classification or holder rows are stored. The concurrent
+prebuild validates each index against its actual relation; a populated
+`project_grant` requires its own prebuilt index even when `normalized_events`
+is empty. API startup already requires `project_grant`; its deployment grant
+list additionally requires
+`project_ens_v2_registry_parent` for this reader.
+
 Family indexes serve these concrete readers:
 
 - Expiring names select from the name summary's expiry selector through
@@ -2414,7 +2447,7 @@ The 17 kept indexes and the statements that read them:
 | `normalized_events_manifest_idx` | the manifest sync's latest `SourceManifestUpdated` per manifest at runner start (`lock_phase_writers` in `crates/manifests/src/schema_v2_sync_state.rs`, `load_manifest_states` in `schema_v2_event_history.rs`), one index probe per manifest |
 | `normalized_events_v1_direct_node_probe_idx`, `normalized_events_v1_due_probe_idx`, `normalized_events_basenames_direct_node_probe_idx`, `normalized_events_basenames_due_probe_idx`, `normalized_events_v2_direct_node_probe_idx`, `normalized_events_v2_key_probe_idx`, `normalized_events_v2_due_probe_idx`, `normalized_events_v2_lookahead_probe_idx` | the lookahead loader (`ops/v1-lookahead-indexes/README.md`); every lookahead chain runs every arm, so all eight stay even where some hold no rows |
 
-The other 37 serve only Project, the API and `phase-runner inspect`, and `ops/walk-index-set/drop.sql` drops exactly
+The other 41 serve only Project, the API and `phase-runner inspect`, and `ops/walk-index-set/drop.sql` drops exactly
 these: `normalized_events_registry_token_idx`,
 `normalized_events_v1_subregistry_after_node_scope_idx`,
 `normalized_events_v1_subregistry_after_child_scope_idx`,
@@ -2428,6 +2461,10 @@ these: `normalized_events_registry_token_idx`,
 `normalized_events_history_discovery_name_idx`, `normalized_events_history_discovery_resource_idx`,
 `normalized_events_resolver_alias_history_idx`,
 `normalized_events_resolver_upgrade_history_idx`,
+`normalized_events_registry_origin_idx`,
+`normalized_events_registry_announcement_idx`,
+`normalized_events_wrapper_departure_idx`,
+`normalized_events_user_registry_departure_idx`,
 `normalized_events_pointer_after_resolver_history_idx`,
 `normalized_events_pointer_before_resolver_history_idx`,
 `normalized_events_permission_after_resolver_history_idx`,

@@ -1191,6 +1191,7 @@ GRANT SELECT ON TABLE
     bigname_phase.project_resource_admin_aggregate,
     bigname_phase.project_account_approval,
     bigname_phase.project_ens_v2_entry_owner,
+    bigname_phase.project_ens_v2_registry_parent,
     bigname_phase.project_child_edge_candidate,
     bigname_phase.project_parent_subregistry,
     bigname_phase.project_reverse_tuple,
@@ -3158,3 +3159,36 @@ reverse tuples in rotation beside them. How long that takes depends on the
 head blocks that arrive and on the endpoint, so it is not a fixed time; watch
 `phase_runner_project_hydration_selectors_total`. A release that rotates the
 hash for another change discharges this rotation with the same redo pair.
+
+### WrapperRegistry permission reader upgrade
+
+The reader additionally needs `SELECT` on
+`bigname_phase.project_ens_v2_registry_parent`. Before restarting an existing
+API role, apply the grant below on the primary and allow it to replay on any
+serving standby. Fresh role setup above already includes it. Startup preflight
+refuses an API role without the grant.
+
+```sql
+GRANT SELECT ON bigname_phase.project_ens_v2_registry_parent TO bigname_api;
+```
+
+Schema-migration `20261005200000_registry_permission_history_indexes.sql`
+installs four read-only normalized-event indexes for registry origin, ordinary
+announcement and upgrade-disqualifier probes, plus the parent root-grant lookup index on
+`project_grant`. Each populated target table requires its corresponding indexes.
+Before applying the migration on an initialized database, run
+[`ops/registry-permission-indexes/install.sql`](../ops/registry-permission-indexes/install.sql)
+outside a transaction. It builds missing indexes concurrently and validates the
+whole set; follow its [ordered prebuild, headroom and recovery instructions](../ops/registry-permission-indexes/README.md).
+The schema-migration validates every index against its actual target relation,
+refuses a populated target with a missing index or any invalid definition,
+then adopts a complete set without rebuilding or changing its OIDs. Empty
+schemas build directly. The independent
+factory-origin retention and UserRegistry implementation metadata ship in the
+held content-hash rotation and require its normal full Interpret/Project
+rebuild. The existing compiler also adds the migration family’s two topics at
+the UserRegistry implementation address from block `11820439`; complete the
+required Ingest repair first. An earlier release-wide repair boundary already
+covers this start. See the [measured watch-plan change](manifests.md).
+Metadata and retained origins do not replace ordinary registry
+announcement admission or introduce pre-initialization approval capture.
