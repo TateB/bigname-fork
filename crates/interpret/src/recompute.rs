@@ -263,7 +263,7 @@ async fn load_surfaces(
               AND witness_lineage.block_number = witness.block_number
              WHERE witness.chain_id = surface.chain_id
                AND witness.logical_name_id = surface.logical_name_id
-               AND witness.event_kind = 'PreimageObserved'
+               AND witness.event_kind = $4
                AND witness.canonicality_state IN ('canonical', 'safe', 'finalized')
                AND witness_lineage.canonicality_state IN ('canonical', 'safe', 'finalized')
              ORDER BY witness.block_number, witness.transaction_index NULLS FIRST,
@@ -280,6 +280,7 @@ async fn load_surfaces(
     .bind(chain_id)
     .bind(from_block)
     .bind(to_block)
+    .bind(PREIMAGE_OBSERVATION_EVENT_KIND)
     .fetch_all(&mut **transaction)
     .await
     .map_err(|error| {
