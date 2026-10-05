@@ -718,6 +718,11 @@ check_served_projection_removal() {
                 emit_phase_migration "$ROOT/migrations/20261005160000_project_families_drop_expiry_walk_indexes.sql" preceding-shape
             fi
             emit_phase_migration "$ROOT/migrations/20261005160000_project_families_drop_expiry_walk_indexes.sql" baseline-first
+            # Hydration's scheduling columns: added to the pre-7c shape, already in the baseline.
+            if [ "$suffix" = removal ]; then
+                emit_phase_migration "$ROOT/migrations/20261005180000_project_hydration_schedule.sql" preceding-shape
+            fi
+            emit_phase_migration "$ROOT/migrations/20261005180000_project_hydration_schedule.sql" baseline-first
         done
         printf "SET bigname.removal_schema = '%s_removal'; SET bigname.fresh_schema = '%s_fresh';\n" "$original_schema" "$original_schema"
         cat "$ROOT/crates/storage/schema/fixtures/removal-parity.sql"
@@ -855,6 +860,7 @@ for migration_file in \
     "$ROOT/migrations/20261005140000_project_ens_v2_registry_entries.sql" \
     "$ROOT/migrations/20261005150000_project_name_summary_expiry_selector.sql" \
     "$ROOT/migrations/20261005160000_project_families_drop_expiry_walk_indexes.sql" \
+    "$ROOT/migrations/20261005180000_project_hydration_schedule.sql" \
     "$ROOT/migrations/20261005190000_name_surfaces_byte_shadow_path.sql"
 do
     emit_phase_migration "$migration_file" empty-schema | run_psql
