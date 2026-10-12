@@ -3872,3 +3872,137 @@ Project redo.
   index or row.
 - It adds no table, manifest or setting. The manifest-authority fingerprint and
   the compiled watch plan are unchanged, so stamp no Ingest redo.
+
+## Path indexes for the resolution path selection
+
+The build that makes the selection of names under a changed ENSv2 path read only
+what a publication touches (see
+[owned key families](projections.md#owned-key-families) and
+[table ownership](storage.md#table-ownership)) changes two Project statements
+and adds one schema-migration.
+
+- `project:families.resolution_paths.prepare` read every `name_surfaces` row of
+  the namespace up to three times in each publication. It now finds its rows through
+  two new indexes. The names it selects are the same.
+- `project:families.input.work_blocks` read every resolver discovery edge of the
+  chain for each rebuild work list. It now reads the edges and addresses that
+  start or stop in the requested range, through indexes that already exist. The
+  blocks it returns are the same.
+- Stored rows do not change. API responses do not change.
+- Both statements are in `crates/project/src`, an input of the
+  [projection content hash](glossary.md#projection-content-hash) only. That hash
+  rotates for every chain. The
+  [interpreter content hash](glossary.md#interpreter-content-hash) does not.
+  Every chain needs one full-range Project redo and no Interpret redo, at a
+  planned [re-derivation boundary](glossary.md#re-derivation-boundary) under
+  matching runner and API binaries. The change rides the next re-derivation
+  release and shares that release's Project redo.
+- It adds no table, manifest or setting. The manifest-authority fingerprint and
+  the compiled watch plan are unchanged, so stamp no Ingest redo.
+
+Schema-migration `20261012120000_name_surfaces_project_path_indexes` adds the
+function `entry_key_hashes(text[])`, the GIN index
+`name_surfaces_project_entry_keys_idx` and the btree index
+`name_surfaces_project_path_hash_idx` on `name_surfaces`. It changes no column
+and no row. Apply it before the new runner starts. The statement calls
+`entry_key_hashes` and fails without it.
+
+Each `CREATE INDEX` holds a SHARE lock on `name_surfaces` until the
+schema-migration commits, which blocks Interpret's writes to it. Apply the
+schema-migration with the phase runner, redo processes and API stopped, with the
+same `lock_timeout`, `statement_timeout` and retry procedure as the other index
+schema-migrations and `--target-version 20261012120000`. On a large initialized
+database, create the function and prebuild both indexes concurrently first,
+outside a transaction. The phase runner and API can keep running while they
+build. The schema-migration then finds them by name and skips the builds:
+
+```sql
+CREATE FUNCTION bigname_phase.entry_key_hashes(labelhashes text[])
+RETURNS bigint[]
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+    SELECT ARRAY(SELECT pg_catalog.hashtextextended(pg_catalog."left"(pg_catalog.lower(label), 58) || '00000000', 0) FROM pg_catalog.unnest(labelhashes) AS label)
+$$;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS name_surfaces_project_entry_keys_idx
+    ON bigname_phase.name_surfaces USING gin (bigname_phase.entry_key_hashes(labelhashes));
+CREATE INDEX CONCURRENTLY IF NOT EXISTS name_surfaces_project_path_hash_idx
+    ON bigname_phase.name_surfaces (namespace, hash_array_extended(labelhashes, 0));
+```
+
+The schema-migration refuses a function `entry_key_hashes(text[])` whose
+definition differs from this one. Drop `name_surfaces_project_entry_keys_idx`
+and the function, then run the schema-migrations again.
+
+`IF NOT EXISTS` matches the index name only. An interrupted concurrent build
+leaves an invalid index. The schema-migration checks both names before its own
+builds and again after them. It refuses a name that is not an index, is on
+another table, is not valid and ready, or has another definition, and its error
+names the index. Check the same things yourself after each concurrent build,
+so the schema-migration does not stop inside the maintenance window:
+
+```sql
+SET search_path = pg_catalog;
+SELECT c.relname, c.relkind, i.indrelid::regclass, i.indisvalid, i.indisready,
+       pg_get_indexdef(i.indexrelid)
+FROM pg_class AS c
+LEFT JOIN pg_index AS i ON i.indexrelid = c.oid
+WHERE c.relnamespace = 'bigname_phase'::regnamespace
+  AND c.relname IN (
+      'name_surfaces_project_entry_keys_idx',
+      'name_surfaces_project_path_hash_idx');
+RESET search_path;
+```
+
+It must return two rows. Each has `relkind` `i`, `indrelid`
+`bigname_phase.name_surfaces`, and `indisvalid` and `indisready` true. The
+definitions must be exactly these two lines, which are the text the
+schema-migration compares:
+
+```text
+CREATE INDEX name_surfaces_project_entry_keys_idx ON bigname_phase.name_surfaces USING gin (bigname_phase.entry_key_hashes(labelhashes))
+CREATE INDEX name_surfaces_project_path_hash_idx ON bigname_phase.name_surfaces USING btree (namespace, hash_array_extended(labelhashes, (0)::bigint))
+```
+
+A missing index has no row. The schema-migration then builds it under the SHARE
+lock, so build it concurrently first.
+
+Build the GIN index without storage parameters. A build with `fastupdate = off`
+or any other option prints a `WITH` clause, and the schema-migration refuses it
+as another definition.
+
+The remedy depends on the refusal:
+
+- A name that is not an index: remove or rename that relation, then build the
+  index.
+- An index of the name on another table, or one that is not valid and ready:
+  drop it with `DROP INDEX CONCURRENTLY bigname_phase.<index name>`, then build
+  it again with the statement above.
+- Another definition: the error prints the definition it found and the one it
+  expects. Drop the index the same way and build it again with the statement
+  above.
+
+Before any drop, confirm in `pg_stat_progress_create_index` that no build of
+the index is still running. Then run the schema-migrations again.
+
+Interpret writes one more btree entry and one GIN entry for each label when it
+inserts a name surface. A batch insert into `name_surfaces` took about 20% longer
+with both indexes on a synthetic table that already had the other eleven.
+
+The GIN index keeps new entries in a pending list of up to 4 MB, and every
+lookup reads the whole list. Before a Project redo, flush it:
+
+```sql
+SELECT gin_clean_pending_list('bigname_phase.name_surfaces_project_entry_keys_idx');
+```
+
+A `VACUUM` of `name_surfaces` flushes it as well. A plain `ANALYZE` does not. On
+a synthetic table of 100,000 surfaces, a lookup read 352 buffers before and
+after `ANALYZE`, and 4 after `VACUUM` or `gin_clean_pending_list`.
+
+While the runner follows the chain, Interpret keeps adding to the list, so the
+selection can meet a full one. At 100,000 synthetic surfaces, a publication that
+touched 130 names took 176 ms with a full list and 13 ms with an empty one. One
+that also changed 140 ENSv2 entries took 553 ms and 41 ms.

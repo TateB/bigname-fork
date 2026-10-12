@@ -690,11 +690,11 @@ The owned key families add six, named for their reader:
 
 | Index | Serves |
 | --- | --- |
-| `project_families_discovery_edges_resolver_from_block_idx` | `project:families.classification.activated`: resolver edges that start at the block |
-| `project_families_discovery_edges_resolver_to_block_idx` | `project:families.classification.activated`: resolver edges that stop at the block |
-| `project_families_contract_instance_addresses_from_block_idx` | `project:families.classification.activated`: contract addresses that start at the block |
-| `project_families_contract_instance_addresses_to_block_idx` | `project:families.classification.activated`: contract addresses that stop at the block |
-| `project_families_discovery_edges_resolver_destination_idx` | `project:families.classification.activated`: whether an address that starts or stops at the block is any resolver edge's destination, deactivated edges included |
+| `project_families_discovery_edges_resolver_from_block_idx` | `project:families.classification.activated`: resolver edges that start at the block. `project:families.input.work_blocks`: the source of resolver edges that start in the requested range |
+| `project_families_discovery_edges_resolver_to_block_idx` | `project:families.classification.activated`: resolver edges that stop at the block. `project:families.input.work_blocks`: the source of resolver edges that stop in the requested range |
+| `project_families_contract_instance_addresses_from_block_idx` | `project:families.classification.activated`: contract addresses that start at the block. `project:families.input.work_blocks`: the source of addresses that start in the requested range |
+| `project_families_contract_instance_addresses_to_block_idx` | `project:families.classification.activated`: contract addresses that stop at the block. `project:families.input.work_blocks`: the source of addresses that stop in the requested range |
+| `project_families_discovery_edges_resolver_destination_idx` | `project:families.classification.activated`: whether an address that starts or stops at the block is any resolver edge's destination, deactivated edges included. `project:families.input.work_blocks`: the same test, one probe for each address that starts or stops in the requested range |
 | `project_families_discovery_edges_resolver_admission_idx` | `project:families.classification.classify`: one active resolver edge per active manifest to each touched resolver's contract instance |
 
 Interpret also writes `name_surfaces`. The API's name-ordered readers add one read-only
@@ -710,6 +710,32 @@ The same readers, and `storage:families.records.reverse_candidates`, also read
 `20260923140000_project_name_surfaces_label_indexes.sql` install on
 `(namespace, hash_array_extended(raw_labels, 0))`. They use it to find the surfaces that
 store no raw bytes, whose indexed expression is NULL, and to learn that none exists.
+
+Project's selection of the names under a changed ENSv2 path
+(`project:families.resolution_paths.prepare`, see
+[projections](projections.md#owned-key-families)) adds two read-only indexes on
+`name_surfaces` and one function. The identity baseline and
+`20261012120000_name_surfaces_project_path_indexes.sql` install them. They change no row:
+
+| Index | Serves |
+| --- | --- |
+| `name_surfaces_project_path_hash_idx` | `project:families.resolution_paths.prepare`, step `source_ancestors`: the ancestors of a touched name, one probe for each suffix of its label hash path |
+| `name_surfaces_project_entry_keys_idx` | `project:families.resolution_paths.prepare`, steps `candidates` and `affected`: the surfaces that hold a label of a changed ENSv2 entry, and the names under a changed path, found by its first label |
+
+- `name_surfaces_project_path_hash_idx` is a btree on
+  `(namespace, hash_array_extended(labelhashes, 0))`.
+- `name_surfaces_project_entry_keys_idx` is a GIN index on `entry_key_hashes(labelhashes)`.
+  An ENSv2 registry keys an entry by the label hash with its low 32 bits cleared
+  (upstream: .refs/ens_v2_sepolia_20261001/contracts/src/utils/LibLabel.sol:L7-L16 @ ens_v2_sepolia_20261001@07e55a05)
+  (upstream: .refs/ens_v2_sepolia_20261001/contracts/src/registry/PermissionedRegistry.sol:L677-L693 @ ens_v2_sepolia_20261001@07e55a05).
+  The function `entry_key_hashes` gives one 64-bit hash of that key for each label hash,
+  in label order.
+- Both hold fixed-size hashes, so no label can make an entry too large. The statement also
+  compares the label hashes themselves, so a hash collision never changes its result.
+- Neither index is partial. The statement reads surfaces of every visibility and chain
+  state as path members and filters only the names it selects.
+- Interpret pays for them when it inserts a surface: one btree entry, and one GIN entry for
+  each label.
 
 History's record attribution (`crates/storage/src/history/attribution`) adds two read-only
 indexes on `normalized_events`, installed by the normalized-events baseline and
